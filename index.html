@@ -114,14 +114,23 @@
     .round { width: var(--cell-w-mob); }
   }
 
-  .round-label {
-    font-size: 0.72rem; font-weight: 800;
-    color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.09em;
-    padding-bottom: 10px;
+  .round-header {
     text-align: center;
+    padding-bottom: 8px;
     border-bottom: 1px solid var(--border);
     margin-bottom: 6px;
+  }
+  .round-time {
+    font-size: 0.95rem; font-weight: 800;
+    color: var(--text);
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+  .round-payout {
+    font-size: 0.76rem; font-weight: 700;
+    color: #15803d;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Each round's match column shares one flexible vertical area.
@@ -146,16 +155,29 @@
     margin: 6px 0;
   }
   .match-id { display: none; }   /* debug-y; hide for the polished view */
+  /* v0.3: drop the score column — admin-set tables go in the footer
+     strip instead, and team names get the freed width. */
   .match-row {
     display: grid;
-    grid-template-columns: 26px 1fr auto;
-    gap: 8px;
+    grid-template-columns: 26px 1fr;
+    gap: 10px;
     align-items: center;
     padding: 9px 10px;
     font-size: 0.92rem;
     line-height: 1.25;
     transition: opacity 0.15s;
   }
+  .match-footer {
+    font-size: 0.7rem; font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 4px 10px;
+    border-top: 1px solid var(--border);
+    background: #fafafa;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .match-table { font-variant-numeric: tabular-nums; }
+  .match-table.unassigned { color: #cbd5e1; font-style: italic; font-weight: 600; }
   @media (max-width: 767px) {
     .match-row { font-size: 0.86rem; padding: 8px; }
   }
@@ -175,15 +197,66 @@
     color: var(--text);
     min-width: 22px; text-align: right;
   }
-  .match-row.winner .name,
-  .match-row.winner .score { font-weight: 800; }
+  .match-row.winner .name { font-weight: 800; }
   .match-row.loser  { opacity: 0.55; }
-  .match-row.loser  .name,
-  .match-row.loser  .score { font-weight: 500; }
+  .match-row.loser  .name { font-weight: 500; }
 
   /* Final match: subtle red-blue accent on the winning row only */
   .round.is-final .match-row.winner {
     background: linear-gradient(90deg, rgba(234,0,42,0.06), rgba(0,49,161,0.06));
+  }
+
+  /* Search highlight: blue ring on every match the team is in. */
+  .match.match-hit {
+    box-shadow: 0 0 0 3px rgba(0,49,161,0.45), 0 1px 3px rgba(0,0,0,0.06);
+    border-color: var(--spm-accent);
+  }
+  /* Slightly stronger ring on the latest (rightmost) hit. */
+  .match.match-hit-latest {
+    box-shadow: 0 0 0 3px var(--spm-primary), 0 4px 14px rgba(0,0,0,0.12);
+    border-color: var(--spm-primary);
+  }
+
+  /* Search input in the header */
+  .search {
+    position: relative;
+    flex: 0 1 280px; min-width: 180px;
+  }
+  .search input {
+    width: 100%;
+    background: rgba(255,255,255,0.16);
+    border: 1.5px solid rgba(255,255,255,0.4);
+    color: #fff;
+    font: inherit; font-size: 0.86rem;
+    padding: 6px 30px 6px 32px;
+    border-radius: var(--pill);
+    outline: none;
+  }
+  .search input::placeholder { color: rgba(255,255,255,0.7); }
+  .search input:focus { background: rgba(255,255,255,0.24); border-color: rgba(255,255,255,0.75); }
+  .search svg.search-icon {
+    position: absolute; left: 10px; top: 50%;
+    transform: translateY(-50%);
+    width: 14px; height: 14px;
+    opacity: 0.7; pointer-events: none;
+    color: #fff;
+  }
+  .search button.search-x {
+    position: absolute; right: 6px; top: 50%;
+    transform: translateY(-50%);
+    background: transparent; border: 0; cursor: pointer;
+    color: rgba(255,255,255,0.75); font-size: 1.1rem;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: none;
+    align-items: center; justify-content: center;
+    line-height: 1; padding: 0;
+  }
+  .search.has-value button.search-x { display: inline-flex; }
+  .search button.search-x:hover { background: rgba(255,255,255,0.18); color: #fff; }
+  .search-result {
+    font-size: 0.72rem; color: rgba(255,255,255,0.85);
+    padding: 0 4px;
   }
 
   /* ── Auto-update overlay ──────────────────────────────── */
@@ -220,6 +293,12 @@
   <div class="header-inner">
     <h1><span class="brand-dot"></span>BreakOut</h1>
     <span class="badge">PoC · Single elimination</span>
+    <div class="search" id="searchWrap">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+      <input type="text" id="searchInput" placeholder="Search team — jump to latest match" autocomplete="off">
+      <button type="button" class="search-x" id="searchClear" aria-label="Clear search">×</button>
+    </div>
+    <span class="search-result" id="searchResult"></span>
     <div class="header-spacer"></div>
     <div class="size-picker" id="sizePicker" role="tablist" aria-label="Bracket size">
       <button data-size="4">4</button>
@@ -333,18 +412,42 @@ function makePrng(seed) {
   };
 }
 
-function roundLabels(totalRounds) {
-  const out = [];
+/* v0.3: rounds now display admin-set TIME and OPTIONAL PAYOUT.
+ *  These are hardcoded placeholders for the PoC — the real admin UI
+ *  will let an organizer set the start time per round and an optional
+ *  prize amount per round. For now we just demonstrate the layout. */
+function roundConfig(totalRounds) {
+  // Each row: { time, payout (or null) }
+  // Default times: R1 at 6:30 PM, +1 hour per subsequent round.
+  // Default payouts: only the back half of the bracket pays out.
+  const cfg = [];
+  const startMin = 18 * 60 + 30; // 6:30 PM
   for (let r = 1; r <= totalRounds; r++) {
-    if (r === totalRounds)     out.push('Final');
-    else if (r === totalRounds - 1) out.push('Semifinals');
-    else if (r === totalRounds - 2) out.push('Quarterfinals');
-    else {
-      const remaining = Math.pow(2, totalRounds - r + 1);
-      out.push('Round of ' + remaining);
-    }
+    const min = startMin + (r - 1) * 60;
+    cfg.push({ time: fmtTime(min), payout: null });
   }
-  return out;
+  // Drop in a few placeholder payouts: only Final and Semis by default
+  if (totalRounds >= 1) cfg[totalRounds - 1].payout = 500;
+  if (totalRounds >= 2) cfg[totalRounds - 2].payout = 200;
+  if (totalRounds >= 3) cfg[totalRounds - 3].payout = 75;
+  return cfg;
+}
+function fmtTime(mins) {
+  let h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12; if (h === 0) h = 12;
+  return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ampm;
+}
+function fmtMoney(n) {
+  if (n == null) return '';
+  return '$' + n.toLocaleString();
+}
+/* Table assignment per match — placeholder until admin UI ships.
+ *  Sequential 1..N within each round, so R1 with 8 matches = T1-T8,
+ *  R2 with 4 matches = T1-T4, etc. */
+function assignTable(roundMatches, matchIdx) {
+  return matchIdx + 1;
 }
 
 /* Build the full bracket tree + resolve sample winners through to Final. */
@@ -394,9 +497,6 @@ function buildBracket(size) {
     m.winner = upset ? higherSeed : lowerSeed;
     m.loser  = upset ? lowerSeed  : higherSeed;
     m.topWins = m.winner === top;
-    // Pool-league flavored scores (race-to-5)
-    m.scoreWinner = 5;
-    m.scoreLoser  = Math.floor(prng() * 5); // 0–4
   }
 
   // Group by round
@@ -409,37 +509,44 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function renderRow(team, score, isWinner) {
+function renderRow(team, isWinner) {
   const cls = 'match-row ' + (isWinner ? 'winner' : 'loser');
-  return '<div class="' + cls + '">'
+  return '<div class="' + cls + '" data-team="' + esc(team.name.toLowerCase()) + '">'
     + '<span class="seed">' + esc(team.seed) + '</span>'
     + '<span class="name" title="' + esc(team.name) + '">' + esc(team.name) + '</span>'
-    + '<span class="score">' + esc(score) + '</span>'
     + '</div>';
 }
 
 function render(size) {
   const { rounds, byRound, matches } = buildBracket(size);
-  const labels = roundLabels(rounds);
+  const cfg = roundConfig(rounds);
   const bracket = document.getElementById('bracket');
   bracket.innerHTML = byRound.map((roundMatches, idx) => {
     const isFinal = idx === rounds - 1;
+    const rc = cfg[idx];
     return '<div class="round' + (isFinal ? ' is-final' : '') + '">'
-      + '<div class="round-label">' + esc(labels[idx]) + '</div>'
+      + '<div class="round-header">'
+      +   '<div class="round-time">' + esc(rc.time) + '</div>'
+      +   (rc.payout ? '<div class="round-payout">' + esc(fmtMoney(rc.payout)) + '</div>' : '')
+      + '</div>'
       + '<div class="matches">'
-      +   roundMatches.map(m => {
+      +   roundMatches.map((m, i) => {
             const topWin = m.topWins;
+            const table = assignTable(roundMatches, i);
             return '<div class="match" data-match-id="' + m.id + '">'
-              + '<span class="match-id">' + esc(m.id.toUpperCase()) + '</span>'
-              + renderRow(m.top,    topWin ? m.scoreWinner : m.scoreLoser,  topWin)
-              + renderRow(m.bottom, topWin ? m.scoreLoser  : m.scoreWinner, !topWin)
+              + renderRow(m.top,    topWin)
+              + renderRow(m.bottom, !topWin)
+              + '<div class="match-footer">'
+              +   '<span></span>'  // left slot reserved for match # later
+              +   '<span class="match-table">Table ' + table + '</span>'
+              + '</div>'
               + '</div>';
           }).join('')
       + '</div>'
       + '</div>';
   }).join('');
   // Wait a tick so layout settles, then draw connectors
-  requestAnimationFrame(() => drawConnectors(matches));
+  requestAnimationFrame(() => { drawConnectors(matches); applySearch(); });
 }
 
 /* Orthogonal SVG connectors recomputed from each match cell's bounding box.
@@ -495,6 +602,56 @@ function setSize(n) {
 
 document.querySelectorAll('#sizePicker button').forEach(b => {
   b.addEventListener('click', () => setSize(parseInt(b.dataset.size, 10)));
+});
+
+/* ── Search: find a team, highlight every match they're in,
+ *  auto-scroll the bracket so the rightmost (latest) match
+ *  centers in the viewport. Live as you type.                ── */
+let _searchQuery = '';
+function applySearch() {
+  const q = _searchQuery.trim().toLowerCase();
+  const matches = document.querySelectorAll('.match');
+  // Clear previous state
+  matches.forEach(m => m.classList.remove('match-hit', 'match-hit-latest'));
+  const resultEl = document.getElementById('searchResult');
+  if (!q) { resultEl.textContent = ''; return; }
+  // Collect matches where at least one team name contains the query
+  const hits = [];
+  matches.forEach(m => {
+    const rows = m.querySelectorAll('.match-row');
+    let hit = false;
+    rows.forEach(r => {
+      if ((r.dataset.team || '').includes(q)) hit = true;
+    });
+    if (hit) { m.classList.add('match-hit'); hits.push(m); }
+  });
+  if (!hits.length) { resultEl.textContent = 'No match found'; return; }
+  // Find rightmost hit by bounding box and mark it as the latest
+  let latest = null, maxRight = -Infinity;
+  hits.forEach(el => {
+    const r = el.getBoundingClientRect();
+    if (r.right > maxRight) { maxRight = r.right; latest = el; }
+  });
+  if (latest) {
+    latest.classList.add('match-hit-latest');
+    latest.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }
+  resultEl.textContent = hits.length + ' match' + (hits.length === 1 ? '' : 'es');
+}
+const _searchWrap = document.getElementById('searchWrap');
+const _searchInput = document.getElementById('searchInput');
+const _searchClear = document.getElementById('searchClear');
+_searchInput.addEventListener('input', () => {
+  _searchQuery = _searchInput.value;
+  _searchWrap.classList.toggle('has-value', !!_searchInput.value);
+  applySearch();
+});
+_searchInput.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') { _searchInput.value = ''; _searchInput.dispatchEvent(new Event('input')); _searchInput.blur(); }
+});
+_searchClear.addEventListener('click', () => {
+  _searchInput.value = ''; _searchInput.dispatchEvent(new Event('input'));
+  _searchInput.focus();
 });
 
 // Redraw connectors on resize (debounced)
