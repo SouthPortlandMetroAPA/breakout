@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BreakOut Admin</title>
+<style>
+  :root {
+    --spm-primary: #ea002a;
+    --spm-accent:  #0031a1;
+    --bg: #f3f3f3;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --border-strong: #d1d5db;
+    --success: #16a34a;
+    --warn: #f59e0b;
+    --danger: #dc2626;
+    --radius: 14px;
+    --pill: 999px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  body { padding-bottom: 32px; }
+
+  .header {
+    background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
+    color: #fff; padding: 16px 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    position: relative;
+  }
+  .header h1 { font-size: 1.3rem; font-weight: 900; }
+  .header h1 .subpage { font-size: 0.95rem; font-weight: 500; font-style: italic; opacity: 0.85; margin-left: 10px; }
+  .admin-badge {
+    position: absolute; top: 12px; right: 16px;
+    padding: 4px 12px; border-radius: var(--pill);
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.5); color: #fff;
+  }
+  .header-link {
+    position: absolute; top: 12px; right: 88px;
+    color: #fff; text-decoration: none;
+    background: rgba(255,255,255,0.15);
+    border: 1.5px solid rgba(255,255,255,0.45);
+    padding: 4px 12px; border-radius: var(--pill);
+    font-size: 0.78rem; font-weight: 700;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .header-link:hover { background: rgba(255,255,255,0.28); border-color: rgba(255,255,255,0.7); }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 18px 16px 0; }
+
+  .card {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    border: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .card h2 {
+    font-size: 0.78rem; font-weight: 800; color: var(--spm-accent);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 12px;
+  }
+
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 8px; }
+  .row > * { flex: 1; min-width: 120px; }
+  label { display: block; font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  input[type="text"], input[type="number"] {
+    width: 100%; border: 1.5px solid var(--border-strong); border-radius: 10px;
+    padding: 9px 11px; font-family: inherit; font-size: 0.9rem;
+    background: #fff;
+  }
+  input:focus { outline: none; border-color: var(--spm-accent); }
+  .num-input { font-variant-numeric: tabular-nums; font-family: 'SF Mono', Consolas, Menlo, monospace; }
+
+  .btn { padding: 9px 18px; border-radius: var(--pill); font-size: 0.85rem; font-weight: 700; border: 0; cursor: pointer; font-family: inherit; }
+  .btn-primary { background: var(--spm-accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #0046cc; }
+  .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+  .btn-outline { background: #fff; border: 1.5px solid var(--border-strong); color: var(--text); }
+  .btn-outline:hover { background: #f5f5f5; }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover { opacity: 0.92; }
+  .btn-sm { padding: 5px 12px; font-size: 0.76rem; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+  .table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  .table th { text-align: left; padding: 9px 8px; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .table td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .table tr:hover { background: #fafafa; }
+  .table .num-cell {
+    font-family: 'SF Mono', Consolas, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700; color: var(--spm-accent);
+    min-width: 64px;
+  }
+  .table-wrap { overflow-x: auto; }
+  code { background: #eef1f7; padding: 2px 6px; border-radius: 4px; font-size: 0.86em; color: var(--spm-accent); font-weight: 700; }
+
+  .status-line { padding: 9px 13px; border-radius: 10px; font-size: 0.84rem; font-weight: 600; margin: 6px 0; display: none; }
+  .status-line.shown { display: block; }
+  .status-line.ok       { background: rgba(22,163,74,0.10); color: var(--success); }
+  .status-line.err      { background: rgba(220,38,38,0.10); color: var(--danger); }
+  .status-line.progress { background: rgba(0,49,161,0.10); color: var(--spm-accent); }
+
+  .key-gate { text-align: center; padding: 60px 20px; }
+  .key-gate .card { max-width: 440px; margin: 0 auto; text-align: center; }
+  .hint { font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+
+  /* Modal */
+  .modal { position: fixed; inset: 0; background: rgba(10,20,40,0.6); z-index: 200; display: none; align-items: center; justify-content: center; padding: 16px; }
+  .modal.shown { display: flex; }
+  .modal-box { background: #fff; border-radius: var(--radius); max-width: 460px; width: 100%; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+  .modal-title { font-size: 1.05rem; font-weight: 800; color: var(--spm-accent); margin-bottom: 12px; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+
+  /* Update overlay */
+  .update-overlay { position: fixed; inset: 0; background: rgba(10,20,40,0.72); z-index: 9999; display: none; align-items: center; justify-content: center; padding: 24px; }
+  .update-overlay.shown { display: flex; }
+  .update-box { background: #fff; border-radius: var(--radius); padding: 32px; max-width: 380px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+  .update-spinner { width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 50%; border: 5px solid rgba(0,49,161,0.15); border-top-color: var(--spm-accent); animation: spin 0.85s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .update-title { font-size: 1.1rem; font-weight: 800; color: var(--spm-accent); margin-bottom: 6px; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="update-overlay" id="updateOverlay">
+  <div class="update-box">
+    <div class="update-spinner"></div>
+    <div class="update-title">Updating BreakOut Admin</div>
+    <div>A new version is being deployed&hellip;</div>
+  </div>
+</div>
+
+<div class="header">
+  <a class="header-link" href="./" title="Open the public bracket">View site →</a>
+  <div class="admin-badge">ADMIN</div>
+  <h1>BreakOut <span class="subpage">Teams</span></h1>
+</div>
+
+<div id="keyGate" class="key-gate hidden">
+  <div class="card">
+    <h2 id="keyGateTitle">Admin key required</h2>
+    <p class="hint" id="keyGateMsg">Append <code>?key=&lt;service_role&gt;</code> to the URL to enter.</p>
+  </div>
+</div>
+
+<div id="adminMain" class="wrap hidden">
+  <div class="card">
+    <h2>Add a team</h2>
+    <div class="row">
+      <div style="flex:1"><label for="newNum">Team number</label><input type="number" id="newNum" min="101" max="9916" placeholder="0101" class="num-input"></div>
+      <div style="flex:3"><label for="newName">Name</label><input type="text" id="newName" placeholder="Average Joes"></div>
+      <div style="flex:0 0 auto"><button class="btn btn-primary" onclick="addTeam()">Add</button></div>
+    </div>
+    <p class="hint" style="margin-top:4px">4-digit team number. Last two digits must be 01–16. (e.g. <code>0103</code>, <code>0216</code>, <code>0416</code>.)</p>
+    <div id="newStatus" class="status-line"></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Teams</h2>
+      <span class="hint" id="teamsCount"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-outline btn-sm" onclick="resetToSample()">Reset to sample data</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th style="width:88px">Number</th><th>Name</th><th style="width:140px"></th></tr></thead>
+        <tbody id="teamsBody"><tr><td colspan="3" class="hint">Loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="editModal">
+  <div class="modal-box">
+    <div class="modal-title">Edit team</div>
+    <div class="row">
+      <div style="flex:1"><label>Number</label><input type="number" id="editNum" min="101" max="9916" class="num-input"></div>
+      <div style="flex:3"><label>Name</label><input type="text" id="editName"></div>
+    </div>
+    <div id="editStatus" class="status-line"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeEdit()">Cancel</button>
+      <button class="btn btn-danger" onclick="askDelete()">Delete</button>
+      <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="confirmModal">
+  <div class="modal-box">
+    <div class="modal-title" id="confirmTitle">Confirm</div>
+    <div id="confirmMsg" style="font-size:0.92rem;color:var(--muted);line-height:1.5"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeConfirm(false)">Cancel</button>
+      <button class="btn btn-danger" id="confirmOkBtn" onclick="closeConfirm(true)">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script>
+document.write('<script src="version.js?_=' + Date.now() + '"><\/script>');
+</script>
+<script>
+const APP_NAME = 'BreakOut';
+const SB_URL  = 'https://dqzbekoaysgaiqljueac.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+const SCHEMA = 'breakout';
+
+const params = new URLSearchParams(location.search);
+const SB_KEY = params.get('key') || '';
+
+const HEADERS_READ = SB_KEY
+  ? { apikey: SB_KEY,  Authorization: 'Bearer ' + SB_KEY,  'Accept-Profile': SCHEMA }
+  : { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': SCHEMA };
+const HEADERS_WRITE = { ...HEADERS_READ, 'Content-Type': 'application/json', 'Content-Profile': SCHEMA, Prefer: 'return=representation' };
+const HEADERS_APA   = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': 'apa_core' };
+
+let _teams = [];
+let _versionMismatch = false;
+let _editingId = null;
+
+const SAMPLE_NAMES = [
+  "Average Joes","Bandits","Rack 'n' Roll","Sloppy Joes","Top Shelf","I'm Confused","Bad Ideas","Pumped Up Kicks",
+  "The Pooligans","Rack'em Rebels","O'Brien's Breakers","Under the Influence","Smashing Kitties","Chalkin Chit","Cute Shots","Pocket Rabbits",
+  "Rack'em & Weep","Chalk & Giggles","Blazed & Confused","Pocket Full of Dreams","O.C. Ballers","Inglorious Billiards","Black Flags","Mighty Mongoose",
+  "Side Pocket","Cue Crew","Combo Breakers","The Hustlers","Felt Fanatics","Bridge Bandits","Cushion Crashers","Eight Ballers",
+  "Hold My Beer","Stick Wizards","Triangle Trouble","Banked Right","Run the Rack","Scratch That","Tip Top","Slop Squad",
+  "Kiss Off","Snap Pool","Lag Dogs","Drop Shots","Sharp Shooters","Wild Strokes","Blue Chalk","Felt Force",
+  "9-Ball Knights","Combo Kids","Side Spin","Backspin","Push Out","Free Stroke","Rack 'em Up","Off the Rail",
+  "Pocket Lint","Soft Break","Hard Stop","Long Rail","Cue Tippers","Bank Job","Cross Side","Final Rack"
+];
+
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function pad4(n) { return String(n).padStart(4, '0'); }
+function setStatus(id, msg, kind) { const el = document.getElementById(id); el.className = 'status-line shown ' + (kind || ''); el.textContent = msg; }
+function hideStatus(id) { const el = document.getElementById(id); el.className = 'status-line'; el.textContent = ''; }
+function validNumber(n) { return Number.isInteger(n) && n >= 101 && n <= 9916 && (n % 100) >= 1 && (n % 100) <= 16; }
+
+/* ── Auto-update ──────────────────────────── */
+async function checkVersion() {
+  if (_versionMismatch) return;
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/apps?app_name=eq.' + APP_NAME + '&select=version', { headers: HEADERS_APA });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d && d[0] && d[0].version && d[0].version !== window.APP_VERSION) {
+      _versionMismatch = true;
+      document.getElementById('updateOverlay').classList.add('shown');
+      pollForDeploy(d[0].version);
+    }
+  } catch (_) {}
+}
+function pollForDeploy(target) {
+  setTimeout(async () => {
+    try {
+      const r = await fetch('version.js?_=' + Date.now());
+      if (r.ok && (await r.text()).indexOf("APP_VERSION = '" + target + "'") !== -1) {
+        const u = new URL(location.href);
+        u.searchParams.set('_', String(Date.now()));
+        location.replace(u.toString());
+        return;
+      }
+    } catch (_) {}
+    pollForDeploy(target);
+  }, 3000);
+}
+
+/* ── Supabase ─────────────────────────────── */
+async function sb(method, path, body, extra) {
+  const opts = { method, headers: method === 'GET' ? { ...HEADERS_READ } : { ...HEADERS_WRITE } };
+  if (extra) opts.headers = { ...opts.headers, ...extra };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(SB_URL + '/rest/v1/' + path, opts);
+  if (!r.ok) throw new Error('Supabase ' + r.status + ': ' + (await r.text()).substring(0, 300));
+  if (r.status === 204) return null;
+  const ct = r.headers.get('Content-Type') || '';
+  if (!ct.includes('json')) return null;
+  const text = await r.text();
+  return text ? JSON.parse(text) : null;
+}
+async function loadTeams() {
+  _teams = await sb('GET', 'teams?order=number.asc') || [];
+}
+
+/* ── Teams CRUD ───────────────────────────── */
+async function addTeam() {
+  hideStatus('newStatus');
+  const num = parseInt(document.getElementById('newNum').value, 10);
+  const name = document.getElementById('newName').value.trim();
+  if (!validNumber(num)) return setStatus('newStatus', 'Team number must be 4 digits with last 2 digits 01–16.', 'err');
+  if (!name) return setStatus('newStatus', 'Name required.', 'err');
+  if (_teams.some(t => t.number === num)) return setStatus('newStatus', 'A team already has number ' + pad4(num) + '.', 'err');
+  try {
+    const created = await sb('POST', 'teams', { number: num, name });
+    _teams.push(Array.isArray(created) ? created[0] : created);
+    _teams.sort((a, b) => a.number - b.number);
+    document.getElementById('newNum').value = '';
+    document.getElementById('newName').value = '';
+    setStatus('newStatus', 'Added ' + pad4(num) + ' ' + name + '.', 'ok');
+    renderTeams();
+    document.getElementById('newNum').focus();
+  } catch (e) {
+    const msg = String(e.message || '').toLowerCase();
+    if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('23505')) {
+      setStatus('newStatus', 'That team number is already in use.', 'err');
+    } else if (msg.includes('check') || msg.includes('23514')) {
+      setStatus('newStatus', 'Number violates the 4-digit / last-two-01-16 rule.', 'err');
+    } else {
+      setStatus('newStatus', 'Add failed: ' + e.message, 'err');
+    }
+  }
+}
+
+function renderTeams() {
+  const body = document.getElementById('teamsBody');
+  document.getElementById('teamsCount').textContent = _teams.length + ' team' + (_teams.length === 1 ? '' : 's');
+  if (!_teams.length) {
+    body.innerHTML = '<tr><td colspan="3" class="hint">No teams yet. Add some above, or hit "Reset to sample data".</td></tr>';
+    return;
+  }
+  body.innerHTML = _teams.map(t => '<tr>'
+    + '<td class="num-cell">' + pad4(t.number) + '</td>'
+    + '<td><strong>' + esc(t.name) + '</strong></td>'
+    + '<td><div class="actions"><button class="btn btn-primary btn-sm" onclick="openEdit(' + t.id + ')">Edit</button></div></td>'
+    + '</tr>').join('');
+}
+
+function openEdit(id) {
+  const t = _teams.find(x => x.id === id);
+  if (!t) return;
+  _editingId = id;
+  document.getElementById('editNum').value = t.number;
+  document.getElementById('editName').value = t.name;
+  hideStatus('editStatus');
+  document.getElementById('editModal').classList.add('shown');
+}
+function closeEdit() { document.getElementById('editModal').classList.remove('shown'); _editingId = null; }
+async function saveEdit() {
+  if (_editingId == null) return;
+  hideStatus('editStatus');
+  const t = _teams.find(x => x.id === _editingId);
+  const num = parseInt(document.getElementById('editNum').value, 10);
+  const name = document.getElementById('editName').value.trim();
+  if (!validNumber(num)) return setStatus('editStatus', 'Team number must be 4 digits with last 2 digits 01–16.', 'err');
+  if (!name) return setStatus('editStatus', 'Name required.', 'err');
+  if (num !== t.number && _teams.some(x => x.number === num && x.id !== _editingId)) {
+    return setStatus('editStatus', 'Number already used by another team.', 'err');
+  }
+  try {
+    await sb('PATCH', 'teams?id=eq.' + _editingId, { number: num, name, updated_at: new Date().toISOString() });
+    t.number = num; t.name = name;
+    _teams.sort((a, b) => a.number - b.number);
+    closeEdit();
+    renderTeams();
+  } catch (e) {
+    const msg = String(e.message || '').toLowerCase();
+    if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('23505')) {
+      setStatus('editStatus', 'That team number is already in use.', 'err');
+    } else if (msg.includes('check') || msg.includes('23514')) {
+      setStatus('editStatus', 'Number violates the 4-digit / last-two-01-16 rule.', 'err');
+    } else {
+      setStatus('editStatus', 'Save failed: ' + e.message, 'err');
+    }
+  }
+}
+function askDelete() {
+  const t = _teams.find(x => x.id === _editingId);
+  if (!t) return;
+  confirmModal({
+    title: 'Delete team?',
+    message: 'Remove ' + pad4(t.number) + ' "' + t.name + '"? Can’t be undone.',
+    okText: 'Delete',
+    onOk: async () => {
+      try {
+        await sb('DELETE', 'teams?id=eq.' + _editingId);
+        _teams = _teams.filter(x => x.id !== _editingId);
+        closeEdit();
+        renderTeams();
+      } catch (e) { setStatus('editStatus', 'Delete failed: ' + e.message, 'err'); }
+    }
+  });
+}
+
+/* ── Reset to sample data ─────────────────── */
+function resetToSample() {
+  confirmModal({
+    title: 'Reset teams to sample data?',
+    message: 'Wipes the current teams list and re-seeds 64 sample teams (numbers 0101–0416). Can’t be undone.',
+    okText: 'Reset',
+    onOk: doResetToSample
+  });
+}
+async function doResetToSample() {
+  try {
+    // Wipe — DELETE filtered by id>=0 catches all rows.
+    await sb('DELETE', 'teams?id=gte.0');
+    // Build the seed list
+    const rows = SAMPLE_NAMES.map((name, i) => {
+      const div = Math.floor(i / 16) + 1;   // 1..4
+      const pos = (i % 16) + 1;             // 1..16
+      return { number: div * 100 + pos, name };
+    });
+    const created = await sb('POST', 'teams', rows);
+    _teams = Array.isArray(created) ? created : [created];
+    _teams.sort((a, b) => a.number - b.number);
+    renderTeams();
+  } catch (e) {
+    alert('Reset failed: ' + e.message);
+  }
+}
+
+/* ── Confirm modal ────────────────────────── */
+function confirmModal(opts) {
+  const m = document.getElementById('confirmModal');
+  document.getElementById('confirmTitle').textContent = opts.title || 'Confirm';
+  document.getElementById('confirmMsg').textContent = opts.message || '';
+  document.getElementById('confirmOkBtn').textContent = opts.okText || 'Confirm';
+  m._onOk = opts.onOk || null;
+  m.classList.add('shown');
+}
+function closeConfirm(ok) {
+  const m = document.getElementById('confirmModal');
+  m.classList.remove('shown');
+  if (ok && typeof m._onOk === 'function') m._onOk();
+  m._onOk = null;
+}
+
+/* ── Form helpers ─────────────────────────── */
+document.getElementById('newNum').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); document.getElementById('newName').focus(); } });
+document.getElementById('newName').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); addTeam(); } });
+
+/* ── Init ─────────────────────────────────── */
+async function init() {
+  document.title = 'BreakOut Admin';
+  checkVersion();
+  setInterval(checkVersion, 30000);
+  if (!SB_KEY) {
+    document.getElementById('keyGate').classList.remove('hidden');
+    return;
+  }
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/teams?select=id&limit=1', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch (e) {
+    const g = document.getElementById('keyGate');
+    g.classList.remove('hidden');
+    document.getElementById('keyGateTitle').textContent = 'Access denied';
+    document.getElementById('keyGateMsg').innerHTML = '<strong style="color:var(--danger)">Admin key invalid or expired.</strong><br>Double-check <code>?key=</code>.';
+    return;
+  }
+  document.getElementById('adminMain').classList.remove('hidden');
+  try { await loadTeams(); } catch (e) { setStatus('newStatus', 'Load failed: ' + e.message, 'err'); return; }
+  renderTeams();
+}
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

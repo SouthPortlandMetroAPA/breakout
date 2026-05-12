@@ -155,18 +155,27 @@
     margin: 6px 0;
   }
   .match-id { display: none; }   /* debug-y; hide for the polished view */
-  /* v0.3: drop the score column — admin-set tables go in the footer
-     strip instead, and team names get the freed width. */
+  /* v0.4: team# chip lives between the seed gutter and the name. */
   .match-row {
     display: grid;
-    grid-template-columns: 26px 1fr;
-    gap: 10px;
+    grid-template-columns: 22px 42px 1fr;
+    gap: 8px;
     align-items: center;
     padding: 9px 10px;
     font-size: 0.92rem;
     line-height: 1.25;
     transition: opacity 0.15s;
   }
+  .team-num {
+    font-family: 'SF Mono', Consolas, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.74rem; font-weight: 700;
+    color: var(--spm-accent);
+    background: rgba(0,49,161,0.08);
+    padding: 2px 6px; border-radius: 6px;
+    text-align: center;
+  }
+  .match-row.loser .team-num { color: var(--muted); background: rgba(0,0,0,0.04); }
   .match-footer {
     font-size: 0.7rem; font-weight: 700;
     color: var(--muted);
@@ -370,24 +379,19 @@ setInterval(checkVersion, 30000);
    BreakOut — single-elimination bracket renderer PoC
    ════════════════════════════════════════════════════════════════════════ */
 
-const TEAMS_64 = [
-  "Average Joes", "Bandits", "Rack 'n' Roll", "Sloppy Joes",
-  "Top Shelf", "I'm Confused", "Bad Ideas", "Pumped Up Kicks",
-  "The Pooligans", "Rack'em Rebels", "O'Brien's Breakers", "Under the Influence",
-  "Smashing Kitties", "Chalkin Chit", "Cute Shots", "Pocket Rabbits",
-  "Rack'em & Weep", "Chalk & Giggles", "Blazed & Confused", "Pocket Full of Dreams",
-  "O.C. Ballers", "Inglorious Billiards", "Black Flags", "Mighty Mongoose",
-  "Side Pocket", "Cue Crew", "Combo Breakers", "The Hustlers",
-  "Felt Fanatics", "Bridge Bandits", "Cushion Crashers", "Eight Ballers",
-  "Hold My Beer", "Stick Wizards", "Triangle Trouble", "Banked Right",
-  "Run the Rack", "Scratch That", "Tip Top", "Slop Squad",
-  "Kiss Off", "Snap Pool", "Lag Dogs", "Drop Shots",
-  "Sharp Shooters", "Wild Strokes", "Blue Chalk", "Felt Force",
-  "9-Ball Knights", "Combo Kids", "Side Spin", "Backspin",
-  "Push Out", "Free Stroke", "Rack 'em Up", "Off the Rail",
-  "Pocket Lint", "Soft Break", "Hard Stop", "Long Rail",
-  "Cue Tippers", "Bank Job", "Cross Side", "Final Rack"
-];
+/* v0.4: team list now comes from breakout.teams (loaded once at init,
+ *  refreshed when size selector changes). Each team has { id, number, name }.
+ *  Seeded in number order — team with the smallest number = seed 1. */
+const SCHEMA = 'breakout';
+const HEADERS_READ_DB = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': SCHEMA };
+let _teams = [];
+
+async function loadTeams() {
+  const r = await fetch(SB_URL + '/rest/v1/teams?order=number.asc&select=id,number,name', { headers: HEADERS_READ_DB });
+  if (!r.ok) throw new Error('Could not load teams: HTTP ' + r.status);
+  _teams = await r.json();
+}
+function pad4(n) { return String(n).padStart(4, '0'); }
 
 /* Standard bracket seeding so seed 1 and seed 2 land in opposite halves. */
 function seedOrder(n) {
@@ -454,8 +458,11 @@ function assignTable(roundMatches, matchIdx) {
 function buildBracket(size) {
   const rounds = Math.log2(size);
   if (!Number.isInteger(rounds)) throw new Error('Size must be a power of 2');
+  if (_teams.length < size) {
+    throw new Error('Need at least ' + size + ' teams in the DB (have ' + _teams.length + '). Go to admin and add more.');
+  }
   const order = seedOrder(size);
-  const teams = TEAMS_64.slice(0, size).map((name, i) => ({ name, seed: i + 1 }));
+  const teams = _teams.slice(0, size).map((t, i) => ({ name: t.name, number: t.number, seed: i + 1 }));
 
   const matches = [];
   // Round 1
@@ -511,14 +518,23 @@ function esc(s) {
 
 function renderRow(team, isWinner) {
   const cls = 'match-row ' + (isWinner ? 'winner' : 'loser');
-  return '<div class="' + cls + '" data-team="' + esc(team.name.toLowerCase()) + '">'
+  return '<div class="' + cls + '" data-team="' + esc(team.name.toLowerCase()) + '" data-team-num="' + team.number + '">'
     + '<span class="seed">' + esc(team.seed) + '</span>'
+    + '<span class="team-num" title="Team number">' + pad4(team.number) + '</span>'
     + '<span class="name" title="' + esc(team.name) + '">' + esc(team.name) + '</span>'
     + '</div>';
 }
 
 function render(size) {
-  const { rounds, byRound, matches } = buildBracket(size);
+  try {
+    var built = buildBracket(size);
+  } catch (e) {
+    document.getElementById('bracket').innerHTML =
+      '<div style="padding:30px;color:var(--danger);font-weight:700">' + esc(e.message) + '</div>';
+    document.getElementById('connectors').innerHTML = '';
+    return;
+  }
+  const { rounds, byRound, matches } = built;
   const cfg = roundConfig(rounds);
   const bracket = document.getElementById('bracket');
   bracket.innerHTML = byRound.map((roundMatches, idx) => {
@@ -604,6 +620,17 @@ document.querySelectorAll('#sizePicker button').forEach(b => {
   b.addEventListener('click', () => setSize(parseInt(b.dataset.size, 10)));
 });
 
+/* Boot: fetch teams first, then render the default bracket. */
+(async () => {
+  try { await loadTeams(); }
+  catch (e) {
+    document.getElementById('bracket').innerHTML =
+      '<div style="padding:30px;color:var(--danger);font-weight:700">' + esc(e.message) + '</div>';
+    return;
+  }
+  setSize(_currentSize);
+})();
+
 /* ── Search: find a team, highlight every match they're in,
  *  auto-scroll the bracket so the rightmost (latest) match
  *  centers in the viewport. Live as you type.                ── */
@@ -664,7 +691,6 @@ window.addEventListener('resize', () => {
   });
 });
 
-setSize(_currentSize);
 </script>
 </body>
 </html>
