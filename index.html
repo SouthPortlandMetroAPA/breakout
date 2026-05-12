@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BreakOut — Bracket renderer (PoC)</title>
+<style>
+  :root {
+    --spm-primary: #ea002a;
+    --spm-accent:  #0031a1;
+    --bg:    #f3f3f3;
+    --card:  #ffffff;
+    --text:  #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --border-strong: #d1d5db;
+    --connector: #cbd5e1;
+    --radius: 10px;
+    --pill: 999px;
+    --cell-w: 230px;
+    --cell-w-mob: 190px;
+    --round-gap: 56px;
+    --round-gap-mob: 36px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* ── Header ───────────────────────────────────────────── */
+  .header {
+    background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
+    color: #fff; padding: 16px 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .header-inner {
+    max-width: 1400px; margin: 0 auto;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .header h1 {
+    font-size: 1.3rem; font-weight: 900; letter-spacing: -0.01em;
+    display: inline-flex; align-items: center; gap: 8px;
+    user-select: none;
+  }
+  .brand-dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.25);
+  }
+  .badge {
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 9px; border-radius: var(--pill);
+    background: rgba(255,255,255,0.18);
+    border: 1.5px solid rgba(255,255,255,0.45);
+  }
+  .header-spacer { flex: 1 1 auto; }
+  .size-picker {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(255,255,255,0.12);
+    padding: 4px; border-radius: var(--pill);
+    border: 1.5px solid rgba(255,255,255,0.35);
+  }
+  .size-picker button {
+    background: transparent; color: #fff; border: 0;
+    padding: 5px 13px; border-radius: var(--pill);
+    font-size: 0.84rem; font-weight: 700;
+    cursor: pointer; font-family: inherit;
+    font-variant-numeric: tabular-nums;
+  }
+  .size-picker button:hover { background: rgba(255,255,255,0.16); }
+  .size-picker button.active { background: #fff; color: var(--spm-accent); }
+
+  /* ── Bracket viewport ─────────────────────────────────── */
+  .viewport {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 14px 16px 36px;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+  /* Subtle scrollbar */
+  .viewport::-webkit-scrollbar { height: 10px; }
+  .viewport::-webkit-scrollbar-track { background: #e5e7eb; }
+  .viewport::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 5px; }
+
+  .bracket-wrap {
+    position: relative;
+    display: inline-block;       /* shrink-wrap so viewport reports correct width */
+    min-width: 100%;
+    padding: 0;
+  }
+  .connectors {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  .bracket {
+    position: relative;
+    display: flex; align-items: stretch;
+    gap: var(--round-gap);
+  }
+  @media (max-width: 767px) {
+    .bracket { gap: var(--round-gap-mob); }
+  }
+
+  .round {
+    display: flex; flex-direction: column;
+    flex: 0 0 auto;
+    width: var(--cell-w);
+    scroll-snap-align: start;
+  }
+  @media (max-width: 767px) {
+    .round { width: var(--cell-w-mob); }
+  }
+
+  .round-label {
+    font-size: 0.72rem; font-weight: 800;
+    color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.09em;
+    padding-bottom: 10px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 6px;
+  }
+
+  /* Each round's match column shares one flexible vertical area.
+     space-around distributes the matches so the connectors line up
+     to the midpoints between paired matches in the previous round. */
+  .matches {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    align-items: stretch;
+  }
+
+  /* ── Match cell ───────────────────────────────────────── */
+  .match {
+    position: relative;
+    background: var(--card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    overflow: hidden;
+    margin: 6px 0;
+  }
+  .match-id {
+    position: absolute;
+    top: -8px; left: 10px;
+    font-size: 0.6rem; font-weight: 700;
+    color: var(--muted);
+    background: var(--bg);
+    padding: 0 5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+  }
+  .match-row {
+    display: grid;
+    grid-template-columns: 26px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 9px 10px;
+    font-size: 0.92rem;
+    line-height: 1.25;
+    transition: opacity 0.15s;
+  }
+  @media (max-width: 767px) {
+    .match-row { font-size: 0.86rem; padding: 8px; }
+  }
+  .match-row + .match-row { border-top: 1px solid var(--border); }
+  .seed {
+    color: var(--muted);
+    font-size: 0.74rem; font-weight: 600;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .name {
+    color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .score {
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    min-width: 22px; text-align: right;
+  }
+  .match-row.winner .name,
+  .match-row.winner .score { font-weight: 800; }
+  .match-row.loser  { opacity: 0.55; }
+  .match-row.loser  .name,
+  .match-row.loser  .score { font-weight: 500; }
+
+  /* Final match: subtle red-blue accent on the winning row only */
+  .round.is-final .match-row.winner {
+    background: linear-gradient(90deg, rgba(234,0,42,0.06), rgba(0,49,161,0.06));
+  }
+
+  /* ── Footer note ──────────────────────────────────────── */
+  .foot {
+    max-width: 1400px; margin: 0 auto;
+    padding: 0 20px 24px;
+    color: var(--muted); font-size: 0.78rem; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <h1><span class="brand-dot"></span>BreakOut</h1>
+    <span class="badge">PoC · Single elimination</span>
+    <div class="header-spacer"></div>
+    <div class="size-picker" id="sizePicker" role="tablist" aria-label="Bracket size">
+      <button data-size="4">4</button>
+      <button data-size="8">8</button>
+      <button data-size="16" class="active">16</button>
+      <button data-size="32">32</button>
+    </div>
+  </div>
+</div>
+
+<div class="viewport" id="viewport">
+  <div class="bracket-wrap" id="wrap">
+    <svg class="connectors" id="connectors" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
+    <div class="bracket" id="bracket"></div>
+  </div>
+</div>
+
+<p class="foot">Proof of concept. Sample data is deterministic — pick a size and you’ll get the same bracket every time so the layout is comparable across reloads. Lower seeds win ~75 % of matches; upsets fire roughly twice as often when the seed gap is small.</p>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   BreakOut — single-elimination bracket renderer PoC
+   ════════════════════════════════════════════════════════════════════════ */
+
+const TEAMS_64 = [
+  "Average Joes", "Bandits", "Rack 'n' Roll", "Sloppy Joes",
+  "Top Shelf", "I'm Confused", "Bad Ideas", "Pumped Up Kicks",
+  "The Pooligans", "Rack'em Rebels", "O'Brien's Breakers", "Under the Influence",
+  "Smashing Kitties", "Chalkin Chit", "Cute Shots", "Pocket Rabbits",
+  "Rack'em & Weep", "Chalk & Giggles", "Blazed & Confused", "Pocket Full of Dreams",
+  "O.C. Ballers", "Inglorious Billiards", "Black Flags", "Mighty Mongoose",
+  "Side Pocket", "Cue Crew", "Combo Breakers", "The Hustlers",
+  "Felt Fanatics", "Bridge Bandits", "Cushion Crashers", "Eight Ballers",
+  "Hold My Beer", "Stick Wizards", "Triangle Trouble", "Banked Right",
+  "Run the Rack", "Scratch That", "Tip Top", "Slop Squad",
+  "Kiss Off", "Snap Pool", "Lag Dogs", "Drop Shots",
+  "Sharp Shooters", "Wild Strokes", "Blue Chalk", "Felt Force",
+  "9-Ball Knights", "Combo Kids", "Side Spin", "Backspin",
+  "Push Out", "Free Stroke", "Rack 'em Up", "Off the Rail",
+  "Pocket Lint", "Soft Break", "Hard Stop", "Long Rail",
+  "Cue Tippers", "Bank Job", "Cross Side", "Final Rack"
+];
+
+/* Standard bracket seeding so seed 1 and seed 2 land in opposite halves. */
+function seedOrder(n) {
+  let order = [1];
+  let size = 1;
+  while (size < n) {
+    const next = [];
+    const m = size * 2 + 1;
+    for (const s of order) { next.push(s); next.push(m - s); }
+    order = next;
+    size *= 2;
+  }
+  return order;
+}
+
+/* Cheap deterministic PRNG so the same bracket size always renders the same. */
+function makePrng(seed) {
+  let s = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+  return () => {
+    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+    return s / 0x7FFFFFFF;
+  };
+}
+
+function roundLabels(totalRounds) {
+  const out = [];
+  for (let r = 1; r <= totalRounds; r++) {
+    if (r === totalRounds)     out.push('Final');
+    else if (r === totalRounds - 1) out.push('Semifinals');
+    else if (r === totalRounds - 2) out.push('Quarterfinals');
+    else {
+      const remaining = Math.pow(2, totalRounds - r + 1);
+      out.push('Round of ' + remaining);
+    }
+  }
+  return out;
+}
+
+/* Build the full bracket tree + resolve sample winners through to Final. */
+function buildBracket(size) {
+  const rounds = Math.log2(size);
+  if (!Number.isInteger(rounds)) throw new Error('Size must be a power of 2');
+  const order = seedOrder(size);
+  const teams = TEAMS_64.slice(0, size).map((name, i) => ({ name, seed: i + 1 }));
+
+  const matches = [];
+  // Round 1
+  const r1 = [];
+  for (let i = 0; i < size / 2; i++) {
+    const a = teams[order[i*2] - 1];
+    const b = teams[order[i*2 + 1] - 1];
+    const m = { id: 'r1m' + (i + 1), round: 1, top: a, bottom: b, feeders: null };
+    r1.push(m); matches.push(m);
+  }
+  // Subsequent rounds — pairs feed into one match
+  let prev = r1;
+  for (let r = 2; r <= rounds; r++) {
+    const cur = [];
+    for (let i = 0; i < prev.length / 2; i++) {
+      const f1 = prev[i*2], f2 = prev[i*2 + 1];
+      const m = { id: 'r' + r + 'm' + (i + 1), round: r, top: null, bottom: null, feeders: [f1.id, f2.id] };
+      f1.feedsIntoId = m.id;
+      f2.feedsIntoId = m.id;
+      cur.push(m); matches.push(m);
+    }
+    prev = cur;
+  }
+
+  // Sample-data winner resolution
+  const prng = makePrng(size);
+  const byId = new Map(matches.map(m => [m.id, m]));
+  for (const m of matches) {
+    if (m.feeders) {
+      m.top    = byId.get(m.feeders[0]).winner;
+      m.bottom = byId.get(m.feeders[1]).winner;
+    }
+    const top = m.top, bot = m.bottom;
+    const gap = Math.abs(top.seed - bot.seed);
+    const upsetChance = gap > 4 ? 0.15 : 0.30;
+    const lowerSeed = top.seed < bot.seed ? top : bot;
+    const higherSeed = top.seed < bot.seed ? bot : top;
+    const upset = prng() < upsetChance;
+    m.winner = upset ? higherSeed : lowerSeed;
+    m.loser  = upset ? lowerSeed  : higherSeed;
+    m.topWins = m.winner === top;
+    // Pool-league flavored scores (race-to-5)
+    m.scoreWinner = 5;
+    m.scoreLoser  = Math.floor(prng() * 5); // 0–4
+  }
+
+  // Group by round
+  const byRound = [];
+  for (let r = 1; r <= rounds; r++) byRound.push(matches.filter(m => m.round === r));
+  return { rounds, byRound, matches };
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderRow(team, score, isWinner) {
+  const cls = 'match-row ' + (isWinner ? 'winner' : 'loser');
+  return '<div class="' + cls + '">'
+    + '<span class="seed">' + esc(team.seed) + '</span>'
+    + '<span class="name" title="' + esc(team.name) + '">' + esc(team.name) + '</span>'
+    + '<span class="score">' + esc(score) + '</span>'
+    + '</div>';
+}
+
+function render(size) {
+  const { rounds, byRound, matches } = buildBracket(size);
+  const labels = roundLabels(rounds);
+  const bracket = document.getElementById('bracket');
+  bracket.innerHTML = byRound.map((roundMatches, idx) => {
+    const isFinal = idx === rounds - 1;
+    return '<div class="round' + (isFinal ? ' is-final' : '') + '">'
+      + '<div class="round-label">' + esc(labels[idx]) + '</div>'
+      + '<div class="matches">'
+      +   roundMatches.map(m => {
+            const topWin = m.topWins;
+            return '<div class="match" data-match-id="' + m.id + '">'
+              + '<span class="match-id">' + esc(m.id.toUpperCase()) + '</span>'
+              + renderRow(m.top,    topWin ? m.scoreWinner : m.scoreLoser,  topWin)
+              + renderRow(m.bottom, topWin ? m.scoreLoser  : m.scoreWinner, !topWin)
+              + '</div>';
+          }).join('')
+      + '</div>'
+      + '</div>';
+  }).join('');
+  // Wait a tick so layout settles, then draw connectors
+  requestAnimationFrame(() => drawConnectors(matches));
+}
+
+/* Orthogonal SVG connectors recomputed from each match cell's bounding box.
+   Per the spec: connectors should survive resize, byes, odd spacing —
+   CSS-only patterns break for any of those, SVG paths handle them clean. */
+function drawConnectors(matches) {
+  const svg = document.getElementById('connectors');
+  const wrap = document.getElementById('wrap');
+  const w = wrap.offsetWidth, h = wrap.offsetHeight;
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  svg.innerHTML = '';
+  const wrapRect = wrap.getBoundingClientRect();
+  for (const m of matches) {
+    if (!m.feedsIntoId) continue;
+    const fromEl = document.querySelector('[data-match-id="' + m.id + '"]');
+    const toEl   = document.querySelector('[data-match-id="' + m.feedsIntoId + '"]');
+    if (!fromEl || !toEl) continue;
+    const fr = fromEl.getBoundingClientRect();
+    const tr = toEl.getBoundingClientRect();
+    const x1 = (fr.right - wrapRect.left);
+    const y1 = (fr.top   - wrapRect.top) + fr.height / 2;
+    const x2 = (tr.left  - wrapRect.left);
+    const y2 = (tr.top   - wrapRect.top) + tr.height / 2;
+    const xMid = (x1 + x2) / 2;
+    const d = 'M ' + x1 + ' ' + y1
+            + ' L ' + xMid + ' ' + y1
+            + ' L ' + xMid + ' ' + y2
+            + ' L ' + x2 + ' ' + y2;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'var(--connector)');
+    path.setAttribute('stroke-width', '1.5');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(path);
+  }
+}
+
+/* ── Init ──────────────────────────────────────────────────────────── */
+let _currentSize = 16;
+function setSize(n) {
+  _currentSize = n;
+  document.querySelectorAll('#sizePicker button').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.size, 10) === n);
+  });
+  render(n);
+}
+
+document.querySelectorAll('#sizePicker button').forEach(b => {
+  b.addEventListener('click', () => setSize(parseInt(b.dataset.size, 10)));
+});
+
+// Redraw connectors on resize (debounced)
+let _resizeRaf = null;
+window.addEventListener('resize', () => {
+  if (_resizeRaf) return;
+  _resizeRaf = requestAnimationFrame(() => {
+    _resizeRaf = null;
+    render(_currentSize);  // simplest: rerender everything
+  });
+});
+
+setSize(_currentSize);
+</script>
+</body>
+</html>
