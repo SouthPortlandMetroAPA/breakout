@@ -145,17 +145,7 @@
     overflow: hidden;
     margin: 6px 0;
   }
-  .match-id {
-    position: absolute;
-    top: -8px; left: 10px;
-    font-size: 0.6rem; font-weight: 700;
-    color: var(--muted);
-    background: var(--bg);
-    padding: 0 5px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    font-variant-numeric: tabular-nums;
-  }
+  .match-id { display: none; }   /* debug-y; hide for the polished view */
   .match-row {
     display: grid;
     grid-template-columns: 26px 1fr auto;
@@ -416,8 +406,11 @@ function drawConnectors(matches) {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', d);
     path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', 'var(--connector)');
-    path.setAttribute('stroke-width', '1.5');
+    // Direct hex — CSS vars in SVG presentation attributes don't resolve
+    // consistently across browsers.
+    path.setAttribute('stroke', '#94a3b8');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-linecap', 'square');
     path.setAttribute('stroke-linejoin', 'round');
     svg.appendChild(path);
   }
