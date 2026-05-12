@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BreakOut — Bracket renderer (PoC)</title>
+<title>BreakOut — Tournament viewer (PoC)</title>
 <style>
   :root {
     --spm-primary: #ea002a;
@@ -14,95 +14,82 @@
     --muted: #6b7280;
     --border: #e5e7eb;
     --border-strong: #d1d5db;
-    --connector: #cbd5e1;
+    --connector: #94a3b8;
+    --drop: #f59e0b;
     --radius: 10px;
     --pill: 999px;
-    --cell-w: 230px;
-    --cell-w-mob: 190px;
-    --round-gap: 56px;
-    --round-gap-mob: 36px;
+    --cell-w: 240px;
+    --cell-w-mob: 200px;
+    --round-gap: 52px;
+    --round-gap-mob: 34px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
-  /* ── Header ───────────────────────────────────────────── */
   .header {
     background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
-    color: #fff; padding: 16px 20px;
+    color: #fff; padding: 14px 18px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     position: sticky; top: 0; z-index: 10;
   }
   .header-inner {
-    max-width: 1400px; margin: 0 auto;
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    max-width: 1500px; margin: 0 auto;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   }
   .header h1 {
-    font-size: 1.3rem; font-weight: 900; letter-spacing: -0.01em;
+    font-size: 1.25rem; font-weight: 900; letter-spacing: -0.01em;
     display: inline-flex; align-items: center; gap: 8px;
     user-select: none;
   }
-  .brand-dot {
-    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
-    background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.25);
-  }
-  .badge {
-    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 3px 9px; border-radius: var(--pill);
-    background: rgba(255,255,255,0.18);
-    border: 1.5px solid rgba(255,255,255,0.45);
-  }
+  .brand-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.25); }
+  .badge { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 9px; border-radius: var(--pill); background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.45); }
   .header-spacer { flex: 1 1 auto; }
-  .size-picker {
-    display: inline-flex; align-items: center; gap: 4px;
-    background: rgba(255,255,255,0.12);
-    padding: 4px; border-radius: var(--pill);
-    border: 1.5px solid rgba(255,255,255,0.35);
-  }
-  .size-picker button {
-    background: transparent; color: #fff; border: 0;
-    padding: 5px 13px; border-radius: var(--pill);
-    font-size: 0.84rem; font-weight: 700;
-    cursor: pointer; font-family: inherit;
-    font-variant-numeric: tabular-nums;
-  }
-  .size-picker button:hover { background: rgba(255,255,255,0.16); }
-  .size-picker button.active { background: #fff; color: var(--spm-accent); }
 
-  /* ── Bracket viewport ─────────────────────────────────── */
+  /* Search */
+  .search { position: relative; flex: 0 1 280px; min-width: 180px; }
+  .search input { width: 100%; background: rgba(255,255,255,0.16); border: 1.5px solid rgba(255,255,255,0.4); color: #fff; font: inherit; font-size: 0.86rem; padding: 6px 30px 6px 32px; border-radius: var(--pill); outline: none; }
+  .search input::placeholder { color: rgba(255,255,255,0.7); }
+  .search input:focus { background: rgba(255,255,255,0.24); border-color: rgba(255,255,255,0.75); }
+  .search svg.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; opacity: 0.7; pointer-events: none; }
+  .search button.search-x { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: transparent; border: 0; cursor: pointer; color: rgba(255,255,255,0.75); font-size: 1.1rem; width: 22px; height: 22px; border-radius: 50%; display: none; align-items: center; justify-content: center; line-height: 1; padding: 0; }
+  .search.has-value button.search-x { display: inline-flex; }
+  .search button.search-x:hover { background: rgba(255,255,255,0.18); color: #fff; }
+  .search-result { font-size: 0.72rem; color: rgba(255,255,255,0.88); padding: 0 4px; }
+
+  /* Bracket sections (stacked vertically) */
+  .bracket-section { padding: 14px 0 4px; border-bottom: 1px solid var(--border); }
+  .bracket-section:last-of-type { border-bottom: 0; }
+  .section-title {
+    padding: 4px 18px 8px;
+    font-size: 0.86rem; font-weight: 800; letter-spacing: 0.02em;
+    display: flex; align-items: center; gap: 10px;
+    color: var(--spm-accent);
+    max-width: 1500px; margin: 0 auto;
+  }
+  .section-title .pill {
+    display: inline-block; font-size: 0.66rem; font-weight: 800;
+    color: #fff; background: var(--spm-accent);
+    padding: 2px 9px; border-radius: var(--pill);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .section-title .pill.alt { background: var(--spm-primary); }
+  .section-title .pill.consolation { background: #6b7280; }
+  .section-title .desc { font-weight: 600; color: var(--muted); font-size: 0.78rem; }
+
   .viewport {
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 14px 16px 36px;
+    overflow-x: auto; overflow-y: hidden;
+    padding: 4px 16px 24px;
     -webkit-overflow-scrolling: touch;
     scroll-snap-type: x proximity;
   }
-  /* Subtle scrollbar */
-  .viewport::-webkit-scrollbar { height: 10px; }
+  .viewport::-webkit-scrollbar { height: 9px; }
   .viewport::-webkit-scrollbar-track { background: #e5e7eb; }
   .viewport::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 5px; }
 
-  .bracket-wrap {
-    position: relative;
-    display: inline-block;       /* shrink-wrap so viewport reports correct width */
-    min-width: 100%;
-    padding: 0;
-  }
-  .connectors {
-    position: absolute;
-    top: 0; left: 0;
-    pointer-events: none;
-    overflow: visible;
-  }
-
-  .bracket {
-    position: relative;
-    display: flex; align-items: stretch;
-    gap: var(--round-gap);
-  }
-  @media (max-width: 767px) {
-    .bracket { gap: var(--round-gap-mob); }
-  }
+  .bracket-wrap { position: relative; display: inline-block; min-width: 100%; }
+  .connectors { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
+  .bracket { position: relative; display: flex; align-items: stretch; gap: var(--round-gap); }
+  @media (max-width: 767px) { .bracket { gap: var(--round-gap-mob); } }
 
   .round {
     display: flex; flex-direction: column;
@@ -110,47 +97,19 @@
     width: var(--cell-w);
     scroll-snap-align: start;
   }
-  @media (max-width: 767px) {
-    .round { width: var(--cell-w-mob); }
-  }
+  @media (max-width: 767px) { .round { width: var(--cell-w-mob); } }
 
   .round-header {
-    text-align: center;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 6px;
+    text-align: center; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border); margin-bottom: 6px;
   }
-  .round-day {
-    font-size: 0.66rem; font-weight: 800;
-    color: var(--muted);
-    text-transform: uppercase; letter-spacing: 0.1em;
-    margin-bottom: 1px;
-  }
-  .round-time {
-    font-size: 0.95rem; font-weight: 800;
-    color: var(--text);
-    letter-spacing: 0.01em;
-    font-variant-numeric: tabular-nums;
-  }
-  .round-payout {
-    font-size: 0.76rem; font-weight: 700;
-    color: #15803d;
-    margin-top: 2px;
-    font-variant-numeric: tabular-nums;
-  }
+  .round-day { font-size: 0.66rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1px; }
+  .round-time { font-size: 0.95rem; font-weight: 800; color: var(--text); letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
+  .round-payout { font-size: 0.76rem; font-weight: 700; color: #15803d; margin-top: 2px; font-variant-numeric: tabular-nums; }
 
-  /* Each round's match column shares one flexible vertical area.
-     space-around distributes the matches so the connectors line up
-     to the midpoints between paired matches in the previous round. */
-  .matches {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-around;
-    align-items: stretch;
-  }
+  .matches { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-around; align-items: stretch; }
 
-  /* ── Match cell ───────────────────────────────────────── */
+  /* ── Match cell ───────────────────────────── */
   .match {
     position: relative;
     background: var(--card);
@@ -160,8 +119,20 @@
     overflow: hidden;
     margin: 6px 0;
   }
-  .match-id { display: none; }   /* debug-y; hide for the polished view */
-  /* v0.4: team# chip lives between the seed gutter and the name. */
+  .match-top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 10px;
+    font-size: 0.66rem; font-weight: 800;
+    color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    background: #fafafa;
+    border-bottom: 1px solid var(--border);
+  }
+  .match-top .mno {
+    color: var(--spm-accent);
+    font-variant-numeric: tabular-nums;
+  }
+
   .match-row {
     display: grid;
     grid-template-columns: 22px 42px 1fr;
@@ -172,126 +143,54 @@
     line-height: 1.25;
     transition: opacity 0.15s;
   }
-  .team-num {
-    font-family: 'SF Mono', Consolas, Menlo, monospace;
-    font-variant-numeric: tabular-nums;
-    font-size: 0.74rem; font-weight: 700;
-    color: var(--spm-accent);
-    background: rgba(0,49,161,0.08);
-    padding: 2px 6px; border-radius: 6px;
-    text-align: center;
-  }
-  .match-row.loser .team-num { color: var(--muted); background: rgba(0,0,0,0.04); }
-  .match-footer {
-    font-size: 0.7rem; font-weight: 700;
+  @media (max-width: 767px) { .match-row { font-size: 0.86rem; padding: 8px; } }
+  .match-row + .match-row { border-top: 1px solid var(--border); }
+  .seed { color: var(--muted); font-size: 0.72rem; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+  .team-num { font-family: 'SF Mono', Consolas, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 0.74rem; font-weight: 700; color: var(--spm-accent); background: rgba(0,49,161,0.08); padding: 2px 6px; border-radius: 6px; text-align: center; }
+  .name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .match-row.winner .name { font-weight: 800; }
+  .match-row.loser  { opacity: 0.55; }
+  .match-row.loser  .name { font-weight: 500; }
+  .match-row.loser  .team-num { color: var(--muted); background: rgba(0,0,0,0.04); }
+
+  .match-foot {
+    font-size: 0.66rem; font-weight: 700;
     color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.06em;
     padding: 4px 10px;
     border-top: 1px solid var(--border);
     background: #fafafa;
-    display: flex; justify-content: space-between; align-items: center;
+    display: flex; flex-direction: column; gap: 1px;
   }
-  .match-table { font-variant-numeric: tabular-nums; }
-  .match-table.unassigned { color: #cbd5e1; font-style: italic; font-weight: 600; }
-  @media (max-width: 767px) {
-    .match-row { font-size: 0.86rem; padding: 8px; }
-  }
-  .match-row + .match-row { border-top: 1px solid var(--border); }
-  .seed {
-    color: var(--muted);
-    font-size: 0.74rem; font-weight: 600;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-  .name {
-    color: var(--text);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .score {
-    font-variant-numeric: tabular-nums;
-    color: var(--text);
-    min-width: 22px; text-align: right;
-  }
-  .match-row.winner .name { font-weight: 800; }
-  .match-row.loser  { opacity: 0.55; }
-  .match-row.loser  .name { font-weight: 500; }
+  .match-foot .row { display: flex; justify-content: space-between; align-items: center; }
+  .match-foot .drop { color: #b45309; font-weight: 800; }
+  .match-foot .from { color: var(--muted); font-weight: 700; }
 
-  /* Final match: subtle red-blue accent on the winning row only */
+  /* Final-of-each-bracket emphasis */
   .round.is-final .match-row.winner {
     background: linear-gradient(90deg, rgba(234,0,42,0.06), rgba(0,49,161,0.06));
   }
-
-  /* Search highlight: blue ring on every match the team is in. */
-  .match.match-hit {
-    box-shadow: 0 0 0 3px rgba(0,49,161,0.45), 0 1px 3px rgba(0,0,0,0.06);
-    border-color: var(--spm-accent);
-  }
-  /* Slightly stronger ring on the latest (rightmost) hit. */
-  .match.match-hit-latest {
-    box-shadow: 0 0 0 3px var(--spm-primary), 0 4px 14px rgba(0,0,0,0.12);
-    border-color: var(--spm-primary);
+  .champion-tag {
+    display: inline-block; padding: 2px 10px; border-radius: var(--pill);
+    background: linear-gradient(90deg, var(--spm-primary), var(--spm-accent));
+    color: #fff; font-size: 0.62rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-left: 6px;
   }
 
-  /* Search input in the header */
-  .search {
-    position: relative;
-    flex: 0 1 280px; min-width: 180px;
-  }
-  .search input {
-    width: 100%;
-    background: rgba(255,255,255,0.16);
-    border: 1.5px solid rgba(255,255,255,0.4);
-    color: #fff;
-    font: inherit; font-size: 0.86rem;
-    padding: 6px 30px 6px 32px;
-    border-radius: var(--pill);
-    outline: none;
-  }
-  .search input::placeholder { color: rgba(255,255,255,0.7); }
-  .search input:focus { background: rgba(255,255,255,0.24); border-color: rgba(255,255,255,0.75); }
-  .search svg.search-icon {
-    position: absolute; left: 10px; top: 50%;
-    transform: translateY(-50%);
-    width: 14px; height: 14px;
-    opacity: 0.7; pointer-events: none;
-    color: #fff;
-  }
-  .search button.search-x {
-    position: absolute; right: 6px; top: 50%;
-    transform: translateY(-50%);
-    background: transparent; border: 0; cursor: pointer;
-    color: rgba(255,255,255,0.75); font-size: 1.1rem;
-    width: 22px; height: 22px;
-    border-radius: 50%;
-    display: none;
-    align-items: center; justify-content: center;
-    line-height: 1; padding: 0;
-  }
-  .search.has-value button.search-x { display: inline-flex; }
-  .search button.search-x:hover { background: rgba(255,255,255,0.18); color: #fff; }
-  .search-result {
-    font-size: 0.72rem; color: rgba(255,255,255,0.85);
-    padding: 0 4px;
-  }
+  /* Search match highlight */
+  .match.match-hit { box-shadow: 0 0 0 3px rgba(0,49,161,0.45), 0 1px 3px rgba(0,0,0,0.06); border-color: var(--spm-accent); }
+  .match.match-hit-latest { box-shadow: 0 0 0 3px var(--spm-primary), 0 4px 14px rgba(0,0,0,0.12); border-color: var(--spm-primary); }
 
-  /* ── Auto-update overlay ──────────────────────────────── */
-  .update-overlay {
-    position: fixed; inset: 0;
-    background: rgba(10,20,40,0.72); z-index: 9999;
-    display: none; align-items: center; justify-content: center; padding: 24px;
-  }
+  /* Auto-update */
+  .update-overlay { position: fixed; inset: 0; background: rgba(10,20,40,0.72); z-index: 9999; display: none; align-items: center; justify-content: center; padding: 24px; }
   .update-overlay.shown { display: flex; }
   .update-box { background: #fff; border-radius: var(--radius); padding: 32px; max-width: 380px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
   .update-spinner { width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 50%; border: 5px solid rgba(0,49,161,0.15); border-top-color: var(--spm-accent); animation: spin 0.85s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .update-title { font-size: 1.1rem; font-weight: 800; color: var(--spm-accent); margin-bottom: 6px; }
 
-  /* ── Footer note ──────────────────────────────────────── */
-  .foot {
-    max-width: 1400px; margin: 0 auto;
-    padding: 0 20px 24px;
-    color: var(--muted); font-size: 0.78rem; line-height: 1.5;
-  }
+  .foot { max-width: 1500px; margin: 0 auto; padding: 6px 20px 24px; color: var(--muted); font-size: 0.78rem; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -307,7 +206,7 @@
 <div class="header">
   <div class="header-inner">
     <h1><span class="brand-dot"></span>BreakOut</h1>
-    <span class="badge">PoC · Single elimination</span>
+    <span class="badge">PoC · 12 + 12 → 64</span>
     <div class="search" id="searchWrap">
       <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
       <input type="text" id="searchInput" placeholder="Search team — jump to latest match" autocomplete="off">
@@ -315,31 +214,35 @@
     </div>
     <span class="search-result" id="searchResult"></span>
     <div class="header-spacer"></div>
-    <div class="size-picker" id="sizePicker" role="tablist" aria-label="Bracket size">
-      <button data-size="4">4</button>
-      <button data-size="8">8</button>
-      <button data-size="16" class="active">16</button>
-      <button data-size="32">32</button>
-    </div>
   </div>
 </div>
 
+<div id="tournamentRoot"></div>
+
+<p class="foot">PoC — sample winners are deterministic so the structure is comparable across reloads. Two 12-team brackets feed losers into the 64-team consolation at staggered rounds; the 64-team alternates "integrate losers" / "winners advance" through to the final. Loser destinations and entry sources are annotated on every match.</p>
+
 <script>
-// Cache-bust version.js on every page load so a deployed bump isn't shadowed
-// by the browser's disk-cache copy. Same pattern as PoolPics / RackTime.
 document.write('<script src="version.js?_=' + Date.now() + '"><\/script>');
 </script>
 <script>
 /* ════════════════════════════════════════════════════════════════════════
-   AUTO-UPDATE — poll apa_core.apps.BreakOut every 30s; on mismatch, show
-   the overlay and poll version.js until the deployed copy matches, then
-   force-reload with a cache-busting query so the new HTML is fetched.
+   BreakOut — tournament viewer
+     Two 12-team brackets (modified SE w/ 4 byes each, top 4 seeds bye R1)
+     feeding losers into a 64-slot consolation bracket that alternates
+     "integrate 12-team losers" and "carry winners forward" rounds.
    ════════════════════════════════════════════════════════════════════════ */
 const APP_NAME = 'BreakOut';
-const SB_URL   = 'https://dqzbekoaysgaiqljueac.supabase.co';
-const SB_ANON  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+const SB_URL  = 'https://dqzbekoaysgaiqljueac.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+const SCHEMA = 'breakout';
 const HEADERS_APA = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': 'apa_core' };
+const HEADERS_DB  = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': SCHEMA };
+
 let _versionMismatch = false;
+let _teams = [];        // sorted ASC by number
+let _tournament = null;
+
+/* ── Auto-update ──────────────────────────── */
 async function checkVersion() {
   if (_versionMismatch) return;
   try {
@@ -369,312 +272,423 @@ function pollForDeploy(target) {
 }
 checkVersion();
 setInterval(checkVersion, 30000);
-</script>
 
-<div class="viewport" id="viewport">
-  <div class="bracket-wrap" id="wrap">
-    <svg class="connectors" id="connectors" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
-    <div class="bracket" id="bracket"></div>
-  </div>
-</div>
+/* ── Util ─────────────────────────────────── */
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function pad4(n) { return String(n).padStart(4, '0'); }
+function fmtTime(mins) {
+  let h = Math.floor(mins / 60), m = mins % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ampm;
+}
+function fmtMoney(n) { return n == null ? '' : '$' + n.toLocaleString(); }
+function makePrng(seed) {
+  let s = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+  return () => { s = (s * 1103515245 + 12345) & 0x7FFFFFFF; return s / 0x7FFFFFFF; };
+}
 
-<p class="foot">Proof of concept. Sample data is deterministic — pick a size and you’ll get the same bracket every time so the layout is comparable across reloads. Lower seeds win ~75 % of matches; upsets fire roughly twice as often when the seed gap is small.</p>
-
-<script>
-/* ════════════════════════════════════════════════════════════════════════
-   BreakOut — single-elimination bracket renderer PoC
-   ════════════════════════════════════════════════════════════════════════ */
-
-/* v0.4: team list now comes from breakout.teams (loaded once at init,
- *  refreshed when size selector changes). Each team has { id, number, name }.
- *  Seeded in number order — team with the smallest number = seed 1. */
-const SCHEMA = 'breakout';
-const HEADERS_READ_DB = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': SCHEMA };
-let _teams = [];
-
+/* ── Data fetch ───────────────────────────── */
 async function loadTeams() {
-  const r = await fetch(SB_URL + '/rest/v1/teams?order=number.asc&select=id,number,name', { headers: HEADERS_READ_DB });
+  const r = await fetch(SB_URL + '/rest/v1/teams?order=number.asc&select=id,number,name', { headers: HEADERS_DB });
   if (!r.ok) throw new Error('Could not load teams: HTTP ' + r.status);
   _teams = await r.json();
 }
-function pad4(n) { return String(n).padStart(4, '0'); }
 
-/* Standard bracket seeding so seed 1 and seed 2 land in opposite halves. */
-function seedOrder(n) {
-  let order = [1];
-  let size = 1;
-  while (size < n) {
-    const next = [];
-    const m = size * 2 + 1;
-    for (const s of order) { next.push(s); next.push(m - s); }
-    order = next;
-    size *= 2;
+/* ════════════════════════════════════════════════════════════════════════
+   TOURNAMENT BUILD
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Bracket order for a 16-team SE bracket: positions 0..15 ↦ seeds.
+ *  Used to place 12 real teams + 4 ghost byes so the structural bracket
+ *  is regular while the top 4 seeds get R1 byes. */
+const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
+
+function buildTwelveBracket(label, teams) {
+  // teams: 12 teams, already in seed order (teams[0]=seed1, teams[11]=seed12)
+  const seats = SEED_ORDER_16.map(s => s <= 12 ? teams[s - 1] : null);
+
+  const matches = [];
+  // R1: 8 slot-pairs, but only render where BOTH sides are real teams.
+  // The 4 byes "vanish" — their seeded team appears directly in R2.
+  const r1 = [];
+  for (let i = 0; i < 8; i++) {
+    const top = seats[i * 2], bot = seats[i * 2 + 1];
+    if (top && bot) {
+      const m = { id: label + '-R1-M' + (r1.filter(x => !x.bye).length + 1),
+                  bracket: label, round: 1, slot: i,
+                  top, bottom: bot, topFromMatch: null, botFromMatch: null,
+                  topFromMatchLoser: null, botFromMatchLoser: null,
+                  winner: null, loser: null, topWins: null };
+      r1.push(m); matches.push(m);
+    } else {
+      // Bye placeholder — we DON'T render this, but its seeded team carries forward.
+      r1.push({ bye: true, slot: i, advanceTeam: top || bot });
+    }
+  }
+  // R2: 4 matches. Each pairs slots (2i, 2i+1) from R1.
+  const r2 = [];
+  for (let i = 0; i < 4; i++) {
+    const a = r1[i * 2], b = r1[i * 2 + 1];
+    const m = { id: label + '-R2-M' + (i + 1), bracket: label, round: 2, slot: i,
+                top: a.bye ? a.advanceTeam : null,
+                bottom: b.bye ? b.advanceTeam : null,
+                topFromMatch: a.bye ? null : a,
+                botFromMatch: b.bye ? null : b,
+                topFromMatchLoser: null, botFromMatchLoser: null,
+                winner: null, loser: null, topWins: null };
+    r2.push(m); matches.push(m);
+  }
+  // R3: 2 matches. Each pairs slots (2i, 2i+1) from R2.
+  const r3 = [];
+  for (let i = 0; i < 2; i++) {
+    const m = { id: label + '-R3-M' + (i + 1), bracket: label, round: 3, slot: i,
+                top: null, bottom: null,
+                topFromMatch: r2[i * 2], botFromMatch: r2[i * 2 + 1],
+                topFromMatchLoser: null, botFromMatchLoser: null,
+                winner: null, loser: null, topWins: null };
+    r3.push(m); matches.push(m);
+  }
+  // R4: 1 match (final)
+  const fin = { id: label + '-R4-M1', bracket: label, round: 4, slot: 0,
+                top: null, bottom: null,
+                topFromMatch: r3[0], botFromMatch: r3[1],
+                topFromMatchLoser: null, botFromMatchLoser: null,
+                winner: null, loser: null, topWins: null };
+  matches.push(fin);
+
+  return { label, matches };
+}
+
+function buildSixtyFour(A, B) {
+  const Ar1 = A.matches.filter(m => m.round === 1);  // 4
+  const Ar2 = A.matches.filter(m => m.round === 2);  // 4
+  const Ar3 = A.matches.filter(m => m.round === 3);  // 2
+  const Ar4 = A.matches.filter(m => m.round === 4)[0];
+  const Br1 = B.matches.filter(m => m.round === 1);
+  const Br2 = B.matches.filter(m => m.round === 2);
+  const Br3 = B.matches.filter(m => m.round === 3);
+  const Br4 = B.matches.filter(m => m.round === 4)[0];
+
+  const matches = [];
+  const newMatch = (props) => {
+    const m = Object.assign({ top: null, bottom: null, topFromMatch: null, botFromMatch: null,
+                              topFromMatchLoser: null, botFromMatchLoser: null,
+                              winner: null, loser: null, topWins: null }, props);
+    matches.push(m); return m;
+  };
+  // R1 (8 matches) — cross-bracket pairing: A R1 losers vs B R1 losers, then A R2 vs B R2.
+  const r1 = [];
+  for (let i = 0; i < 4; i++) {
+    r1.push(newMatch({ id: '64-R1-M' + (i + 1), bracket: '64', round: 1, slot: i,
+      topFromMatchLoser: Ar1[i], botFromMatchLoser: Br1[i] }));
+  }
+  for (let i = 0; i < 4; i++) {
+    r1.push(newMatch({ id: '64-R1-M' + (i + 5), bracket: '64', round: 1, slot: i + 4,
+      topFromMatchLoser: Ar2[i], botFromMatchLoser: Br2[i] }));
+  }
+  // R2 (4 matches) — pairs of R1 winners
+  const r2 = [];
+  for (let i = 0; i < 4; i++) {
+    r2.push(newMatch({ id: '64-R2-M' + (i + 1), bracket: '64', round: 2, slot: i,
+      topFromMatch: r1[i * 2], botFromMatch: r1[i * 2 + 1] }));
+  }
+  // R3 (4 matches) — 12-team R3 losers integrate + R2 winners
+  const r3 = [];
+  r3.push(newMatch({ id: '64-R3-M1', bracket: '64', round: 3, slot: 0, topFromMatchLoser: Ar3[0], botFromMatch: r2[0] }));
+  r3.push(newMatch({ id: '64-R3-M2', bracket: '64', round: 3, slot: 1, topFromMatchLoser: Ar3[1], botFromMatch: r2[1] }));
+  r3.push(newMatch({ id: '64-R3-M3', bracket: '64', round: 3, slot: 2, topFromMatchLoser: Br3[0], botFromMatch: r2[2] }));
+  r3.push(newMatch({ id: '64-R3-M4', bracket: '64', round: 3, slot: 3, topFromMatchLoser: Br3[1], botFromMatch: r2[3] }));
+  // R4 (2 matches) — pairs of R3 winners
+  const r4 = [];
+  for (let i = 0; i < 2; i++) {
+    r4.push(newMatch({ id: '64-R4-M' + (i + 1), bracket: '64', round: 4, slot: i,
+      topFromMatch: r3[i * 2], botFromMatch: r3[i * 2 + 1] }));
+  }
+  // R5 (2 matches) — 12-team Final losers integrate + R4 winners
+  const r5 = [];
+  r5.push(newMatch({ id: '64-R5-M1', bracket: '64', round: 5, slot: 0, topFromMatchLoser: Ar4, botFromMatch: r4[0] }));
+  r5.push(newMatch({ id: '64-R5-M2', bracket: '64', round: 5, slot: 1, topFromMatchLoser: Br4, botFromMatch: r4[1] }));
+  // R6 (1 match) — Final
+  newMatch({ id: '64-R6-M1', bracket: '64', round: 6, slot: 0,
+    topFromMatch: r5[0], botFromMatch: r5[1] });
+  return { label: '64', matches };
+}
+
+function resolveTournament(t) {
+  // Play-order list: 12A R1, 12B R1, 12A R2, 12B R2, 64 R1, 12A R3, 12B R3,
+  //                  64 R2, 64 R3, 12A R4, 12B R4, 64 R4, 64 R5, 64 R6.
+  const order = [];
+  const pick = (b, r) => order.push(...b.matches.filter(m => m.round === r));
+  pick(t.A, 1); pick(t.B, 1);
+  pick(t.A, 2); pick(t.B, 2);
+  pick(t.T64, 1);
+  pick(t.A, 3); pick(t.B, 3);
+  pick(t.T64, 2); pick(t.T64, 3);
+  pick(t.A, 4); pick(t.B, 4);
+  pick(t.T64, 4); pick(t.T64, 5); pick(t.T64, 6);
+
+  order.forEach((m, i) => { m.globalNo = i + 1; });
+
+  // Resolve teams + winners along the play order
+  const prng = makePrng(24);
+  for (const m of order) {
+    if (m.top == null) {
+      if (m.topFromMatch) m.top = m.topFromMatch.winner;
+      else if (m.topFromMatchLoser) m.top = m.topFromMatchLoser.loser;
+    }
+    if (m.bottom == null) {
+      if (m.botFromMatch) m.bottom = m.botFromMatch.winner;
+      else if (m.botFromMatchLoser) m.bottom = m.botFromMatchLoser.loser;
+    }
+    if (m.top && m.bottom) {
+      const lower = m.top.seed < m.bottom.seed ? m.top : m.bottom;
+      const higher = m.top.seed < m.bottom.seed ? m.bottom : m.top;
+      const gap = Math.abs(m.top.seed - m.bottom.seed);
+      const upset = prng() < (gap > 4 ? 0.15 : 0.30);
+      m.winner = upset ? higher : lower;
+      m.loser = upset ? lower : higher;
+      m.topWins = m.winner === m.top;
+    }
+  }
+
+  // Annotate "loserDropTo" on each match for the footer.
+  for (const m of order) {
+    if (m.topFromMatchLoser) m.topFromMatchLoser.loserDropTo = m;
+    if (m.botFromMatchLoser) m.botFromMatchLoser.loserDropTo = m;
   }
   return order;
 }
 
-/* Cheap deterministic PRNG so the same bracket size always renders the same. */
-function makePrng(seed) {
-  let s = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
-  return () => {
-    s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
-    return s / 0x7FFFFFFF;
-  };
+function buildTournament() {
+  if (_teams.length < 24) throw new Error('Need at least 24 teams in the DB (have ' + _teams.length + ').');
+  const teams24 = _teams.slice(0, 24);
+  const aTeams = teams24.slice(0, 12).map((t, i) => ({ ...t, seed: i + 1 }));
+  const bTeams = teams24.slice(12, 24).map((t, i) => ({ ...t, seed: i + 1 }));
+  const A = buildTwelveBracket('A', aTeams);
+  const B = buildTwelveBracket('B', bTeams);
+  const T64 = buildSixtyFour(A, B);
+  const all = resolveTournament({ A, B, T64 });
+  return { A, B, T64, all };
 }
 
-/* v0.3+: rounds display admin-set DAY + TIME + OPTIONAL PAYOUT.
- *  These are hardcoded placeholders for the PoC — the real admin UI
- *  will let an organizer set each. For now: all on Saturday, sequential
- *  hours starting at 9 AM; payouts on the back half of the bracket. */
-function roundConfig(totalRounds) {
-  const cfg = [];
-  // Spread the rounds across two days for larger brackets:
-  //   Final lands one day later if 16+ entrants.
-  const isMultiDay = totalRounds >= 4;
-  const startMin = 9 * 60; // 9:00 AM Saturday
-  const gapMin = 90;       // 90 min between rounds
-  for (let r = 1; r <= totalRounds; r++) {
-    const min = startMin + (r - 1) * gapMin;
-    const day = (isMultiDay && r === totalRounds) ? 'Sunday' : 'Saturday';
-    const time = (isMultiDay && r === totalRounds)
-      ? fmtTime(12 * 60)   // Final at noon Sunday
-      : fmtTime(min);
-    cfg.push({ day, time, payout: null });
-  }
-  if (totalRounds >= 1) cfg[totalRounds - 1].payout = 500;
-  if (totalRounds >= 2) cfg[totalRounds - 2].payout = 200;
-  if (totalRounds >= 3) cfg[totalRounds - 3].payout = 75;
-  return cfg;
+/* ════════════════════════════════════════════════════════════════════════
+   ROUND CONFIG (admin-set later; placeholder defaults for the PoC)
+   ════════════════════════════════════════════════════════════════════════ */
+function twelveRoundConfig() {
+  return [
+    { day: 'Saturday', time: '9:00 AM',  payout: null },  // R1
+    { day: 'Saturday', time: '10:30 AM', payout: null },  // R2
+    { day: 'Saturday', time: '12:00 PM', payout: 100 },   // R3 (semis)
+    { day: 'Saturday', time: '1:30 PM',  payout: 400 }    // R4 (final)
+  ];
 }
-function fmtTime(mins) {
-  let h = Math.floor(mins / 60);
-  const m = mins % 60;
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  h = h % 12; if (h === 0) h = 12;
-  return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ampm;
+function sixtyFourRoundConfig() {
+  return [
+    { day: 'Saturday', time: '11:00 AM', payout: null },  // R1
+    { day: 'Saturday', time: '1:00 PM',  payout: null },  // R2
+    { day: 'Saturday', time: '3:00 PM',  payout: null },  // R3
+    { day: 'Saturday', time: '5:00 PM',  payout: null },  // R4
+    { day: 'Sunday',   time: '10:00 AM', payout: 100 },   // R5
+    { day: 'Sunday',   time: '12:00 PM', payout: 600 }    // R6 (final)
+  ];
 }
-function fmtMoney(n) {
-  if (n == null) return '';
-  return '$' + n.toLocaleString();
-}
-/* Table assignment per match — placeholder until admin UI ships.
- *  Sequential 1..N within each round, so R1 with 8 matches = T1-T8,
- *  R2 with 4 matches = T1-T4, etc. */
-function assignTable(roundMatches, matchIdx) {
-  return matchIdx + 1;
+function assignTable(matchesInRound, idx, bracketLabel) {
+  // Placeholder: sequential within round; 12-A on T1.., 12-B on T1.. (different physical area), 64 on T1..
+  return idx + 1;
 }
 
-/* Build the full bracket tree + resolve sample winners through to Final. */
-function buildBracket(size) {
-  const rounds = Math.log2(size);
-  if (!Number.isInteger(rounds)) throw new Error('Size must be a power of 2');
-  if (_teams.length < size) {
-    throw new Error('Need at least ' + size + ' teams in the DB (have ' + _teams.length + '). Go to admin and add more.');
-  }
-  const order = seedOrder(size);
-  const teams = _teams.slice(0, size).map((t, i) => ({ name: t.name, number: t.number, seed: i + 1 }));
+/* ════════════════════════════════════════════════════════════════════════
+   RENDER
+   ════════════════════════════════════════════════════════════════════════ */
+function bracketSectionHtml(bracket, kind, rounds, roundCfg, opts) {
+  const sectionLabel = opts.label;
+  const subLabel = opts.subLabel;
+  const pillClass = opts.pillClass;
+  return '<div class="bracket-section" data-bracket="' + bracket.label + '">'
+    + '<div class="section-title"><span class="pill ' + pillClass + '">' + esc(sectionLabel) + '</span>'
+    + '<span class="desc">' + esc(subLabel) + '</span></div>'
+    + '<div class="viewport"><div class="bracket-wrap" data-wrap="' + bracket.label + '">'
+    +   '<svg class="connectors" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>'
+    +   '<div class="bracket">'
+    +     rounds.map((roundMatches, idx) => roundHtml(roundMatches, idx, rounds.length, roundCfg[idx], bracket.label)).join('')
+    +   '</div>'
+    + '</div></div>'
+    + '</div>';
+}
 
-  const matches = [];
-  // Round 1
-  const r1 = [];
-  for (let i = 0; i < size / 2; i++) {
-    const a = teams[order[i*2] - 1];
-    const b = teams[order[i*2 + 1] - 1];
-    const m = { id: 'r1m' + (i + 1), round: 1, top: a, bottom: b, feeders: null };
-    r1.push(m); matches.push(m);
+function roundHtml(roundMatches, roundIdx, totalRounds, cfg, bracketLabel) {
+  const isFinal = roundIdx === totalRounds - 1;
+  return '<div class="round' + (isFinal ? ' is-final' : '') + '">'
+    + '<div class="round-header">'
+    +   (cfg.day ? '<div class="round-day">' + esc(cfg.day) + '</div>' : '')
+    +   '<div class="round-time">' + esc(cfg.time) + '</div>'
+    +   (cfg.payout ? '<div class="round-payout">' + esc(fmtMoney(cfg.payout)) + '</div>' : '')
+    + '</div>'
+    + '<div class="matches">'
+    +   roundMatches.map((m, i) => matchHtml(m, assignTable(roundMatches, i, bracketLabel), isFinal)).join('')
+    + '</div>'
+    + '</div>';
+}
+
+function matchHtml(m, table, isFinalOfBracket) {
+  const tnum = m.globalNo ? 'M' + m.globalNo : '—';
+  const topWin = m.topWins === true;
+  const botWin = m.topWins === false;
+  const drop = m.loserDropTo ? 'Loser → M' + m.loserDropTo.globalNo : '';
+  // For 64-team integration matches (R1/R3/R5), where do entrants come from?
+  const fromBits = [];
+  if (m.topFromMatchLoser) fromBits.push('M' + m.topFromMatchLoser.globalNo + ' loser');
+  if (m.botFromMatchLoser) fromBits.push('M' + m.botFromMatchLoser.globalNo + ' loser');
+  const fromLine = fromBits.length ? ('From ' + fromBits.join(' · ')) : '';
+  // Champion tag on the very last match of the tournament
+  const isOverallFinal = (m.bracket === '64' && m.round === 6);
+  const champTag = isOverallFinal && m.winner ? '<span class="champion-tag">Champion</span>' : '';
+
+  let body = '';
+  if (m.top) {
+    body += renderRow(m.top, topWin);
+  } else {
+    body += '<div class="match-row"><span class="seed">—</span><span class="team-num">—</span><span class="name" style="color:var(--muted);font-style:italic">TBD</span></div>';
   }
-  // Subsequent rounds — pairs feed into one match
-  let prev = r1;
-  for (let r = 2; r <= rounds; r++) {
-    const cur = [];
-    for (let i = 0; i < prev.length / 2; i++) {
-      const f1 = prev[i*2], f2 = prev[i*2 + 1];
-      const m = { id: 'r' + r + 'm' + (i + 1), round: r, top: null, bottom: null, feeders: [f1.id, f2.id] };
-      f1.feedsIntoId = m.id;
-      f2.feedsIntoId = m.id;
-      cur.push(m); matches.push(m);
+  if (m.bottom) {
+    body += renderRow(m.bottom, botWin);
+  } else {
+    body += '<div class="match-row"><span class="seed">—</span><span class="team-num">—</span><span class="name" style="color:var(--muted);font-style:italic">TBD</span></div>';
+  }
+
+  let foot = '';
+  if (drop || fromLine || table) {
+    foot += '<div class="match-foot">';
+    if (drop || table) {
+      foot += '<div class="row">'
+            + '<span class="drop">' + esc(drop) + '</span>'
+            + '<span>Table ' + table + (champTag ? ' ' + champTag : '') + '</span>'
+            + '</div>';
     }
-    prev = cur;
-  }
-
-  // Sample-data winner resolution
-  const prng = makePrng(size);
-  const byId = new Map(matches.map(m => [m.id, m]));
-  for (const m of matches) {
-    if (m.feeders) {
-      m.top    = byId.get(m.feeders[0]).winner;
-      m.bottom = byId.get(m.feeders[1]).winner;
+    if (fromLine) {
+      foot += '<div class="row"><span class="from">' + esc(fromLine) + '</span></div>';
     }
-    const top = m.top, bot = m.bottom;
-    const gap = Math.abs(top.seed - bot.seed);
-    const upsetChance = gap > 4 ? 0.15 : 0.30;
-    const lowerSeed = top.seed < bot.seed ? top : bot;
-    const higherSeed = top.seed < bot.seed ? bot : top;
-    const upset = prng() < upsetChance;
-    m.winner = upset ? higherSeed : lowerSeed;
-    m.loser  = upset ? lowerSeed  : higherSeed;
-    m.topWins = m.winner === top;
+    foot += '</div>';
   }
 
-  // Group by round
-  const byRound = [];
-  for (let r = 1; r <= rounds; r++) byRound.push(matches.filter(m => m.round === r));
-  return { rounds, byRound, matches };
-}
-
-function esc(s) {
-  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return '<div class="match" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '">'
+    + '<div class="match-top"><span class="mno">' + esc(tnum) + '</span><span class="bracket-tag">' + esc(m.bracket === '64' ? '64' : 'Bracket ' + m.bracket) + '</span></div>'
+    + body
+    + foot
+    + '</div>';
 }
 
 function renderRow(team, isWinner) {
   const cls = 'match-row ' + (isWinner ? 'winner' : 'loser');
-  return '<div class="' + cls + '" data-team="' + esc(team.name.toLowerCase()) + '" data-team-num="' + team.number + '">'
+  return '<div class="' + cls + '" data-team="' + esc((team.name || '').toLowerCase()) + '" data-team-num="' + team.number + '">'
     + '<span class="seed">' + esc(team.seed) + '</span>'
     + '<span class="team-num" title="Team number">' + pad4(team.number) + '</span>'
     + '<span class="name" title="' + esc(team.name) + '">' + esc(team.name) + '</span>'
     + '</div>';
 }
 
-function render(size) {
-  try {
-    var built = buildBracket(size);
-  } catch (e) {
-    document.getElementById('bracket').innerHTML =
-      '<div style="padding:30px;color:var(--danger);font-weight:700">' + esc(e.message) + '</div>';
-    document.getElementById('connectors').innerHTML = '';
-    return;
-  }
-  const { rounds, byRound, matches } = built;
-  const cfg = roundConfig(rounds);
-  const bracket = document.getElementById('bracket');
-  bracket.innerHTML = byRound.map((roundMatches, idx) => {
-    const isFinal = idx === rounds - 1;
-    const rc = cfg[idx];
-    return '<div class="round' + (isFinal ? ' is-final' : '') + '">'
-      + '<div class="round-header">'
-      +   (rc.day ? '<div class="round-day">' + esc(rc.day) + '</div>' : '')
-      +   '<div class="round-time">' + esc(rc.time) + '</div>'
-      +   (rc.payout ? '<div class="round-payout">' + esc(fmtMoney(rc.payout)) + '</div>' : '')
-      + '</div>'
-      + '<div class="matches">'
-      +   roundMatches.map((m, i) => {
-            const topWin = m.topWins;
-            const table = assignTable(roundMatches, i);
-            return '<div class="match" data-match-id="' + m.id + '">'
-              + renderRow(m.top,    topWin)
-              + renderRow(m.bottom, !topWin)
-              + '<div class="match-footer">'
-              +   '<span></span>'  // left slot reserved for match # later
-              +   '<span class="match-table">Table ' + table + '</span>'
-              + '</div>'
-              + '</div>';
-          }).join('')
-      + '</div>'
-      + '</div>';
-  }).join('');
-  // Wait a tick so layout settles, then draw connectors
-  requestAnimationFrame(() => { drawConnectors(matches); applySearch(); });
-}
-
-/* Orthogonal SVG connectors recomputed from each match cell's bounding box.
-   Per the spec: connectors should survive resize, byes, odd spacing —
-   CSS-only patterns break for any of those, SVG paths handle them clean. */
-function drawConnectors(matches) {
-  const svg = document.getElementById('connectors');
-  const wrap = document.getElementById('wrap');
+/* Connectors: per-bracket SVG overlay drawing right-angle paths between
+ *  feeder matches and their downstream match. Only intra-bracket lines
+ *  (winners advancing). Drop lines between brackets are TEXT annotations
+ *  in the match footer rather than crossing arrows — much cleaner. */
+function drawConnectorsFor(wrap, matches) {
+  const svg = wrap.querySelector('svg.connectors');
   const w = wrap.offsetWidth, h = wrap.offsetHeight;
-  svg.setAttribute('width', w);
-  svg.setAttribute('height', h);
+  svg.setAttribute('width', w); svg.setAttribute('height', h);
   svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
   svg.innerHTML = '';
   const wrapRect = wrap.getBoundingClientRect();
   for (const m of matches) {
-    if (!m.feedsIntoId) continue;
-    const fromEl = document.querySelector('[data-match-id="' + m.id + '"]');
-    const toEl   = document.querySelector('[data-match-id="' + m.feedsIntoId + '"]');
+    // Draw a line from THIS match's right-center to each downstream match's left-center.
+    // Downstream relationships within a bracket: forward through topFromMatch / botFromMatch.
+  }
+  // Easier: iterate matches; for each match m, find downstream by checking other matches whose
+  // topFromMatch === m or botFromMatch === m. Draw a line from m to that downstream match.
+  for (const m of matches) {
+    const downstream = matches.find(x => x.topFromMatch === m || x.botFromMatch === m);
+    if (!downstream) continue;
+    const fromEl = wrap.querySelector('[data-match-id="' + cssEscape(m.id) + '"]');
+    const toEl   = wrap.querySelector('[data-match-id="' + cssEscape(downstream.id) + '"]');
     if (!fromEl || !toEl) continue;
     const fr = fromEl.getBoundingClientRect();
     const tr = toEl.getBoundingClientRect();
-    const x1 = (fr.right - wrapRect.left);
-    const y1 = (fr.top   - wrapRect.top) + fr.height / 2;
-    const x2 = (tr.left  - wrapRect.left);
-    const y2 = (tr.top   - wrapRect.top) + tr.height / 2;
+    const x1 = fr.right - wrapRect.left;
+    const y1 = (fr.top - wrapRect.top) + fr.height / 2;
+    const x2 = tr.left - wrapRect.left;
+    const y2 = (tr.top - wrapRect.top) + tr.height / 2;
     const xMid = (x1 + x2) / 2;
-    const d = 'M ' + x1 + ' ' + y1
-            + ' L ' + xMid + ' ' + y1
-            + ' L ' + xMid + ' ' + y2
-            + ' L ' + x2 + ' ' + y2;
+    const d = 'M ' + x1 + ' ' + y1 + ' L ' + xMid + ' ' + y1
+            + ' L ' + xMid + ' ' + y2 + ' L ' + x2 + ' ' + y2;
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', d);
     path.setAttribute('fill', 'none');
-    // Direct hex — CSS vars in SVG presentation attributes don't resolve
-    // consistently across browsers.
     path.setAttribute('stroke', '#94a3b8');
     path.setAttribute('stroke-width', '2');
-    path.setAttribute('stroke-linecap', 'square');
     path.setAttribute('stroke-linejoin', 'round');
     svg.appendChild(path);
   }
 }
+function cssEscape(s) { return String(s).replace(/(["\\])/g, '\\$1'); }
 
-/* ── Init ──────────────────────────────────────────────────────────── */
-let _currentSize = 16;
-function setSize(n) {
-  _currentSize = n;
-  document.querySelectorAll('#sizePicker button').forEach(b => {
-    b.classList.toggle('active', parseInt(b.dataset.size, 10) === n);
+function renderTournament() {
+  const t = _tournament;
+  const ab = (label, bracket, kind, sub, cls) => bracketSectionHtml(
+    bracket, kind,
+    Array.from({ length: 4 }, (_, i) => bracket.matches.filter(m => m.round === i + 1)),
+    twelveRoundConfig(),
+    { label, subLabel: sub, pillClass: cls }
+  );
+  const root = document.getElementById('tournamentRoot');
+  let html = '';
+  html += ab('Bracket A', t.A, 'twelve', 'Modified single elim · 12 teams · top 4 seeds bye round 1', '');
+  html += ab('Bracket B', t.B, 'twelve', 'Modified single elim · 12 teams · top 4 seeds bye round 1', 'alt');
+  html += bracketSectionHtml(
+    t.T64, 'sixtyfour',
+    Array.from({ length: 6 }, (_, i) => t.T64.matches.filter(m => m.round === i + 1)),
+    sixtyFourRoundConfig(),
+    { label: '64-Team', subLabel: 'Consolation · alternates "integrate losers" / "winners advance" through 6 rounds', pillClass: 'consolation' }
+  );
+  root.innerHTML = html;
+
+  // Draw connectors for each bracket
+  requestAnimationFrame(() => {
+    document.querySelectorAll('[data-wrap]').forEach(wrap => {
+      const label = wrap.dataset.wrap;
+      const matches = label === 'A' ? t.A.matches : label === 'B' ? t.B.matches : t.T64.matches;
+      drawConnectorsFor(wrap, matches);
+    });
+    applySearch();
   });
-  render(n);
 }
 
-document.querySelectorAll('#sizePicker button').forEach(b => {
-  b.addEventListener('click', () => setSize(parseInt(b.dataset.size, 10)));
-});
-
-/* Boot: fetch teams first, then render the default bracket. */
-(async () => {
-  try { await loadTeams(); }
-  catch (e) {
-    document.getElementById('bracket').innerHTML =
-      '<div style="padding:30px;color:var(--danger);font-weight:700">' + esc(e.message) + '</div>';
-    return;
-  }
-  setSize(_currentSize);
-})();
-
-/* ── Search: find a team, highlight every match they're in,
- *  auto-scroll the bracket so the rightmost (latest) match
- *  centers in the viewport. Live as you type.                ── */
+/* ── Search ────────────────────────────────── */
 let _searchQuery = '';
 function applySearch() {
   const q = _searchQuery.trim().toLowerCase();
-  const matches = document.querySelectorAll('.match');
-  // Clear previous state
-  matches.forEach(m => m.classList.remove('match-hit', 'match-hit-latest'));
-  const resultEl = document.getElementById('searchResult');
-  if (!q) { resultEl.textContent = ''; return; }
-  // Collect matches where at least one team name contains the query
+  const cells = document.querySelectorAll('.match');
+  cells.forEach(m => m.classList.remove('match-hit', 'match-hit-latest'));
+  const result = document.getElementById('searchResult');
+  if (!q) { result.textContent = ''; return; }
   const hits = [];
-  matches.forEach(m => {
+  cells.forEach(m => {
     const rows = m.querySelectorAll('.match-row');
     let hit = false;
-    rows.forEach(r => {
-      if ((r.dataset.team || '').includes(q)) hit = true;
-    });
+    rows.forEach(r => { if ((r.dataset.team || '').includes(q)) hit = true; });
     if (hit) { m.classList.add('match-hit'); hits.push(m); }
   });
-  if (!hits.length) { resultEl.textContent = 'No match found'; return; }
-  // Find rightmost hit by bounding box and mark it as the latest
-  let latest = null, maxRight = -Infinity;
+  if (!hits.length) { result.textContent = 'No match found'; return; }
+  // "Latest" = highest globalNo. (Earlier global rounds plays first.)
+  let latest = null, maxNo = -1;
   hits.forEach(el => {
-    const r = el.getBoundingClientRect();
-    if (r.right > maxRight) { maxRight = r.right; latest = el; }
+    const n = parseInt(el.dataset.globalNo, 10) || 0;
+    if (n > maxNo) { maxNo = n; latest = el; }
   });
   if (latest) {
     latest.classList.add('match-hit-latest');
-    latest.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    latest.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
   }
-  resultEl.textContent = hits.length + ' match' + (hits.length === 1 ? '' : 'es');
+  result.textContent = hits.length + ' match' + (hits.length === 1 ? '' : 'es');
 }
 const _searchWrap = document.getElementById('searchWrap');
 const _searchInput = document.getElementById('searchInput');
@@ -687,21 +701,36 @@ _searchInput.addEventListener('input', () => {
 _searchInput.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') { _searchInput.value = ''; _searchInput.dispatchEvent(new Event('input')); _searchInput.blur(); }
 });
-_searchClear.addEventListener('click', () => {
-  _searchInput.value = ''; _searchInput.dispatchEvent(new Event('input'));
-  _searchInput.focus();
-});
+_searchClear.addEventListener('click', () => { _searchInput.value = ''; _searchInput.dispatchEvent(new Event('input')); _searchInput.focus(); });
 
-// Redraw connectors on resize (debounced)
+/* ── Resize: redraw connectors ─────────────── */
 let _resizeRaf = null;
 window.addEventListener('resize', () => {
   if (_resizeRaf) return;
   _resizeRaf = requestAnimationFrame(() => {
     _resizeRaf = null;
-    render(_currentSize);  // simplest: rerender everything
+    document.querySelectorAll('[data-wrap]').forEach(wrap => {
+      const label = wrap.dataset.wrap;
+      const matches = label === 'A' ? _tournament.A.matches : label === 'B' ? _tournament.B.matches : _tournament.T64.matches;
+      drawConnectorsFor(wrap, matches);
+    });
   });
 });
 
+/* ── Boot ──────────────────────────────────── */
+(async () => {
+  try { await loadTeams(); }
+  catch (e) {
+    document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">Could not load teams: ' + esc(e.message) + '</p>';
+    return;
+  }
+  try { _tournament = buildTournament(); }
+  catch (e) {
+    document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">' + esc(e.message) + '</p>';
+    return;
+  }
+  renderTournament();
+})();
 </script>
 </body>
 </html>
