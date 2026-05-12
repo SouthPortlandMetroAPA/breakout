@@ -120,6 +120,12 @@
     border-bottom: 1px solid var(--border);
     margin-bottom: 6px;
   }
+  .round-day {
+    font-size: 0.66rem; font-weight: 800;
+    color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 1px;
+  }
   .round-time {
     font-size: 0.95rem; font-weight: 800;
     color: var(--text);
@@ -416,21 +422,25 @@ function makePrng(seed) {
   };
 }
 
-/* v0.3: rounds now display admin-set TIME and OPTIONAL PAYOUT.
+/* v0.3+: rounds display admin-set DAY + TIME + OPTIONAL PAYOUT.
  *  These are hardcoded placeholders for the PoC — the real admin UI
- *  will let an organizer set the start time per round and an optional
- *  prize amount per round. For now we just demonstrate the layout. */
+ *  will let an organizer set each. For now: all on Saturday, sequential
+ *  hours starting at 9 AM; payouts on the back half of the bracket. */
 function roundConfig(totalRounds) {
-  // Each row: { time, payout (or null) }
-  // Default times: R1 at 6:30 PM, +1 hour per subsequent round.
-  // Default payouts: only the back half of the bracket pays out.
   const cfg = [];
-  const startMin = 18 * 60 + 30; // 6:30 PM
+  // Spread the rounds across two days for larger brackets:
+  //   Final lands one day later if 16+ entrants.
+  const isMultiDay = totalRounds >= 4;
+  const startMin = 9 * 60; // 9:00 AM Saturday
+  const gapMin = 90;       // 90 min between rounds
   for (let r = 1; r <= totalRounds; r++) {
-    const min = startMin + (r - 1) * 60;
-    cfg.push({ time: fmtTime(min), payout: null });
+    const min = startMin + (r - 1) * gapMin;
+    const day = (isMultiDay && r === totalRounds) ? 'Sunday' : 'Saturday';
+    const time = (isMultiDay && r === totalRounds)
+      ? fmtTime(12 * 60)   // Final at noon Sunday
+      : fmtTime(min);
+    cfg.push({ day, time, payout: null });
   }
-  // Drop in a few placeholder payouts: only Final and Semis by default
   if (totalRounds >= 1) cfg[totalRounds - 1].payout = 500;
   if (totalRounds >= 2) cfg[totalRounds - 2].payout = 200;
   if (totalRounds >= 3) cfg[totalRounds - 3].payout = 75;
@@ -542,6 +552,7 @@ function render(size) {
     const rc = cfg[idx];
     return '<div class="round' + (isFinal ? ' is-final' : '') + '">'
       + '<div class="round-header">'
+      +   (rc.day ? '<div class="round-day">' + esc(rc.day) + '</div>' : '')
       +   '<div class="round-time">' + esc(rc.time) + '</div>'
       +   (rc.payout ? '<div class="round-payout">' + esc(fmtMoney(rc.payout)) + '</div>' : '')
       + '</div>'
