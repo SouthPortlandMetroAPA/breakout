@@ -186,6 +186,18 @@
     background: linear-gradient(90deg, rgba(234,0,42,0.06), rgba(0,49,161,0.06));
   }
 
+  /* ── Auto-update overlay ──────────────────────────────── */
+  .update-overlay {
+    position: fixed; inset: 0;
+    background: rgba(10,20,40,0.72); z-index: 9999;
+    display: none; align-items: center; justify-content: center; padding: 24px;
+  }
+  .update-overlay.shown { display: flex; }
+  .update-box { background: #fff; border-radius: var(--radius); padding: 32px; max-width: 380px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+  .update-spinner { width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 50%; border: 5px solid rgba(0,49,161,0.15); border-top-color: var(--spm-accent); animation: spin 0.85s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .update-title { font-size: 1.1rem; font-weight: 800; color: var(--spm-accent); margin-bottom: 6px; }
+
   /* ── Footer note ──────────────────────────────────────── */
   .foot {
     max-width: 1400px; margin: 0 auto;
@@ -195,6 +207,14 @@
 </style>
 </head>
 <body>
+
+<div class="update-overlay" id="updateOverlay">
+  <div class="update-box">
+    <div class="update-spinner"></div>
+    <div class="update-title">Updating BreakOut</div>
+    <div>A new version is being deployed&hellip;</div>
+  </div>
+</div>
 
 <div class="header">
   <div class="header-inner">
@@ -209,6 +229,53 @@
     </div>
   </div>
 </div>
+
+<script>
+// Cache-bust version.js on every page load so a deployed bump isn't shadowed
+// by the browser's disk-cache copy. Same pattern as PoolPics / RackTime.
+document.write('<script src="version.js?_=' + Date.now() + '"><\/script>');
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   AUTO-UPDATE — poll apa_core.apps.BreakOut every 30s; on mismatch, show
+   the overlay and poll version.js until the deployed copy matches, then
+   force-reload with a cache-busting query so the new HTML is fetched.
+   ════════════════════════════════════════════════════════════════════════ */
+const APP_NAME = 'BreakOut';
+const SB_URL   = 'https://dqzbekoaysgaiqljueac.supabase.co';
+const SB_ANON  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+const HEADERS_APA = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': 'apa_core' };
+let _versionMismatch = false;
+async function checkVersion() {
+  if (_versionMismatch) return;
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/apps?app_name=eq.' + APP_NAME + '&select=version', { headers: HEADERS_APA });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d && d[0] && d[0].version && d[0].version !== window.APP_VERSION) {
+      _versionMismatch = true;
+      document.getElementById('updateOverlay').classList.add('shown');
+      pollForDeploy(d[0].version);
+    }
+  } catch (_) {}
+}
+function pollForDeploy(target) {
+  setTimeout(async () => {
+    try {
+      const r = await fetch('version.js?_=' + Date.now());
+      if (r.ok && (await r.text()).indexOf("APP_VERSION = '" + target + "'") !== -1) {
+        const u = new URL(location.href);
+        u.searchParams.set('_', String(Date.now()));
+        location.replace(u.toString());
+        return;
+      }
+    } catch (_) {}
+    pollForDeploy(target);
+  }, 3000);
+}
+checkVersion();
+setInterval(checkVersion, 30000);
+</script>
 
 <div class="viewport" id="viewport">
   <div class="bracket-wrap" id="wrap">
