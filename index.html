@@ -20,8 +20,15 @@
     --pill: 999px;
     --cell-w: 240px;
     --cell-w-mob: 200px;
-    --round-gap: 52px;
-    --round-gap-mob: 34px;
+    --round-gap: 64px;
+    --round-gap-mob: 44px;
+    /* Bracket vertical unit. Each bracket has 8 "seat slots" in R1 (both
+       12-team modified and 64-team). All match cells are positioned at
+       canonical bracket Y centers expressed in slot units, so connectors
+       become clean horizontal/Z lines instead of long diagonals. */
+    --slot-h: 132px;
+    --slot-h-mob: 108px;
+    --slot-count: 8;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -107,17 +114,32 @@
   .round-time { font-size: 0.95rem; font-weight: 800; color: var(--text); letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
   .round-payout { font-size: 0.76rem; font-weight: 700; color: #15803d; margin-top: 2px; font-variant-numeric: tabular-nums; }
 
-  .matches { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-around; align-items: stretch; }
+  /* Matches column: fixed height = slot-count × slot-h, absolutely positioned
+     cells at their canonical bracket Y centers. Replaces flex space-around
+     which was making winners-advance connectors snake diagonally. */
+  .matches {
+    flex: 0 0 auto;
+    position: relative;
+    height: calc(var(--slot-h) * var(--slot-count));
+  }
+  @media (max-width: 767px) {
+    .matches { height: calc(var(--slot-h-mob) * var(--slot-count)); }
+  }
 
   /* ── Match cell ───────────────────────────── */
   .match {
-    position: relative;
+    position: absolute;
+    left: 0; right: 0;
+    top: calc(var(--slot-h) * var(--y, 0.5));
+    transform: translateY(-50%);
     background: var(--card);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     box-shadow: 0 1px 2px rgba(0,0,0,0.04);
     overflow: hidden;
-    margin: 6px 0;
+  }
+  @media (max-width: 767px) {
+    .match { top: calc(var(--slot-h-mob) * var(--y, 0.5)); }
   }
   .match-top {
     display: flex; align-items: center; justify-content: space-between;
@@ -531,8 +553,31 @@ function roundHtml(roundMatches, roundIdx, totalRounds, cfg, bracketLabel) {
     + '</div>';
 }
 
+/* Canonical bracket Y for a match, in slot units (0..8).
+ *   12-team modified SE: round doubles span each step (R1→R2→R3→R4).
+ *   64-team: R3 and R5 are INTEGRATION rounds — they sit at the SAME Y
+ *   as their R2/R4 winner-feeders (one external loser drops in, one
+ *   winner advances, no doubling). */
+function matchYUnits(m) {
+  if (m.bracket === '64') {
+    if (m.round === 1) return m.slot + 0.5;     // 0.5, 1.5, …, 7.5
+    if (m.round === 2) return m.slot * 2 + 1;   // 1, 3, 5, 7
+    if (m.round === 3) return m.slot * 2 + 1;   // same as R2 (integration)
+    if (m.round === 4) return m.slot * 4 + 2;   // 2, 6
+    if (m.round === 5) return m.slot * 4 + 2;   // same as R4 (integration)
+    if (m.round === 6) return 4;                // final, centered
+  } else {
+    if (m.round === 1) return m.slot + 0.5;     // real matches at slots 1,3,5,7
+    if (m.round === 2) return m.slot * 2 + 1;   // 1, 3, 5, 7
+    if (m.round === 3) return m.slot * 4 + 2;   // 2, 6
+    if (m.round === 4) return 4;                // bracket final
+  }
+  return 0.5;
+}
+
 function matchHtml(m, table, isFinalOfBracket) {
   const tnum = m.globalNo ? 'M' + m.globalNo : '—';
+  const y = matchYUnits(m);
   const topWin = m.topWins === true;
   const botWin = m.topWins === false;
   const drop = m.loserDropTo ? 'Loser → M' + m.loserDropTo.globalNo : '';
@@ -572,7 +617,7 @@ function matchHtml(m, table, isFinalOfBracket) {
     foot += '</div>';
   }
 
-  return '<div class="match" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '">'
+  return '<div class="match" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '" style="--y:' + y + '">'
     + '<div class="match-top"><span class="mno">' + esc(tnum) + '</span><span class="bracket-tag">' + esc(m.bracket === '64' ? '64' : 'Bracket ' + m.bracket) + '</span></div>'
     + body
     + foot
@@ -588,10 +633,18 @@ function renderRow(team, isWinner) {
     + '</div>';
 }
 
-/* Connectors: per-bracket SVG overlay drawing right-angle paths between
- *  feeder matches and their downstream match. Only intra-bracket lines
- *  (winners advancing). Drop lines between brackets are TEXT annotations
- *  in the match footer rather than crossing arrows — much cleaner. */
+/* Connectors: per-bracket SVG overlay.
+ *  Iterate by DOWNSTREAM match. Each match has up to two intra-bracket
+ *  feeders (topFromMatch, botFromMatch). Cross-bracket drops are NOT
+ *  drawn (they remain "From M_N loser" text annotations) to avoid
+ *  spaghetti.
+ *
+ *  Two feeders → classic "]" bracket: horizontal from each feeder to
+ *  vertical riser at column midpoint, riser between feeder Ys, then
+ *  horizontal stub from riser midpoint to the downstream match.
+ *  One feeder → connect to the SPECIFIC row of the downstream match
+ *  (top or bottom) rather than the cell center, so byes in the 12-team
+ *  bracket and 64-team integration matches look natural. */
 function drawConnectorsFor(wrap, matches) {
   const svg = wrap.querySelector('svg.connectors');
   const w = wrap.offsetWidth, h = wrap.offsetHeight;
@@ -599,34 +652,71 @@ function drawConnectorsFor(wrap, matches) {
   svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
   svg.innerHTML = '';
   const wrapRect = wrap.getBoundingClientRect();
+  const STROKE = '#94a3b8';
+  const STROKE_W = '2';
+
+  const drawPath = (d) => {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', STROKE);
+    p.setAttribute('stroke-width', STROKE_W);
+    p.setAttribute('stroke-linejoin', 'round');
+    p.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(p);
+  };
+
+  const getCellGeom = (id) => {
+    const el = wrap.querySelector('[data-match-id="' + cssEscape(id) + '"]');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const rows = el.querySelectorAll('.match-row');
+    const topRow = rows[0] ? rows[0].getBoundingClientRect() : null;
+    const botRow = rows[1] ? rows[1].getBoundingClientRect() : null;
+    return {
+      el,
+      left:  r.left  - wrapRect.left,
+      right: r.right - wrapRect.left,
+      cy:    (r.top  - wrapRect.top) + r.height / 2,
+      topRowY: topRow ? (topRow.top - wrapRect.top) + topRow.height / 2 : (r.top - wrapRect.top) + r.height * 0.35,
+      botRowY: botRow ? (botRow.top - wrapRect.top) + botRow.height / 2 : (r.top - wrapRect.top) + r.height * 0.65
+    };
+  };
+
   for (const m of matches) {
-    // Draw a line from THIS match's right-center to each downstream match's left-center.
-    // Downstream relationships within a bracket: forward through topFromMatch / botFromMatch.
-  }
-  // Easier: iterate matches; for each match m, find downstream by checking other matches whose
-  // topFromMatch === m or botFromMatch === m. Draw a line from m to that downstream match.
-  for (const m of matches) {
-    const downstream = matches.find(x => x.topFromMatch === m || x.botFromMatch === m);
-    if (!downstream) continue;
-    const fromEl = wrap.querySelector('[data-match-id="' + cssEscape(m.id) + '"]');
-    const toEl   = wrap.querySelector('[data-match-id="' + cssEscape(downstream.id) + '"]');
-    if (!fromEl || !toEl) continue;
-    const fr = fromEl.getBoundingClientRect();
-    const tr = toEl.getBoundingClientRect();
-    const x1 = fr.right - wrapRect.left;
-    const y1 = (fr.top - wrapRect.top) + fr.height / 2;
-    const x2 = tr.left - wrapRect.left;
-    const y2 = (tr.top - wrapRect.top) + tr.height / 2;
-    const xMid = (x1 + x2) / 2;
-    const d = 'M ' + x1 + ' ' + y1 + ' L ' + xMid + ' ' + y1
-            + ' L ' + xMid + ' ' + y2 + ' L ' + x2 + ' ' + y2;
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', d);
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', '#94a3b8');
-    path.setAttribute('stroke-width', '2');
-    path.setAttribute('stroke-linejoin', 'round');
-    svg.appendChild(path);
+    const feeders = [];
+    if (m.topFromMatch) feeders.push({ id: m.topFromMatch.id, side: 'top' });
+    if (m.botFromMatch) feeders.push({ id: m.botFromMatch.id, side: 'bot' });
+    if (!feeders.length) continue;
+
+    const down = getCellGeom(m.id);
+    if (!down) continue;
+    const x2 = down.left;
+
+    const fg = feeders.map(f => {
+      const g = getCellGeom(f.id);
+      return g ? { side: f.side, x: g.right, y: g.cy } : null;
+    }).filter(Boolean);
+    if (!fg.length) continue;
+
+    const xMid = (Math.max.apply(null, fg.map(p => p.x)) + x2) / 2;
+
+    if (fg.length === 2) {
+      const top = fg.find(f => f.side === 'top') || fg[0];
+      const bot = fg.find(f => f.side === 'bot') || fg[1];
+      // Single combined path: feeder1 → riser-top → riser-bot → feeder2 (move)
+      //                      then riser-mid → downstream cell.
+      drawPath('M ' + top.x + ' ' + top.y + ' L ' + xMid + ' ' + top.y
+             + ' L ' + xMid + ' ' + bot.y + ' L ' + bot.x + ' ' + bot.y);
+      const midY = (top.y + bot.y) / 2;
+      drawPath('M ' + xMid + ' ' + midY + ' L ' + x2 + ' ' + midY);
+    } else {
+      const f = fg[0];
+      const targetY = f.side === 'top' ? down.topRowY : down.botRowY;
+      // Horizontal from feeder, vertical to target row, horizontal into cell.
+      drawPath('M ' + f.x + ' ' + f.y + ' L ' + xMid + ' ' + f.y
+             + ' L ' + xMid + ' ' + targetY + ' L ' + x2 + ' ' + targetY);
+    }
   }
 }
 function cssEscape(s) { return String(s).replace(/(["\\])/g, '\\$1'); }
