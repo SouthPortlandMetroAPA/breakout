@@ -25,9 +25,11 @@
     /* Bracket vertical unit. Each bracket has 8 "seat slots" in R1 (both
        12-team modified and 64-team). All match cells are positioned at
        canonical bracket Y centers expressed in slot units, so connectors
-       become clean horizontal/Z lines instead of long diagonals. */
-    --slot-h: 132px;
-    --slot-h-mob: 108px;
+       become clean horizontal/Z lines instead of long diagonals.
+       Tuned so adjacent cells (with translateY(-50%) centering) never
+       overlap even with a two-line footer. */
+    --slot-h: 156px;
+    --slot-h-mob: 132px;
     --slot-count: 8;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -126,12 +128,15 @@
     .matches { height: calc(var(--slot-h-mob) * var(--slot-count)); }
   }
 
-  /* ── Match cell ───────────────────────────── */
+  /* ── Match cell ─────────────────────────────
+     max-height < slot-h so vertically adjacent cells in the same column
+     can never overlap even with two-row footers. */
   .match {
     position: absolute;
     left: 0; right: 0;
     top: calc(var(--slot-h) * var(--y, 0.5));
     transform: translateY(-50%);
+    max-height: calc(var(--slot-h) - 12px);
     background: var(--card);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
@@ -139,7 +144,10 @@
     overflow: hidden;
   }
   @media (max-width: 767px) {
-    .match { top: calc(var(--slot-h-mob) * var(--y, 0.5)); }
+    .match {
+      top: calc(var(--slot-h-mob) * var(--y, 0.5));
+      max-height: calc(var(--slot-h-mob) - 10px);
+    }
   }
   .match-top {
     display: flex; align-items: center; justify-content: space-between;
@@ -554,23 +562,33 @@ function roundHtml(roundMatches, roundIdx, totalRounds, cfg, bracketLabel) {
 }
 
 /* Canonical bracket Y for a match, in slot units (0..8).
- *   12-team modified SE: round doubles span each step (R1→R2→R3→R4).
- *   64-team: R3 and R5 are INTEGRATION rounds — they sit at the SAME Y
- *   as their R2/R4 winner-feeders (one external loser drops in, one
- *   winner advances, no doubling). */
+ *
+ *   Rule: when a downstream match has exactly ONE intra-bracket feeder,
+ *   it aligns with that feeder's Y (so a chain of single-feeder matches
+ *   forms a straight horizontal series). When it has TWO intra-bracket
+ *   feeders, it sits at the midpoint between them (classic bracket).
+ *
+ *   12-team modified SE: top 4 seeds bye R1, so every R2 has exactly
+ *   one real R1 feeder + one bye. → R2 aligns with its R1 feeder.
+ *   R3 has two R2 feeders (midpoint). R4 has two R3 feeders (midpoint).
+ *
+ *   64-team: R3 and R5 are integration rounds (one R2/R4 winner + one
+ *   external loser drop). → They align with their single intra-bracket
+ *   feeder. R2, R4, R6 are doubling rounds. */
 function matchYUnits(m) {
   if (m.bracket === '64') {
     if (m.round === 1) return m.slot + 0.5;     // 0.5, 1.5, …, 7.5
-    if (m.round === 2) return m.slot * 2 + 1;   // 1, 3, 5, 7
-    if (m.round === 3) return m.slot * 2 + 1;   // same as R2 (integration)
-    if (m.round === 4) return m.slot * 4 + 2;   // 2, 6
-    if (m.round === 5) return m.slot * 4 + 2;   // same as R4 (integration)
-    if (m.round === 6) return 4;                // final, centered
+    if (m.round === 2) return m.slot * 2 + 1;   // midpoint of R1 pair: 1, 3, 5, 7
+    if (m.round === 3) return m.slot * 2 + 1;   // aligned with R2 feeder
+    if (m.round === 4) return m.slot * 4 + 2;   // midpoint of R3 pair: 2, 6
+    if (m.round === 5) return m.slot * 4 + 2;   // aligned with R4 feeder
+    if (m.round === 6) return 4;                // midpoint of R5 pair
   } else {
-    if (m.round === 1) return m.slot + 0.5;     // real matches at slots 1,3,5,7
-    if (m.round === 2) return m.slot * 2 + 1;   // 1, 3, 5, 7
-    if (m.round === 3) return m.slot * 4 + 2;   // 2, 6
-    if (m.round === 4) return 4;                // bracket final
+    // 12-team modified SE — real R1 matches at slots 1,3,5,7.
+    if (m.round === 1) return m.slot + 0.5;     // 1.5, 3.5, 5.5, 7.5
+    if (m.round === 2) return m.slot * 2 + 1.5; // aligned with R1 feeder: 1.5, 3.5, 5.5, 7.5
+    if (m.round === 3) return m.slot * 4 + 2.5; // midpoint of R2 pair: 2.5, 6.5
+    if (m.round === 4) return 4.5;              // midpoint of R3 pair
   }
   return 0.5;
 }
@@ -711,11 +729,17 @@ function drawConnectorsFor(wrap, matches) {
       const midY = (top.y + bot.y) / 2;
       drawPath('M ' + xMid + ' ' + midY + ' L ' + x2 + ' ' + midY);
     } else {
+      // Single feeder: downstream cell is positioned at the SAME Y as the
+      // feeder by matchYUnits(), so center-to-center is a flat horizontal.
+      // (If the layout ever drifts, fall back to a Z-shape.)
       const f = fg[0];
-      const targetY = f.side === 'top' ? down.topRowY : down.botRowY;
-      // Horizontal from feeder, vertical to target row, horizontal into cell.
-      drawPath('M ' + f.x + ' ' + f.y + ' L ' + xMid + ' ' + f.y
-             + ' L ' + xMid + ' ' + targetY + ' L ' + x2 + ' ' + targetY);
+      const targetY = down.cy;
+      if (Math.abs(f.y - targetY) < 0.5) {
+        drawPath('M ' + f.x + ' ' + f.y + ' L ' + x2 + ' ' + f.y);
+      } else {
+        drawPath('M ' + f.x + ' ' + f.y + ' L ' + xMid + ' ' + f.y
+               + ' L ' + xMid + ' ' + targetY + ' L ' + x2 + ' ' + targetY);
+      }
     }
   }
 }
