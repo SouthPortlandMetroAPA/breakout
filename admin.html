@@ -124,6 +124,45 @@
   .status-pill.status-live      { background: rgba(22,163,74,0.14); color: #15803d; }
   .status-pill.status-completed { background: rgba(0,49,161,0.10); color: var(--spm-accent); }
   .status-pill.status-archived  { background: rgba(0,0,0,0.06); color: var(--muted); text-decoration: line-through; }
+
+  .match-edit-grid { display: flex; flex-direction: column; gap: 12px; }
+  .match-edit-grid fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  .match-edit-grid legend { font-size: 0.74rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 6px; }
+  .match-edit-grid label { font-size: 0.86rem; display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+  .match-edit-grid .bye-row { padding: 6px 10px; background: #fafbfc; border-radius: 6px; }
+  .match-edit-grid .position-row { display: flex; gap: 8px; align-items: center; font-size: 0.86rem; }
+  .match-edit-grid .position-text { font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.84rem; color: var(--spm-accent); font-weight: 700; }
+  .match-edit-grid .schedule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+  .match-edit-grid .schedule-grid label { flex-direction: column; align-items: stretch; gap: 4px; }
+  .match-edit-grid .schedule-grid input { padding: 6px 8px; }
+  .match-edit-grid .seed-input { width: 64px; padding: 4px 6px; }
+  .match-edit-grid select { padding: 4px 6px; font-size: 0.84rem; }
+  .match-edit-grid fieldset.disabled { opacity: 0.45; pointer-events: none; }
+
+  .validation-banner {
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(220,38,38,0.08);
+    border-left: 3px solid var(--danger);
+    color: var(--danger);
+    font-size: 0.84rem;
+    margin-bottom: 10px;
+  }
+  .validation-banner.ok {
+    background: rgba(22,163,74,0.06);
+    border-left-color: var(--success);
+    color: var(--success);
+  }
+  .validation-banner ul { margin: 4px 0 0 18px; padding: 0; }
+  .validation-banner li { font-size: 0.78rem; font-weight: 600; margin: 2px 0; }
+
+  .matches-table tbody tr.editable { cursor: pointer; }
+  .matches-table tbody tr.editable:hover { background: rgba(0,49,161,0.04); }
+  .matches-table .edit-btn {
+    border: 1px solid var(--border-strong); background: #fff; color: var(--spm-accent);
+    font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 5px; cursor: pointer;
+  }
+  .matches-table .edit-btn:hover { background: rgba(0,49,161,0.06); }
   code { background: #eef1f7; padding: 2px 6px; border-radius: 4px; font-size: 0.86em; color: var(--spm-accent); font-weight: 700; }
 
   .status-line { padding: 9px 13px; border-radius: 10px; font-size: 0.84rem; font-weight: 600; margin: 6px 0; display: none; }
@@ -246,6 +285,53 @@
       <button class="btn btn-outline" onclick="closeEdit()">Cancel</button>
       <button class="btn btn-danger" onclick="askDelete()">Delete</button>
       <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="matchEditModal">
+  <div class="modal-box" style="max-width:560px">
+    <div class="modal-title" id="matchEditTitle">Edit match</div>
+    <div class="match-edit-grid">
+      <div class="position-row">
+        <span class="hint">Position:</span>
+        <span id="matchEditPosition" class="position-text"></span>
+        <span class="hint">·</span>
+        <span class="hint">M#:</span>
+        <strong id="matchEditMno"></strong>
+      </div>
+
+      <label class="bye-row"><input type="checkbox" id="matchEditIsBye"> This is a bye (top seed auto-advances)</label>
+
+      <fieldset id="matchEditTopFieldset">
+        <legend>Top entrant</legend>
+        <label><input type="radio" name="match-edit-top-kind" value="seed"> Seed <input type="number" id="matchEditTopSeed" min="1" max="16" class="seed-input"></label>
+        <label><input type="radio" name="match-edit-top-kind" value="winner"> W of <select id="matchEditTopWinnerSel"></select></label>
+        <label><input type="radio" name="match-edit-top-kind" value="loser"> L of <select id="matchEditTopLoserSel"></select></label>
+      </fieldset>
+
+      <fieldset id="matchEditBotFieldset">
+        <legend>Bot entrant</legend>
+        <label><input type="radio" name="match-edit-bot-kind" value="seed"> Seed <input type="number" id="matchEditBotSeed" min="1" max="16" class="seed-input"></label>
+        <label><input type="radio" name="match-edit-bot-kind" value="winner"> W of <select id="matchEditBotWinnerSel"></select></label>
+        <label><input type="radio" name="match-edit-bot-kind" value="loser"> L of <select id="matchEditBotLoserSel"></select></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Schedule</legend>
+        <div class="schedule-grid">
+          <label>Day <input type="text" id="matchEditDay" placeholder="Saturday"></label>
+          <label>Time <input type="text" id="matchEditTime" placeholder="9:00 AM"></label>
+          <label>Payout <input type="number" id="matchEditPayout" min="0" step="1" placeholder="0"></label>
+          <label>Table <input type="number" id="matchEditTable" min="1" step="1" placeholder="1"></label>
+        </div>
+      </fieldset>
+    </div>
+    <div id="matchEditStatus" class="status-line"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeMatchEditModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="deleteEditingMatch()">Delete match</button>
+      <button class="btn btn-primary" onclick="saveMatchEdit()">Save</button>
     </div>
   </div>
 </div>
@@ -648,7 +734,13 @@ async function doGenerateDefaultTournament() {
   }
 }
 
-/* ── Matches read-only view (Stage 1) ──────── */
+/* ── Matches editor (Stages 1/2/3) ──────────
+ *  Stage 1: read-only table of every match in the most-recently-live tournament.
+ *  Stage 2: click any row to edit — change top/bot source, schedule, table.
+ *  Stage 3: validation banner above table; Add-match / Delete-match. */
+let _activeMatchTournament = null;   // { id, slug, name, matches: [...] }
+let _editingMatchId = null;
+
 async function loadMatchesView() {
   const body = document.getElementById('matchesBody');
   const status = document.getElementById('matchesStatus');
@@ -660,22 +752,325 @@ async function loadMatchesView() {
     if (!list.length) {
       body.innerHTML = '<p class="hint">No live tournament. Hit <strong>Generate tournament</strong> above to create one.</p>';
       status.textContent = '';
+      _activeMatchTournament = null;
       return;
     }
-    const t = list[0];
-    const matches = Array.isArray(t.matches) ? t.matches : [];
-    if (!matches.length) {
-      body.innerHTML = '<p class="hint">Live tournament has no matches yet.</p>';
-      status.textContent = '';
-      return;
-    }
-    renderMatchesTable(matches, t.name);
+    _activeMatchTournament = list[0];
+    if (!Array.isArray(_activeMatchTournament.matches)) _activeMatchTournament.matches = [];
+    renderMatchesEditor();
+    const matches = _activeMatchTournament.matches;
     const real = matches.filter(m => !m.is_bye).length;
     const byes = matches.length - real;
-    status.textContent = real + ' real · ' + byes + ' byes · ' + t.name + ' (' + t.slug + ')';
+    status.textContent = real + ' real · ' + byes + ' byes · ' + _activeMatchTournament.name + ' (' + _activeMatchTournament.slug + ')';
   } catch (e) {
     body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
     status.textContent = '';
+  }
+}
+
+function renderMatchesEditor() {
+  const body = document.getElementById('matchesBody');
+  if (!_activeMatchTournament) { body.innerHTML = ''; return; }
+  const matches = _activeMatchTournament.matches;
+  const issues = validateMatches(matches);
+  const bannerHtml = issues.length
+    ? '<div class="validation-banner"><strong>' + issues.length + ' wiring issue' + (issues.length === 1 ? '' : 's') + '</strong><ul>' + issues.slice(0, 12).map(i => '<li>' + escapeHtml(i) + '</li>').join('') + (issues.length > 12 ? '<li>(&plus; ' + (issues.length - 12) + ' more)</li>' : '') + '</ul></div>'
+    : (matches.length ? '<div class="validation-banner ok"><strong>Wiring OK</strong> &mdash; ' + matches.length + ' matches, every reference resolves, no cycles.</div>' : '');
+  const tableHtml = matches.length ? renderMatchesTable(matches) : '<p class="hint">No matches yet.</p>';
+  body.innerHTML = bannerHtml + tableHtml + '<div style="margin-top:10px"><button class="btn btn-outline btn-sm" onclick="addMatchToEditor()">+ Add match</button></div>';
+}
+
+function renderMatchesTable(matches) {
+  const byId = {};
+  matches.forEach(m => { byId[m.id] = m; });
+  const sourceLabel = (src) => {
+    if (!src) return '<span class="hint">&mdash;</span>';
+    const source = byId[src.match_id];
+    if (!source) return '<span style="color:var(--danger)">missing ' + escapeHtml(src.match_id) + '</span>';
+    if (source.is_bye) return '<span class="src-bye" title="' + escapeHtml(source.id) + '">BYE&nbsp;&rarr;&nbsp;Seed ' + (source.top_seed != null ? source.top_seed : '?') + '</span>';
+    const prefix = src.kind === 'winner' ? 'W of M' : 'L of M';
+    const cls    = src.kind === 'winner' ? 'src-win' : 'src-lose';
+    return '<span class="' + cls + '" title="' + escapeHtml(source.id) + '">' + prefix + (source.match_no || '?') + '</span>';
+  };
+  const entrantCell = (m, side) => {
+    const seed = side === 'top' ? m.top_seed : m.bot_seed;
+    const from = side === 'top' ? m.top_from : m.bot_from;
+    if (seed != null) return '<span class="src-seed">Seed ' + seed + '</span>';
+    if (from) return sourceLabel(from);
+    if (m.is_bye && side === 'bot') return '<span class="hint">&mdash;</span>';
+    return '<span style="color:var(--danger)">none</span>';
+  };
+  const sorted = matches.slice().sort((a, b) => (a.match_no || 9999) - (b.match_no || 9999));
+  const rowsHtml = sorted.map(m => {
+    const mno = m.match_no != null
+      ? '<strong>M' + m.match_no + '</strong>' + (m.is_bye ? ' <span class="bye-tag-mini">BYE</span>' : '')
+      : '<span style="color:var(--danger)">?</span>';
+    return '<tr class="editable' + (m.is_bye ? ' bye-row' : '') + '" data-match-id="' + escapeHtml(m.id) + '" onclick="openMatchEditModal(this.dataset.matchId)">'
+      + '<td>' + mno + '</td>'
+      + '<td>' + escapeHtml(m.bracket) + '</td>'
+      + '<td>' + m.round + '</td>'
+      + '<td>' + m.slot + '</td>'
+      + '<td>' + entrantCell(m, 'top') + '</td>'
+      + '<td>' + entrantCell(m, 'bot') + '</td>'
+      + '<td>' + escapeHtml(m.day || '') + '</td>'
+      + '<td>' + escapeHtml(m.time || '') + '</td>'
+      + '<td class="num-cell">' + (m.payout != null && m.payout !== '' ? '$' + m.payout : '') + '</td>'
+      + '<td class="num-cell">' + (m.table_no != null ? m.table_no : '') + '</td>'
+      + '<td class="hint" style="font-family:\'SF Mono\',Consolas,Menlo,monospace;font-size:0.72rem">' + escapeHtml(m.id) + '</td>'
+      + '<td><button class="edit-btn" onclick="event.stopPropagation(); openMatchEditModal(\'' + escapeHtml(m.id).replace(/'/g, "\\'") + '\')">Edit</button></td>'
+      + '</tr>';
+  }).join('');
+  return '<table class="table matches-table">'
+    + '<thead><tr>'
+    +   '<th style="width:60px">M#</th>'
+    +   '<th style="width:40px">Br</th>'
+    +   '<th style="width:36px">R</th>'
+    +   '<th style="width:40px">Slot</th>'
+    +   '<th>Top from</th>'
+    +   '<th>Bot from</th>'
+    +   '<th style="width:80px">Day</th>'
+    +   '<th style="width:80px">Time</th>'
+    +   '<th style="width:60px">$</th>'
+    +   '<th style="width:50px">Table</th>'
+    +   '<th style="width:120px">id</th>'
+    +   '<th style="width:50px"></th>'
+    + '</tr></thead>'
+    + '<tbody>' + rowsHtml + '</tbody>'
+    + '</table>';
+}
+
+/* ── Validation (Stage 3) ─────────────────── */
+function validateMatches(matches) {
+  const issues = [];
+  const byId = {};
+  for (const m of matches) {
+    if (byId[m.id]) issues.push('duplicate match id: ' + m.id);
+    else byId[m.id] = m;
+  }
+  const seenMno = {};
+  for (const m of matches) {
+    if (m.match_no != null) {
+      if (seenMno[m.match_no]) issues.push('duplicate match # M' + m.match_no);
+      else seenMno[m.match_no] = m.id;
+    }
+  }
+  // every "from" reference resolves
+  for (const m of matches) {
+    for (const side of ['top_from', 'bot_from']) {
+      const f = m[side];
+      if (f && f.match_id && !byId[f.match_id]) {
+        issues.push(m.id + '.' + side + ' references missing match ' + f.match_id);
+      }
+      if (f && f.kind && f.kind !== 'winner' && f.kind !== 'loser') {
+        issues.push(m.id + '.' + side + ' has invalid kind "' + f.kind + '"');
+      }
+    }
+  }
+  // every match has resolvable top + bot (unless bye, then bot can be empty)
+  for (const m of matches) {
+    const topOk = (m.top_seed != null) || (m.top_from && m.top_from.match_id);
+    if (!topOk) issues.push(m.id + ' has no top entrant');
+    if (!m.is_bye) {
+      const botOk = (m.bot_seed != null) || (m.bot_from && m.bot_from.match_id);
+      if (!botOk) issues.push(m.id + ' has no bot entrant');
+    }
+  }
+  // cycles: from-references must form a DAG
+  // depth-first walk per node
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = {};
+  for (const m of matches) color[m.id] = WHITE;
+  function visit(id, stack) {
+    if (color[id] === BLACK) return;
+    if (color[id] === GRAY) {
+      issues.push('cycle detected: ' + stack.concat([id]).join(' → '));
+      return;
+    }
+    color[id] = GRAY;
+    const m = byId[id];
+    if (m) {
+      for (const side of ['top_from', 'bot_from']) {
+        const f = m[side];
+        if (f && f.match_id && byId[f.match_id]) {
+          visit(f.match_id, stack.concat([id]));
+        }
+      }
+    }
+    color[id] = BLACK;
+  }
+  for (const m of matches) visit(m.id, []);
+  return issues;
+}
+
+/* ── Edit modal (Stage 2) ─────────────────── */
+function openMatchEditModal(matchId) {
+  if (!_activeMatchTournament) return;
+  const m = _activeMatchTournament.matches.find(x => x.id === matchId);
+  if (!m) return;
+  _editingMatchId = matchId;
+
+  document.getElementById('matchEditTitle').textContent = 'Edit ' + (m.match_no ? 'M' + m.match_no : matchId);
+  document.getElementById('matchEditPosition').textContent = m.bracket + ' / R' + m.round + ' / slot ' + m.slot;
+  document.getElementById('matchEditMno').textContent = m.match_no ? 'M' + m.match_no : '—';
+  document.getElementById('matchEditIsBye').checked = !!m.is_bye;
+
+  // Populate match-id dropdowns for "W of" / "L of"
+  const otherMatches = _activeMatchTournament.matches
+    .filter(x => x.id !== matchId)
+    .slice()
+    .sort((a, b) => (a.match_no || 9999) - (b.match_no || 9999));
+  const optHtml = otherMatches.map(x => {
+    const label = (x.match_no ? 'M' + x.match_no : '—') + ' (' + x.id + ')';
+    return '<option value="' + escapeHtml(x.id) + '">' + escapeHtml(label) + '</option>';
+  }).join('');
+  for (const id of ['matchEditTopWinnerSel','matchEditTopLoserSel','matchEditBotWinnerSel','matchEditBotLoserSel']) {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">— pick —</option>' + optHtml;
+  }
+
+  // Populate values
+  setSideFields('top', m);
+  setSideFields('bot', m);
+
+  document.getElementById('matchEditDay').value     = m.day || '';
+  document.getElementById('matchEditTime').value    = m.time || '';
+  document.getElementById('matchEditPayout').value  = m.payout != null ? m.payout : '';
+  document.getElementById('matchEditTable').value   = m.table_no != null ? m.table_no : '';
+
+  applyByeToggle();
+  hideStatus('matchEditStatus');
+  document.getElementById('matchEditModal').classList.add('shown');
+}
+
+function setSideFields(side, m) {
+  const seed = side === 'top' ? m.top_seed : m.bot_seed;
+  const from = side === 'top' ? m.top_from : m.bot_from;
+  const kind = (seed != null) ? 'seed' : (from && from.kind ? from.kind : 'seed');
+  // Set radio
+  document.querySelectorAll('input[name="match-edit-' + side + '-kind"]').forEach(r => { r.checked = (r.value === kind); });
+  // Seed input
+  document.getElementById('matchEdit' + (side === 'top' ? 'Top' : 'Bot') + 'Seed').value = seed != null ? seed : '';
+  // Match-id selects
+  document.getElementById('matchEdit' + (side === 'top' ? 'Top' : 'Bot') + 'WinnerSel').value = (kind === 'winner' && from) ? from.match_id : '';
+  document.getElementById('matchEdit' + (side === 'top' ? 'Top' : 'Bot') + 'LoserSel').value  = (kind === 'loser'  && from) ? from.match_id : '';
+}
+
+function applyByeToggle() {
+  const isBye = document.getElementById('matchEditIsBye').checked;
+  const botFs = document.getElementById('matchEditBotFieldset');
+  botFs.classList.toggle('disabled', isBye);
+}
+
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.id === 'matchEditIsBye') applyByeToggle();
+});
+
+function closeMatchEditModal() {
+  document.getElementById('matchEditModal').classList.remove('shown');
+  _editingMatchId = null;
+}
+
+function readSide(side) {
+  const kind = (document.querySelector('input[name="match-edit-' + side + '-kind"]:checked') || {}).value;
+  if (!kind) return { seed: null, from: null };
+  const prefix = side === 'top' ? 'matchEditTop' : 'matchEditBot';
+  if (kind === 'seed') {
+    const v = document.getElementById(prefix + 'Seed').value.trim();
+    const n = parseInt(v, 10);
+    return { seed: Number.isInteger(n) ? n : null, from: null };
+  }
+  if (kind === 'winner') {
+    const v = document.getElementById(prefix + 'WinnerSel').value;
+    return { seed: null, from: v ? { match_id: v, kind: 'winner' } : null };
+  }
+  if (kind === 'loser') {
+    const v = document.getElementById(prefix + 'LoserSel').value;
+    return { seed: null, from: v ? { match_id: v, kind: 'loser' } : null };
+  }
+  return { seed: null, from: null };
+}
+
+async function saveMatchEdit() {
+  if (!_editingMatchId || !_activeMatchTournament) return;
+  const m = _activeMatchTournament.matches.find(x => x.id === _editingMatchId);
+  if (!m) return;
+
+  const isBye = document.getElementById('matchEditIsBye').checked;
+  const top = readSide('top');
+  const bot = isBye ? { seed: null, from: null } : readSide('bot');
+
+  // Apply
+  m.is_bye = isBye;
+  m.top_seed = top.seed;
+  m.top_from = top.from;
+  m.bot_seed = bot.seed;
+  m.bot_from = bot.from;
+  const dayV   = document.getElementById('matchEditDay').value.trim();
+  const timeV  = document.getElementById('matchEditTime').value.trim();
+  const payV   = document.getElementById('matchEditPayout').value.trim();
+  const tblV   = document.getElementById('matchEditTable').value.trim();
+  m.day      = dayV || null;
+  m.time     = timeV || null;
+  m.payout   = payV  !== '' ? parseInt(payV, 10) : null;
+  m.table_no = tblV  !== '' ? parseInt(tblV, 10) : null;
+
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+    closeMatchEditModal();
+    renderMatchesEditor();
+  } catch (e) {
+    setStatus('matchEditStatus', 'Save failed: ' + e.message, 'err');
+  }
+}
+
+async function deleteEditingMatch() {
+  if (!_editingMatchId || !_activeMatchTournament) return;
+  const m = _activeMatchTournament.matches.find(x => x.id === _editingMatchId);
+  if (!m) return;
+  confirmModal({
+    title: 'Delete ' + (m.match_no ? 'M' + m.match_no : m.id) + '?',
+    message: 'Removes the match from the tournament. Any matches referencing it will become invalid until rewired.',
+    okText: 'Delete',
+    onOk: async () => {
+      _activeMatchTournament.matches = _activeMatchTournament.matches.filter(x => x.id !== _editingMatchId);
+      try {
+        await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+        closeMatchEditModal();
+        renderMatchesEditor();
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      }
+    }
+  });
+}
+
+async function addMatchToEditor() {
+  if (!_activeMatchTournament) { alert('No live tournament loaded.'); return; }
+  // New custom match. id like "CUSTOM-<timestamp>", bracket=A, round=99, slot=auto.
+  const ts = String(Date.now()).slice(-6);
+  const newMatch = {
+    id: 'CUSTOM-' + ts,
+    bracket: 'A',
+    round: 99,
+    slot: 0,
+    is_bye: false,
+    top_seed: null, bot_seed: null,
+    top_from: null, bot_from: null,
+    day: null, time: null, payout: null, table_no: null,
+    winner_side: null
+  };
+  // match_no = max + 1
+  const maxNo = _activeMatchTournament.matches.reduce((mx, m) => Math.max(mx, m.match_no || 0), 0);
+  newMatch.match_no = maxNo + 1;
+  _activeMatchTournament.matches.push(newMatch);
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+    renderMatchesEditor();
+    openMatchEditModal(newMatch.id);
+  } catch (e) {
+    // rollback
+    _activeMatchTournament.matches = _activeMatchTournament.matches.filter(x => x.id !== newMatch.id);
+    alert('Add failed: ' + e.message);
   }
 }
 
