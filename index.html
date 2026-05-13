@@ -521,11 +521,13 @@ function buildTwelveBracket(label, teams) {
 }
 
 function buildSixtyFour(A, B) {
-  const Ar1 = A.matches.filter(m => m.round === 1);  // 4
-  const Ar2 = A.matches.filter(m => m.round === 2);  // 4
-  const Ar3 = A.matches.filter(m => m.round === 3);  // 2
+  // R1 includes 4 byes after the byes-as-cards change — filter them out
+  // so 64-team R1 only wires REAL R1 losers as entry sources.
+  const Ar1 = A.matches.filter(m => m.round === 1 && !m.bye);  // 4 real
+  const Ar2 = A.matches.filter(m => m.round === 2);            // 4
+  const Ar3 = A.matches.filter(m => m.round === 3);            // 2
   const Ar4 = A.matches.filter(m => m.round === 4)[0];
-  const Br1 = B.matches.filter(m => m.round === 1);
+  const Br1 = B.matches.filter(m => m.round === 1 && !m.bye);
   const Br2 = B.matches.filter(m => m.round === 2);
   const Br3 = B.matches.filter(m => m.round === 3);
   const Br4 = B.matches.filter(m => m.round === 4)[0];
@@ -922,18 +924,19 @@ function drawConnectorsFor(wrap, matches) {
     }
 
     // Cross-bracket source stubs. When this match ALSO has an intra-bracket
-    // feeder, the feeder's Z-path could collide with a straight horizontal
-    // stub at the other row — route the cross-source as an L-shape with the
-    // label parked at the cell's center, away from the feeder line.
+    // feeder, the feeder's connector could collide with a straight horizontal
+    // stub — route as an L-shape with the label parked OUTSIDE the target
+    // row (above for top targets, below for bot targets) so the label and
+    // dashed line are visually clear of any intra-bracket Z-path.
     const hasIntraFeeder = !!m.topFromMatch || !!m.botFromMatch;
     if (m.topFromMatchLoser && down.topRowY != null) {
       const label = 'L of M' + m.topFromMatchLoser.globalNo;
-      if (hasIntraFeeder) drawCrossSourceL(svg, down.left, down.topRowY, down.cy, label);
+      if (hasIntraFeeder) drawCrossSourceL(svg, down.left, down.topRowY, 'top', label);
       else                drawCrossSource(svg,  down.left, down.topRowY, label);
     }
     if (m.botFromMatchLoser && down.botRowY != null) {
       const label = 'L of M' + m.botFromMatchLoser.globalNo;
-      if (hasIntraFeeder) drawCrossSourceL(svg, down.left, down.botRowY, down.cy, label);
+      if (hasIntraFeeder) drawCrossSourceL(svg, down.left, down.botRowY, 'bot', label);
       else                drawCrossSource(svg,  down.left, down.botRowY, label);
     }
   }
@@ -947,17 +950,22 @@ function drawCrossSource(svg, x, y, label) {
   appendCrossLabel(svg, x - 26, y, label);
 }
 
-/* L-shaped variant. Label parks at labelY (typically the cell's vertical
- * center), then the dashed path bends to reach the actual target row:
+/* L-shaped variant. Label parks OUTSIDE the target row (just above for
+ * top targets, just below for bot targets), and the dashed path bends
+ * INTO the row from outside. The bend lives at x = target.left - 10,
+ * far from xMid where the intra-bracket Z-segment lives, and the label's
+ * Y is offset from any row, so the label can never coincide with the
+ * connector regardless of the connector's path.
  *
- *   label ─────┐
- *              │      ← this vertical bend avoids the feeder's Z-path,
- *              │        which sits at the gap midpoint (xMid).
- *              └─── target row (top or bot)
+ *   label  ───┐
+ *             │ ← bend at x-10, OUT of the connector's xMid zone
+ *             └── target row
  */
-function drawCrossSourceL(svg, x, rowY, labelY, label) {
+function drawCrossSourceL(svg, x, rowY, side, label) {
   const STUB = 22;
-  const VERT_X = x - 10;            // bend close to the target cell
+  const OFFSET = 14;                // distance from target row to label
+  const VERT_X = x - 10;
+  const labelY = side === 'top' ? rowY - OFFSET : rowY + OFFSET;
   const d = 'M ' + (x - STUB) + ' ' + labelY
         + ' L ' + VERT_X + ' ' + labelY
         + ' L ' + VERT_X + ' ' + rowY
