@@ -518,12 +518,15 @@ let _teams = [];        // sorted ASC by number
 let _tournament = null;
 let _tournamentRow = null;  // raw row from breakout.tournaments (incl id, matches JSONB)
 
-/* Staff mode — append `?role=staff&key=<service_role>` to the viewer URL
- * to enable click-to-record-winner. The service_role key is the same one
- * admin.html uses; future iteration will swap in a scoped JWT. */
+/* URL params:
+ *   ?t=<slug>        select a specific tournament (else most recently live)
+ *   ?role=staff      enable click-to-record-winner UI
+ *   ?key=<jwt>       service_role key used by staff for PATCH writes
+ */
 const URL_PARAMS = new URLSearchParams(location.search);
-const IS_STAFF = URL_PARAMS.get('role') === 'staff';
-const STAFF_KEY = URL_PARAMS.get('key') || '';
+const URL_SLUG   = URL_PARAMS.get('t') || null;
+const IS_STAFF   = URL_PARAMS.get('role') === 'staff';
+const STAFF_KEY  = URL_PARAMS.get('key') || '';
 const HEADERS_STAFF = STAFF_KEY
   ? { apikey: STAFF_KEY, Authorization: 'Bearer ' + STAFF_KEY, 'Accept-Profile': 'breakout', 'Content-Profile': 'breakout', 'Content-Type': 'application/json' }
   : null;
@@ -578,7 +581,7 @@ async function pollTournamentUpdate() {
   if (document.querySelector('.modal.shown, .staff-modal-overlay.shown, input:focus, textarea:focus')) return;
   if (!_tournament) return;          // initial load hasn't finished
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=updated_at,id', { headers: HEADERS_DB });
+    const r = await fetch(SB_URL + '/rest/v1/' + tournamentQueryString('updated_at,id'), { headers: HEADERS_DB });
     if (!r.ok) return;
     const arr = await r.json();
     if (!arr || !arr[0]) return;
@@ -1061,9 +1064,20 @@ function resolveTournament(t) {
    back to inline template generation when no row exists yet so the bracket
    structure stays visible (all matches show TBD until results are recorded).
    ════════════════════════════════════════════════════════════════════════ */
+/* Slug-aware tournament lookup. If ?t=<slug> is present, pull that
+ * specific tournament regardless of its status. Otherwise pick the most
+ * recently created live tournament. */
+function tournamentQueryString(selectClause) {
+  const sel = selectClause || '*';
+  if (URL_SLUG) {
+    return 'tournaments?slug=eq.' + encodeURIComponent(URL_SLUG) + '&select=' + sel + '&limit=1';
+  }
+  return 'tournaments?status=eq.live&order=created_at.desc&limit=1&select=' + sel;
+}
+
 async function loadActiveTournament() {
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=*', { headers: HEADERS_DB });
+    const r = await fetch(SB_URL + '/rest/v1/' + tournamentQueryString('*'), { headers: HEADERS_DB });
     if (!r.ok) return null;
     const arr = await r.json();
     const row = arr && arr[0] ? arr[0] : null;

@@ -106,6 +106,24 @@
   .matches-table .src-bye  { font-weight: 700; color: var(--muted); }
   .matches-table .bye-row  { background: #fafbfc; opacity: 0.78; }
   .matches-table .bye-row:hover { background: #f4f5f7; }
+  .matches-table .bye-tag-mini {
+    font-size: 0.58rem; font-weight: 800; color: var(--muted);
+    background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px;
+    letter-spacing: 0.1em; margin-left: 4px; vertical-align: middle;
+  }
+  .status-pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 0.66rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .status-pill.status-draft     { background: rgba(0,0,0,0.06); color: var(--muted); }
+  .status-pill.status-live      { background: rgba(22,163,74,0.14); color: #15803d; }
+  .status-pill.status-completed { background: rgba(0,49,161,0.10); color: var(--spm-accent); }
+  .status-pill.status-archived  { background: rgba(0,0,0,0.06); color: var(--muted); text-decoration: line-through; }
   code { background: #eef1f7; padding: 2px 6px; border-radius: 4px; font-size: 0.86em; color: var(--spm-accent); font-weight: 700; }
 
   .status-line { padding: 9px 13px; border-radius: 10px; font-size: 0.84rem; font-weight: 600; margin: 6px 0; display: none; }
@@ -525,29 +543,60 @@ async function loadTournaments() {
   const body = document.getElementById('tournamentBody');
   const status = document.getElementById('tournamentStatus');
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?order=id.desc&select=id,name,format_template,is_active,created_at', { headers: HEADERS_READ });
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?order=created_at.desc&select=id,slug,name,format_template,status,start_date,end_date,created_at', { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
     if (!list.length) {
-      body.innerHTML = '<p class="hint">No tournament yet. Click <strong>Generate default</strong> to create one.</p>';
+      body.innerHTML = '<p class="hint">No tournaments yet. Click <strong>Generate tournament</strong> to create one.</p>';
       status.textContent = '';
       return;
     }
-    status.textContent = list.length + (list.length === 1 ? ' record' : ' records') + ', '
-      + list.filter(t => t.is_active).length + ' active';
-    body.innerHTML = '<table class="table"><thead><tr><th>ID</th><th>Name</th><th>Template</th><th>Active</th><th>Created</th></tr></thead><tbody>'
-      + list.map(t =>
-          '<tr>' +
-            '<td>' + t.id + '</td>' +
-            '<td>' + escapeHtml(t.name) + '</td>' +
-            '<td><code>' + escapeHtml(t.format_template) + '</code></td>' +
-            '<td>' + (t.is_active ? '<strong style="color:#15803d">yes</strong>' : '<span style="opacity:0.6">no</span>') + '</td>' +
-            '<td class="hint">' + new Date(t.created_at).toLocaleString() + '</td>' +
-          '</tr>'
-        ).join('') + '</tbody></table>';
+    const live = list.filter(t => t.status === 'live').length;
+    status.textContent = list.length + ' total · ' + live + ' live';
+    body.innerHTML = '<table class="table"><thead><tr>'
+      + '<th>Slug</th><th>Name</th><th>Status</th><th>Dates</th><th>Created</th><th></th>'
+      + '</tr></thead><tbody>'
+      + list.map(t => {
+          const slugCell = '<a href="?t=' + encodeURIComponent(t.slug) + '" target="_blank" rel="noopener" style="font-family:\'SF Mono\',Consolas,Menlo,monospace;color:var(--spm-accent);font-weight:700">' + escapeHtml(t.slug) + '</a>';
+          const statusCell = '<span class="status-pill status-' + escapeHtml(t.status) + '">' + escapeHtml(t.status) + '</span>';
+          const dates = (t.start_date || t.end_date)
+            ? (escapeHtml(t.start_date || '?') + ' &rarr; ' + escapeHtml(t.end_date || '?'))
+            : '<span class="hint">—</span>';
+          const viewerHref = '../index.html?t=' + encodeURIComponent(t.slug);
+          return '<tr>'
+            + '<td>' + slugCell + '</td>'
+            + '<td>' + escapeHtml(t.name) + '</td>'
+            + '<td>' + statusCell + '</td>'
+            + '<td class="hint">' + dates + '</td>'
+            + '<td class="hint">' + new Date(t.created_at).toLocaleString() + '</td>'
+            + '<td><a class="btn btn-outline btn-sm" href="../index.html?t=' + encodeURIComponent(t.slug) + '" target="_blank" rel="noopener">View &rarr;</a></td>'
+            + '</tr>';
+        }).join('') + '</tbody></table>';
   } catch (e) {
     body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
   }
+}
+
+/* Slugify a human-readable string into a URL-safe id. Lowercase, non-alnum
+ * to hyphens, accents stripped, collapse and trim. Caps at 50 chars. */
+function slugify(s) {
+  return String(s || '').toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50)
+    || 'tournament';
+}
+
+async function uniqueSlug(base) {
+  for (let i = 0; i < 100; i++) {
+    const candidate = i === 0 ? base : base + '-' + i;
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?slug=eq.' + encodeURIComponent(candidate) + '&select=id&limit=1', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('Slug check failed: HTTP ' + r.status);
+    const arr = await r.json();
+    if (!arr.length) return candidate;
+  }
+  throw new Error('Could not find a unique slug from "' + base + '"');
 }
 
 function escapeHtml(s) {
@@ -558,12 +607,12 @@ function escapeHtml(s) {
 
 async function generateDefaultTournament() {
   if (_teams.length < 24) {
-    alert('Need at least 24 teams (have ' + _teams.length + '). Add teams or run "Reset to sample data" first.');
+    alert('Need at least 24 teams in the database (have ' + _teams.length + '). Paste teams in the Add teams card first.');
     return;
   }
   confirmModal({
-    title: 'Generate default tournament?',
-    message: 'Creates a fully-wired Modified-SE 12+12→64 tournament using the first 24 teams (by number). Any existing tournaments are deactivated.',
+    title: 'Generate tournament?',
+    message: 'Creates a new Modified-SE 12+12→64 tournament using the first 24 teams (by number), wired and ready. Status: live. Existing tournaments are left untouched.',
     okText: 'Generate',
     onOk: doGenerateDefaultTournament
   });
@@ -571,21 +620,25 @@ async function generateDefaultTournament() {
 
 async function doGenerateDefaultTournament() {
   try {
-    // Deactivate existing tournaments first
-    await sb('PATCH', 'tournaments?is_active=eq.true', { is_active: false });
-    // Generate
     const matchData = templateModSe12_12To64();
     const teams = _teams.slice().sort((a, b) => a.number - b.number);
     const seedAssignments = [];
     teams.slice(0, 12).forEach((t, i)  => seedAssignments.push({ bracket: 'A', seed: i + 1, team_number: t.number }));
     teams.slice(12, 24).forEach((t, i) => seedAssignments.push({ bracket: 'B', seed: i + 1, team_number: t.number }));
+    const today = new Date();
+    const ymd = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    const name = 'Tournament ' + ymd;
+    const slug = await uniqueSlug(slugify(name));
     const row = {
-      name: 'Default — ' + new Date().toLocaleDateString(),
+      name,
+      slug,
+      status: 'live',
       format_template: 'mod-se-12-12-to-64',
       config: { bracketChampText: 'Bracket Champ', championText: 'Champion' },
       seed_assignments: seedAssignments,
       matches: matchData,
-      is_active: true
+      start_date: ymd,
+      is_active: true   // kept temporarily for backward compat; will be retired
     };
     await sb('POST', 'tournaments', row);
     loadTournaments();
@@ -601,25 +654,25 @@ async function loadMatchesView() {
   const status = document.getElementById('matchesStatus');
   body.innerHTML = '<p class="hint">Loading&hellip;</p>';
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=id,name,matches', { headers: HEADERS_READ });
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,slug,name,matches', { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
     if (!list.length) {
-      body.innerHTML = '<p class="hint">No active tournament. Hit <strong>Generate default</strong> above to create one.</p>';
+      body.innerHTML = '<p class="hint">No live tournament. Hit <strong>Generate tournament</strong> above to create one.</p>';
       status.textContent = '';
       return;
     }
     const t = list[0];
     const matches = Array.isArray(t.matches) ? t.matches : [];
     if (!matches.length) {
-      body.innerHTML = '<p class="hint">Active tournament has no matches yet.</p>';
+      body.innerHTML = '<p class="hint">Live tournament has no matches yet.</p>';
       status.textContent = '';
       return;
     }
     renderMatchesTable(matches, t.name);
     const real = matches.filter(m => !m.is_bye).length;
     const byes = matches.length - real;
-    status.textContent = real + ' real · ' + byes + ' byes · ' + t.name;
+    status.textContent = real + ' real · ' + byes + ' byes · ' + t.name + ' (' + t.slug + ')';
   } catch (e) {
     body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
     status.textContent = '';
@@ -654,20 +707,13 @@ function renderMatchesTable(matches, tournamentName) {
     return '<span style="color:var(--danger)">none</span>';
   };
 
-  // Sort: real matches by play order (match_no), then byes by bracket+slot.
-  const sorted = matches.slice().sort((a, b) => {
-    if (a.is_bye && !b.is_bye) return 1;
-    if (!a.is_bye && b.is_bye) return -1;
-    if (!a.is_bye && !b.is_bye) return (a.match_no || 0) - (b.match_no || 0);
-    const bcmp = String(a.bracket).localeCompare(String(b.bracket));
-    if (bcmp !== 0) return bcmp;
-    return (a.round - b.round) || (a.slot - b.slot);
-  });
+  // Sort by match_no — byes and real matches now share a single numbering.
+  const sorted = matches.slice().sort((a, b) => (a.match_no || 9999) - (b.match_no || 9999));
 
   const rowsHtml = sorted.map(m => {
-    const mno = m.is_bye
-      ? '<span class="hint">bye</span>'
-      : (m.match_no != null ? '<strong>M' + m.match_no + '</strong>' : '<span style="color:var(--danger)">?</span>');
+    const mno = m.match_no != null
+      ? '<strong>M' + m.match_no + '</strong>' + (m.is_bye ? ' <span class="bye-tag-mini">BYE</span>' : '')
+      : '<span style="color:var(--danger)">?</span>';
     return '<tr' + (m.is_bye ? ' class="bye-row"' : '') + '>'
       + '<td>' + mno + '</td>'
       + '<td>' + escapeHtml(m.bracket) + '</td>'
@@ -705,10 +751,10 @@ function renderMatchesTable(matches, tournamentName) {
 async function clearAllMatchResults() {
   let active;
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=id,name,matches', { headers: HEADERS_READ });
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,name,matches', { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
-    if (!list.length) { alert('No active tournament to clear.'); return; }
+    if (!list.length) { alert('No live tournament to clear.'); return; }
     active = list[0];
   } catch (e) { alert('Load failed: ' + e.message); return; }
 
@@ -740,15 +786,15 @@ async function doClearAllMatchResults(active) {
 
 async function deactivateTournaments() {
   confirmModal({
-    title: 'Deactivate all tournaments?',
-    message: 'Sets is_active=false on every tournament row. The viewer falls back to generating from the inline template.',
-    okText: 'Deactivate',
+    title: 'Archive all live tournaments?',
+    message: 'Sets status=archived on every live tournament. Public viewers will stop seeing them on the root list. Archived tournaments remain reachable by direct slug URL.',
+    okText: 'Archive all',
     onOk: async () => {
       try {
-        await sb('PATCH', 'tournaments?is_active=eq.true', { is_active: false });
+        await sb('PATCH', 'tournaments?status=eq.live', { status: 'archived', is_active: false });
         loadTournaments();
         loadMatchesView();
-      } catch (e) { alert('Deactivate failed: ' + e.message); }
+      } catch (e) { alert('Archive failed: ' + e.message); }
     }
   });
 }
