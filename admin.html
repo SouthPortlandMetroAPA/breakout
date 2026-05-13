@@ -238,6 +238,17 @@
   }
   .capacity-table .ok-tag { color: var(--success); font-weight: 700; font-size: 0.78rem; }
   .capacity-table .matches-cell { font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.74rem; color: var(--muted); }
+  .capacity-table .day-header td {
+    background: linear-gradient(180deg, #f4f5f7, #fafbfc);
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.8rem;
+    color: var(--spm-accent);
+    padding: 12px 10px 8px;
+    border-top: 2px solid var(--border-strong);
+  }
+  .capacity-table tbody tr.day-header:first-child td { border-top: 0; }
 
   /* Half-hour datetime + duration pickers — replaces native datetime-local
      with a date input + a select of explicit half-hour options so the user
@@ -1007,7 +1018,7 @@ async function loadMatchesView() {
   const status = document.getElementById('matchesStatus');
   body.innerHTML = '<p class="hint">Loading&hellip;</p>';
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,slug,name,matches', { headers: HEADERS_READ });
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,slug,name,start_date,end_date,matches', { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
     if (!list.length) {
@@ -1080,6 +1091,11 @@ function renderScheduleEditor() {
     }
     const sample = firstRealMatchInRound(r.bracket, r.round);
     const dt = splitDateTime(sample && sample.scheduled_at ? sample.scheduled_at : '');
+    // Default the date picker to the tournament's start date if this round
+    // hasn't been scheduled yet — saves admins from typing dates twice.
+    if (!dt.date && _activeMatchTournament && _activeMatchTournament.start_date) {
+      dt.date = _activeMatchTournament.start_date;
+    }
     const payout = sample && sample.payout != null ? sample.payout : '';
     const tip = sample && sample.tables_in_parallel ? sample.tables_in_parallel : 1;
     const durMin = sample && sample.duration_min != null ? sample.duration_min : 240;
@@ -1275,58 +1291,83 @@ async function renderCapacityAnalyzer() {
       return;
     }
 
-    // 30-min bucket sweep
+    // 30-min bucket sweep, GROUPED PER DAY. Each day's range = earliest
+    // start to latest end of matches that start on that day; we don't show
+    // overnight empty hours.
     const SLOT_MIN = 30;
     const SLOT_MS  = SLOT_MIN * 60 * 1000;
-    let minT = Infinity, maxT = -Infinity;
-    for (const it of intervals) {
-      if (it.start.getTime() < minT) minT = it.start.getTime();
-      if (it.end.getTime()   > maxT) maxT = it.end.getTime();
+    const dateKey = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const intervalsByDate = {};
+    for (const iv of intervals) {
+      const k = dateKey(iv.start);
+      (intervalsByDate[k] = intervalsByDate[k] || []).push(iv);
     }
-    // Round down to nearest slot boundary
-    minT = Math.floor(minT / SLOT_MS) * SLOT_MS;
-    maxT = Math.ceil(maxT / SLOT_MS) * SLOT_MS;
-
-    const rows = [];
+    const days = Object.keys(intervalsByDate).sort();
     let maxDemand = 0;
-    for (let t0 = minT; t0 < maxT; t0 += SLOT_MS) {
-      const t1 = t0 + SLOT_MS;
-      const active = intervals.filter(it => it.start.getTime() < t1 && it.end.getTime() > t0);
-      if (active.length > maxDemand) maxDemand = active.length;
-      rows.push({
-        start: new Date(t0),
-        count: active.length,
-        ids: active.map(it => 'M' + (it.m.match_no || '?')).join(', ')
-      });
-    }
+    const dayBuckets = days.map(date => {
+      const ivs = intervalsByDate[date];
+      let minT = Infinity, maxT = -Infinity;
+      for (const iv of ivs) {
+        if (iv.start.getTime() < minT) minT = iv.start.getTime();
+        if (iv.end.getTime()   > maxT) maxT = iv.end.getTime();
+      }
+      minT = Math.floor(minT / SLOT_MS) * SLOT_MS;
+      maxT = Math.ceil(maxT / SLOT_MS) * SLOT_MS;
+      const dayRows = [];
+      for (let t0 = minT; t0 < maxT; t0 += SLOT_MS) {
+        const t1 = t0 + SLOT_MS;
+        // Demand counts ALL intervals across all days that overlap this bucket.
+        const active = intervals.filter(it => it.start.getTime() < t1 && it.end.getTime() > t0);
+        if (active.length > maxDemand) maxDemand = active.length;
+        dayRows.push({
+          start: new Date(t0),
+          count: active.length,
+          ids: active.map(it => 'M' + (it.m.match_no || '?')).join(', ')
+        });
+      }
+      return { date, rows: dayRows };
+    });
 
     const venueLine = (t.venue_name || '(no venue set)') + ' &middot; '
       + (cap != null ? cap + ' tables' : '<span style="color:var(--danger)">capacity not set</span>');
     status.innerHTML = venueLine;
 
-    const overflowSlots = cap != null ? rows.filter(r => r.count > cap).length : 0;
+    const overflowSlots = cap != null
+      ? dayBuckets.reduce((sum, d) => sum + d.rows.filter(r => r.count > cap).length, 0)
+      : 0;
     const overflowNote = cap != null && overflowSlots > 0
       ? '<p class="validation-banner" style="margin:8px 0">⚠ ' + overflowSlots + ' time slot' + (overflowSlots === 1 ? '' : 's') + ' exceed capacity (' + cap + ' tables). Reduce overlap by adjusting round start times or table assignments.</p>'
       : (cap != null ? '<p class="validation-banner ok" style="margin:8px 0">Within capacity at every slot</p>' : '<p class="hint" style="margin:8px 0">Set the venue\'s <strong>Total tables</strong> in the tournament edit modal to enable capacity checking.</p>');
 
+    const fmtTime = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const fmtDay  = (dateKeyStr) => {
+      const dd = new Date(dateKeyStr + 'T12:00:00');
+      return dd.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    };
+
+    const renderRow = (rw) => {
+      const over = cap != null && rw.count > cap;
+      const atCap = cap != null && rw.count === cap;
+      const rowCls = over ? 'over' : (atCap ? 'at-cap' : '');
+      const widthPct = cap ? Math.min(100, Math.round(rw.count * 100 / cap)) : Math.round(rw.count * 100 / Math.max(1, maxDemand));
+      const tag = cap == null
+        ? '<span class="hint">' + rw.count + '</span>'
+        : (over ? '<span class="over-tag">+' + (rw.count - cap) + ' over</span>'
+          : (atCap ? '<span class="ok-tag">at cap</span>' : '<span class="ok-tag">ok</span>'));
+      return '<tr class="' + rowCls + '">'
+        + '<td>' + escapeHtml(fmtTime(rw.start)) + '</td>'
+        + '<td><strong>' + rw.count + '</strong> / ' + (cap != null ? cap : '?') + ' &nbsp; ' + tag + '</td>'
+        + '<td><span class="demand-bar' + (over ? ' over' : '') + '" style="width:' + widthPct + '%"></span></td>'
+        + '<td class="matches-cell">' + escapeHtml(rw.ids) + '</td>'
+        + '</tr>';
+    };
+
     const tableHtml = '<table class="table capacity-table">'
-      + '<thead><tr><th style="width:200px">Time slot</th><th style="width:80px">Demand</th><th style="width:200px">Bar</th><th>Matches</th></tr></thead>'
+      + '<thead><tr><th style="width:120px">Time</th><th style="width:80px">Demand</th><th style="width:200px">Bar</th><th>Matches</th></tr></thead>'
       + '<tbody>'
-      + rows.map(rw => {
-          const over = cap != null && rw.count > cap;
-          const atCap = cap != null && rw.count === cap;
-          const rowCls = over ? 'over' : (atCap ? 'at-cap' : '');
-          const widthPct = cap ? Math.min(100, Math.round(rw.count * 100 / cap)) : Math.round(rw.count * 100 / Math.max(1, maxDemand));
-          const tag = cap == null
-            ? '<span class="hint">' + rw.count + '</span>'
-            : (over ? '<span class="over-tag">+' + (rw.count - cap) + ' over</span>'
-              : (atCap ? '<span class="ok-tag">at cap</span>' : '<span class="ok-tag">ok</span>'));
-          return '<tr class="' + rowCls + '">'
-            + '<td>' + escapeHtml(fmtSlot(rw.start)) + '</td>'
-            + '<td><strong>' + rw.count + '</strong> / ' + (cap != null ? cap : '?') + ' &nbsp; ' + tag + '</td>'
-            + '<td><span class="demand-bar' + (over ? ' over' : '') + '" style="width:' + widthPct + '%"></span></td>'
-            + '<td class="matches-cell">' + escapeHtml(rw.ids) + '</td>'
-            + '</tr>';
+      + dayBuckets.map(day => {
+          const header = '<tr class="day-header"><td colspan="4">' + escapeHtml(fmtDay(day.date)) + '</td></tr>';
+          return header + day.rows.map(renderRow).join('');
         }).join('')
       + '</tbody></table>';
 
