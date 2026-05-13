@@ -2057,19 +2057,25 @@ function jumpToMatch(globalNo) {
   target.classList.add('match-jump-flash');
   setTimeout(() => target.classList.remove('match-jump-flash'), 1800);
 }
-document.addEventListener('click', (e) => {
-  // W → / L → chip on a match card
-  const chip = e.target.closest('a.dest-chip[data-jump]');
-  if (chip) { e.preventDefault(); jumpToMatch(chip.dataset.jump); return; }
-  // Floating "L of M_N" SVG label (cross-bracket source annotation)
-  const t = e.target;
-  if (t && (t.tagName === 'text' || t.tagName === 'TEXT' || (typeof t.localName === 'string' && t.localName === 'text'))
-        && t.getAttribute && t.getAttribute('data-jump')) {
-    e.preventDefault();
-    jumpToMatch(t.getAttribute('data-jump'));
-    return;
+// Walk up from the event target to find anything with a data-jump attribute.
+// Works for both HTML anchor chips and SVG <text> labels — closest() can
+// behave inconsistently for SVG in some browsers, so we just walk parentNode.
+function findDataJumpAncestor(node) {
+  while (node && node.nodeType === 1) {
+    if (typeof node.getAttribute === 'function') {
+      const v = node.getAttribute('data-jump');
+      if (v) return { node: node, value: v };
+    }
+    node = node.parentNode;
   }
-});
+  return null;
+}
+document.addEventListener('click', (e) => {
+  const hit = findDataJumpAncestor(e.target);
+  if (!hit) return;
+  e.preventDefault();
+  jumpToMatch(hit.value);
+}, true);  // capture phase so the viewer/staff click handlers don't pre-empt
 
 /* ── Pan & scroll on bracket viewports ───────
  *  Drag with mouse, Shift+wheel, or arrow keys (when viewport focused).

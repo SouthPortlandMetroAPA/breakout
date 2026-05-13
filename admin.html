@@ -1956,6 +1956,14 @@ async function regenerateSlugFromName() {
     okText: 'Regenerate',
     onOk: () => {
       document.getElementById('tEditSlug').value = nextSlug;
+      // Refresh the Public + Staff URL preview lines at the bottom of the
+      // modal so the user sees what links will look like after Save.
+      const publicHref = './?t=' + encodeURIComponent(nextSlug);
+      const staffHref  = './?t=' + encodeURIComponent(nextSlug) + '&role=staff&key=' + encodeURIComponent(SB_KEY || '');
+      const pl = document.getElementById('tEditPublicUrl');
+      if (pl) { pl.href = publicHref; pl.textContent = publicHref; }
+      const sl = document.getElementById('tEditStaffUrl');
+      if (sl) { sl.href = staffHref; sl.textContent = './?t=' + nextSlug + '&role=staff&key=…'; }
       setStatus('tournamentEditStatus', 'Slug regenerated. Click Save to apply.', 'progress');
     }
   });
