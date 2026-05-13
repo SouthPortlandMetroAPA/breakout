@@ -559,15 +559,17 @@ function buildSixtyFour(A, B) {
                               winner: null, loser: null, topWins: null }, props);
     matches.push(m); return m;
   };
-  // R1 (8 matches) — cross-bracket pairing: A R1 losers vs B R1 losers, then A R2 vs B R2.
+  // R1 (8 matches) — WITHIN-bracket pairing of R1 + R2 losers.
+  //   64-R1-M1..M4 : A's R1[i] loser vs A's R2[i] loser
+  //   64-R1-M5..M8 : B's R1[i] loser vs B's R2[i] loser
   const r1 = [];
   for (let i = 0; i < 4; i++) {
     r1.push(newMatch({ id: '64-R1-M' + (i + 1), bracket: '64', round: 1, slot: i,
-      topFromMatchLoser: Ar1[i], botFromMatchLoser: Br1[i] }));
+      topFromMatchLoser: Ar1[i], botFromMatchLoser: Ar2[i] }));
   }
   for (let i = 0; i < 4; i++) {
     r1.push(newMatch({ id: '64-R1-M' + (i + 5), bracket: '64', round: 1, slot: i + 4,
-      topFromMatchLoser: Ar2[i], botFromMatchLoser: Br2[i] }));
+      topFromMatchLoser: Br1[i], botFromMatchLoser: Br2[i] }));
   }
   // R2 (4 matches) — pairs of R1 winners
   const r2 = [];
@@ -971,42 +973,76 @@ function drawConnectorsFor(wrap, matches) {
       }
     }
 
-    // Cross-bracket source stubs (drawn dashed with a floating label
-    // — "L of M_N" — so users can see where the other team came from
-    // without drawing a long cross-bracket line).
+    // Cross-bracket source stubs. When this match ALSO has an intra-bracket
+    // feeder, the feeder's Z-path could collide with a straight horizontal
+    // stub at the other row — route the cross-source as an L-shape with the
+    // label parked at the cell's center, away from the feeder line.
+    const hasIntraFeeder = !!m.topFromMatch || !!m.botFromMatch;
     if (m.topFromMatchLoser && down.topRowY != null) {
-      drawCrossSource(svg, down.left, down.topRowY, 'L of M' + m.topFromMatchLoser.globalNo);
+      const label = 'L of M' + m.topFromMatchLoser.globalNo;
+      if (hasIntraFeeder) drawCrossSourceL(svg, down.left, down.topRowY, down.cy, label);
+      else                drawCrossSource(svg,  down.left, down.topRowY, label);
     }
     if (m.botFromMatchLoser && down.botRowY != null) {
-      drawCrossSource(svg, down.left, down.botRowY, 'L of M' + m.botFromMatchLoser.globalNo);
+      const label = 'L of M' + m.botFromMatchLoser.globalNo;
+      if (hasIntraFeeder) drawCrossSourceL(svg, down.left, down.botRowY, down.cy, label);
+      else                drawCrossSource(svg,  down.left, down.botRowY, label);
     }
   }
 }
 
+/* Straight horizontal stub + label at the target row's Y. Used when the
+ * downstream match has NO intra-bracket feeder (e.g. 64-team R1, where both
+ * rows are cross-bracket loser drops, so there's no Z-path to collide with). */
 function drawCrossSource(svg, x, y, label) {
-  const STUB = 22;
-  const COLOR = '#b45309';
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('d', 'M ' + (x - STUB) + ' ' + y + ' L ' + x + ' ' + y);
-  path.setAttribute('fill', 'none');
-  path.setAttribute('stroke', COLOR);
-  path.setAttribute('stroke-width', '1.5');
-  path.setAttribute('stroke-dasharray', '3 3');
-  path.setAttribute('stroke-linecap', 'round');
-  svg.appendChild(path);
+  appendCrossPath(svg, 'M ' + (x - 22) + ' ' + y + ' L ' + x + ' ' + y);
+  appendCrossLabel(svg, x - 26, y, label);
+}
 
-  const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-  text.setAttribute('x', x - STUB - 4);
-  text.setAttribute('y', y);
-  text.setAttribute('text-anchor', 'end');
-  text.setAttribute('dominant-baseline', 'middle');
-  text.setAttribute('fill', COLOR);
-  text.setAttribute('font-size', '10.5');
-  text.setAttribute('font-weight', '800');
-  text.setAttribute('font-family', 'system-ui, -apple-system, "Segoe UI", sans-serif');
-  text.setAttribute('letter-spacing', '0.04em');
-  text.textContent = label;
-  svg.appendChild(text);
+/* L-shaped variant. Label parks at labelY (typically the cell's vertical
+ * center), then the dashed path bends to reach the actual target row:
+ *
+ *   label ─────┐
+ *              │      ← this vertical bend avoids the feeder's Z-path,
+ *              │        which sits at the gap midpoint (xMid).
+ *              └─── target row (top or bot)
+ */
+function drawCrossSourceL(svg, x, rowY, labelY, label) {
+  const STUB = 22;
+  const VERT_X = x - 10;            // bend close to the target cell
+  const d = 'M ' + (x - STUB) + ' ' + labelY
+        + ' L ' + VERT_X + ' ' + labelY
+        + ' L ' + VERT_X + ' ' + rowY
+        + ' L ' + x + ' ' + rowY;
+  appendCrossPath(svg, d);
+  appendCrossLabel(svg, x - 26, labelY, label);
+}
+
+function appendCrossPath(svg, d) {
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d);
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', '#b45309');
+  p.setAttribute('stroke-width', '1.5');
+  p.setAttribute('stroke-dasharray', '3 3');
+  p.setAttribute('stroke-linecap', 'round');
+  p.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(p);
+}
+
+function appendCrossLabel(svg, x, y, label) {
+  const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  t.setAttribute('x', x);
+  t.setAttribute('y', y);
+  t.setAttribute('text-anchor', 'end');
+  t.setAttribute('dominant-baseline', 'middle');
+  t.setAttribute('fill', '#b45309');
+  t.setAttribute('font-size', '10.5');
+  t.setAttribute('font-weight', '800');
+  t.setAttribute('font-family', 'system-ui, -apple-system, "Segoe UI", sans-serif');
+  t.setAttribute('letter-spacing', '0.04em');
+  t.textContent = label;
+  svg.appendChild(t);
 }
 function cssEscape(s) { return String(s).replace(/(["\\])/g, '\\$1'); }
 
