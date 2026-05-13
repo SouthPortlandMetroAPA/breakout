@@ -755,11 +755,13 @@ function renderRow(team, isWinner) {
 }
 
 /* Connectors: per-bracket SVG overlay.
- *  For each match, draw a center-to-center path from each of its
- *  intra-bracket feeders to its own center. Always center-to-center —
- *  no row-targeting, no shared riser geometry. Flat horizontal when the
- *  feeder and downstream share a Y; Z-shape otherwise.
- *  Cross-bracket loser drops remain text annotations. */
+ *  Each connector traces one TEAM's advancement path. For every match m
+ *  and every intra-bracket feeder f, draw a line from:
+ *    • feeder's WINNER ROW (right edge)       — where the team comes from
+ *    • to downstream's SPECIFIC ROW (left)    — where that team appears
+ *  Two-feeder downstream → two independent lines, top feeder → top row,
+ *  bot feeder → bot row. Right-angle Z routing; flat horizontal when Ys
+ *  match. Cross-bracket loser drops are text annotations only. */
 function drawConnectorsFor(wrap, matches) {
   const svg = wrap.querySelector('svg.connectors');
   const w = wrap.offsetWidth, h = wrap.offsetHeight;
@@ -785,27 +787,46 @@ function drawConnectorsFor(wrap, matches) {
     const el = wrap.querySelector('[data-match-id="' + cssEscape(id) + '"]');
     if (!el) return null;
     const r = el.getBoundingClientRect();
+    const rows = el.querySelectorAll('.match-row');
+    const rowCy = (i) => {
+      if (!rows[i]) return null;
+      const rr = rows[i].getBoundingClientRect();
+      return (rr.top - wrapRect.top) + rr.height / 2;
+    };
     return {
       left:  r.left  - wrapRect.left,
       right: r.right - wrapRect.left,
-      cy:    (r.top  - wrapRect.top) + r.height / 2
+      cy:    (r.top  - wrapRect.top) + r.height / 2,
+      topRowY: rowCy(0),
+      botRowY: rowCy(1)
     };
   };
 
   for (const m of matches) {
-    const feederMatches = [];
-    if (m.topFromMatch) feederMatches.push(m.topFromMatch);
-    if (m.botFromMatch) feederMatches.push(m.botFromMatch);
-    if (!feederMatches.length) continue;
+    const feeders = [];
+    if (m.topFromMatch) feeders.push({ feeder: m.topFromMatch, side: 'top' });
+    if (m.botFromMatch) feeders.push({ feeder: m.botFromMatch, side: 'bot' });
+    if (!feeders.length) continue;
 
     const down = getCellGeom(m.id);
     if (!down) continue;
 
-    for (const fMatch of feederMatches) {
-      const f = getCellGeom(fMatch.id);
+    for (const { feeder, side } of feeders) {
+      const f = getCellGeom(feeder.id);
       if (!f) continue;
-      const x1 = f.right, y1 = f.cy;
-      const x2 = down.left, y2 = down.cy;
+
+      // Source Y = winner-row of feeder (so the line traces the team that
+      // actually advanced). Falls back to cell center when no winner yet.
+      let y1 = f.cy;
+      if (feeder.topWins === true)  y1 = f.topRowY != null ? f.topRowY : f.cy;
+      if (feeder.topWins === false) y1 = f.botRowY != null ? f.botRowY : f.cy;
+
+      // Target Y = the row of the downstream cell this feeder fills.
+      const y2 = side === 'top'
+        ? (down.topRowY != null ? down.topRowY : down.cy)
+        : (down.botRowY != null ? down.botRowY : down.cy);
+
+      const x1 = f.right, x2 = down.left;
       const xMid = (x1 + x2) / 2;
       if (Math.abs(y1 - y2) < 0.5) {
         drawPath('M ' + x1 + ' ' + y1 + ' L ' + x2 + ' ' + y2);
