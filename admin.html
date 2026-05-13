@@ -171,6 +171,7 @@
       <span class="hint" id="teamsCount"></span>
       <div style="margin-left:auto" class="actions">
         <button class="btn btn-outline btn-sm" onclick="resetToSample()">Reset to sample data</button>
+        <button class="btn btn-outline btn-sm" onclick="clearAllTeams()" style="color:var(--danger);border-color:var(--danger)">Clear all</button>
       </div>
     </div>
     <div class="table-wrap">
@@ -458,6 +459,30 @@ function askDelete() {
       } catch (e) { setStatus('editStatus', 'Delete failed: ' + e.message, 'err'); }
     }
   });
+}
+
+/* ── Clear all teams ──────────────────────── */
+function clearAllTeams() {
+  if (!_teams.length) {
+    alert('No teams to clear.');
+    return;
+  }
+  confirmModal({
+    title: 'Clear all teams?',
+    message: 'Permanently delete all ' + _teams.length + ' team' + (_teams.length === 1 ? '' : 's')
+           + '. This cannot be undone.',
+    okText: 'Clear all',
+    onOk: doClearAllTeams
+  });
+}
+async function doClearAllTeams() {
+  try {
+    await sb('DELETE', 'teams?id=gte.0');
+    _teams = [];
+    renderTeams();
+  } catch (e) {
+    alert('Clear failed: ' + e.message);
+  }
 }
 
 /* ── Reset to sample data ─────────────────── */
