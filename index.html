@@ -65,6 +65,66 @@
   .search button.search-x:hover { background: rgba(255,255,255,0.18); color: #fff; }
   .search-result { font-size: 0.72rem; color: rgba(255,255,255,0.88); padding: 0 4px; }
 
+  /* Tournament hero — large title + supporting metadata below the
+     org banner. Non-sticky on purpose: scrolls away so the bracket gets
+     full vertical space mid-play. */
+  .hero {
+    background: linear-gradient(180deg, #fff 0%, var(--bg) 100%);
+    padding: 28px 18px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero-inner {
+    max-width: 1500px;
+    margin: 0 auto;
+    text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .hero-status {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 0.7rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    padding: 3px 11px;
+    border-radius: 999px;
+    background: rgba(22,163,74,0.12);
+    color: #15803d;
+    margin-bottom: 6px;
+  }
+  .hero-status .pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #15803d;
+    animation: heroPulse 1.6s ease-in-out infinite;
+  }
+  @keyframes heroPulse {
+    0%, 100% { transform: scale(1);   opacity: 1;   }
+    50%      { transform: scale(1.5); opacity: 0.5; }
+  }
+  .t-name {
+    font-size: 2.2rem;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    margin: 0;
+    background: linear-gradient(90deg, var(--spm-primary), var(--spm-accent));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+  .t-meta {
+    font-size: 0.98rem;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: 0.01em;
+    line-height: 1.4;
+  }
+  .t-meta .sep { color: var(--border-strong); margin: 0 6px; }
+  @media (max-width: 767px) {
+    .hero { padding: 18px 14px 14px; }
+    .t-name { font-size: 1.5rem; }
+    .t-meta { font-size: 0.84rem; }
+    .t-meta .sep { margin: 0 4px; }
+  }
+
   /* Bracket sections (stacked vertically) */
   .bracket-section { padding: 14px 0 4px; border-bottom: 1px solid var(--border); }
   .bracket-section:last-of-type { border-bottom: 0; }
@@ -480,8 +540,8 @@
 
 <div class="header">
   <div class="header-inner">
-    <h1><span class="brand-dot"></span>BreakOut</h1>
-    <span class="badge">12 + 12 &rarr; 64</span>
+    <h1><span class="brand-dot"></span>South Portland Metro APA</h1>
+    <span class="badge">BreakOut</span>
     <div class="search" id="searchWrap">
       <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
       <input type="text" id="searchInput" placeholder="Search team — jump to latest match" autocomplete="off">
@@ -489,6 +549,14 @@
     </div>
     <span class="search-result" id="searchResult"></span>
     <div class="header-spacer"></div>
+  </div>
+</div>
+
+<div class="hero" id="tournamentHero" hidden>
+  <div class="hero-inner">
+    <div class="hero-status" id="tournamentHeroStatus" hidden></div>
+    <h2 class="t-name" id="tournamentName"></h2>
+    <div class="t-meta" id="tournamentMeta"></div>
   </div>
 </div>
 
@@ -1478,6 +1546,47 @@ function appendCrossLabel(svg, x, y, label) {
 }
 function cssEscape(s) { return String(s).replace(/(["\\])/g, '\\$1'); }
 
+/* Populate the hero section (tournament name, dates, venue, status). Called
+ * after the active tournament loads and after any live re-fetch. Hides the
+ * hero entirely when no DB row is loaded (inline-template fallback). */
+function renderHero() {
+  const hero = document.getElementById('tournamentHero');
+  if (!hero) return;
+  const t = _tournamentRow;
+  if (!t || !t.name) { hero.hidden = true; return; }
+  hero.hidden = false;
+  document.getElementById('tournamentName').textContent = t.name;
+
+  // Metadata line: <date range> · <venue>
+  const parts = [];
+  const fmtDate = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso + 'T12:00:00');
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  };
+  const startStr = fmtDate(t.start_date);
+  const endStr   = fmtDate(t.end_date);
+  if (startStr && endStr && startStr !== endStr) parts.push(startStr + ' &rarr; ' + endStr);
+  else if (startStr) parts.push(startStr);
+  if (t.venue_name) parts.push(esc(t.venue_name));
+  document.getElementById('tournamentMeta').innerHTML = parts.join('<span class="sep">·</span>');
+
+  // Live-status badge near the title
+  const statusEl = document.getElementById('tournamentHeroStatus');
+  if (t.status === 'live') {
+    statusEl.hidden = false;
+    statusEl.innerHTML = '<span class="pulse"></span> LIVE';
+  } else if (t.status === 'completed') {
+    statusEl.hidden = false;
+    statusEl.style.background = 'rgba(0,49,161,0.10)';
+    statusEl.style.color = 'var(--spm-accent)';
+    statusEl.textContent = 'COMPLETED';
+  } else {
+    statusEl.hidden = true;
+  }
+}
+
 function renderTournament() {
   const t = _tournament;
   const ab = (label, bracket, kind, sub, cls) => bracketSectionHtml(
@@ -1495,6 +1604,7 @@ function renderTournament() {
     { label: '64-Team', subLabel: 'Consolation · alternates "integrate losers" / "winners advance" through 6 rounds', pillClass: 'consolation' }
   );
   root.innerHTML = html;
+  renderHero();
 
   // Draw connectors for each bracket
   requestAnimationFrame(() => {
