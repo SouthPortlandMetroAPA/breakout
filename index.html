@@ -454,10 +454,13 @@
     font-size: 0.7rem; font-weight: 800; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.06em;
   }
-  .staff-overrides input {
+  .staff-overrides input, .staff-overrides select {
     padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 5px;
-    font-size: 0.86rem; font-family: inherit;
+    font-size: 0.86rem; font-family: inherit; background: #fff;
   }
+  .staff-overrides .dt-pair { display: flex; gap: 4px; align-items: center; }
+  .staff-overrides .dt-pair input[type="date"] { flex: 1 1 auto; min-width: 110px; }
+  .staff-overrides .dt-pair select { flex: 0 0 auto; min-width: 100px; }
   .staff-btn.save { background: var(--spm-accent); color: #fff; border-color: var(--spm-accent); }
   .staff-btn.save:hover { opacity: 0.92; }
   .staff-btn.save.success { background: var(--success); border-color: var(--success); }
@@ -652,7 +655,12 @@
     </div>
     <div class="staff-modal-body">
       <div class="staff-overrides">
-        <label>Start <input type="datetime-local" id="staffStartInput" step="1800"></label>
+        <label>Start
+          <div class="dt-pair">
+            <input type="date" id="staffStartDate">
+            <select id="staffStartTime"></select>
+          </div>
+        </label>
         <label>Table <input type="number" id="staffTableInput" min="1" placeholder="—"></label>
         <button type="button" class="staff-btn save" id="staffSaveOverridesBtn">Save</button>
       </div>
@@ -865,7 +873,9 @@ function openStaffModal(matchId) {
       !x.bye && x.bracket === m.bracket && x.round === m.round && x.scheduled_at);
     if (sibling) initialDt = sibling.scheduled_at;
   }
-  document.getElementById('staffStartInput').value = initialDt ? initialDt.slice(0, 16) : '';
+  const dtParts = splitDateTime(initialDt || '');
+  document.getElementById('staffStartDate').value = dtParts.date;
+  document.getElementById('staffStartTime').innerHTML = buildTimeOptions(dtParts.time);
   document.getElementById('staffTableInput').value = m.table_no != null ? m.table_no : '';
   const saveBtn = document.getElementById('staffSaveOverridesBtn');
   saveBtn.classList.remove('success');
@@ -915,9 +925,11 @@ function closeStaffModal() {
 }
 
 function readStaffOverrides(md, idx) {
-  const dtV  = document.getElementById('staffStartInput').value;
-  const tblV = document.getElementById('staffTableInput').value.trim();
-  const prev = { scheduled_at: md[idx].scheduled_at || null, table_no: md[idx].table_no != null ? md[idx].table_no : null };
+  const dateV = document.getElementById('staffStartDate').value;
+  const timeV = document.getElementById('staffStartTime').value;
+  const dtV   = combineDateTime(dateV, timeV);
+  const tblV  = document.getElementById('staffTableInput').value.trim();
+  const prev  = { scheduled_at: md[idx].scheduled_at || null, table_no: md[idx].table_no != null ? md[idx].table_no : null };
   md[idx].scheduled_at = dtV || null;
   md[idx].table_no = tblV === '' ? null : parseInt(tblV, 10);
   if (dtV) { md[idx].day = null; md[idx].time = null; }
@@ -1035,6 +1047,26 @@ function fmtTime(mins) {
   return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ampm;
 }
 function fmtMoney(n) { return n == null ? '' : '$' + n.toLocaleString(); }
+function splitDateTime(iso) {
+  if (!iso || iso.length < 16) return { date: '', time: '' };
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+}
+function combineDateTime(date, time) {
+  if (!date || !time) return '';
+  return date + 'T' + time;
+}
+function buildTimeOptions(selected) {
+  const opts = ['<option value="">—</option>'];
+  for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m += 30) {
+      const val = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+      let dh = h % 12; if (dh === 0) dh = 12;
+      const display = dh + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+      opts.push('<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + display + '</option>');
+    }
+  }
+  return opts.join('');
+}
 
 /* ── Data fetch ───────────────────────────── */
 async function loadTeams() {

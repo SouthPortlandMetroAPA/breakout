@@ -239,6 +239,34 @@
   .capacity-table .ok-tag { color: var(--success); font-weight: 700; font-size: 0.78rem; }
   .capacity-table .matches-cell { font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.74rem; color: var(--muted); }
 
+  /* Half-hour datetime + duration pickers — replaces native datetime-local
+     with a date input + a select of explicit half-hour options so the user
+     never has to fight a minute-level spinner. */
+  .dt-pair { display: flex; gap: 4px; align-items: center; }
+  .dt-pair input[type="date"] {
+    flex: 1 1 auto; min-width: 110px;
+    padding: 5px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    font: inherit; font-size: 0.86rem;
+  }
+  .dt-pair select {
+    flex: 0 0 auto; min-width: 100px;
+    padding: 5px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    font: inherit; font-size: 0.86rem;
+    background: #fff;
+  }
+  .dur-select {
+    padding: 5px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    font: inherit; font-size: 0.86rem;
+    background: #fff;
+    width: 100%;
+  }
+
   .tables-toggle[data-tables="2"] {
     background: rgba(0,49,161,0.12);
     border-color: var(--spm-accent);
@@ -509,7 +537,12 @@
       <fieldset>
         <legend>Schedule</legend>
         <div class="schedule-grid">
-          <label class="full">Start <input type="datetime-local" id="matchEditScheduledAt" step="1800"></label>
+          <label class="full">Start
+            <div class="dt-pair">
+              <input type="date" id="matchEditScheduledDate">
+              <select id="matchEditScheduledTime"></select>
+            </div>
+          </label>
           <label>Payout <input type="number" id="matchEditPayout" min="0" step="1" placeholder="0"></label>
           <label>Table <input type="number" id="matchEditTable" min="1" step="1" placeholder="1"></label>
         </div>
@@ -877,6 +910,47 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/* ── Picker helpers ──────────────────────── */
+function splitDateTime(iso) {
+  if (!iso || iso.length < 16) return { date: '', time: '' };
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+}
+function combineDateTime(date, time) {
+  if (!date || !time) return '';
+  return date + 'T' + time;
+}
+function buildTimeOptions(selected) {
+  const opts = ['<option value="">—</option>'];
+  for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m += 30) {
+      const val = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+      let dh = h % 12; if (dh === 0) dh = 12;
+      const display = dh + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+      opts.push('<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + display + '</option>');
+    }
+  }
+  return opts.join('');
+}
+function buildDurationOptions(selected) {
+  const opts = [];
+  let foundSelected = false;
+  for (let mins = 30; mins <= 300; mins += 30) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    let label;
+    if (h === 0)      label = m + ' min';
+    else if (m === 0) label = h + ' hr';
+    else              label = h + ' hr ' + m;
+    const isSel = mins === selected;
+    if (isSel) foundSelected = true;
+    opts.push('<option value="' + mins + '"' + (isSel ? ' selected' : '') + '>' + label + '</option>');
+  }
+  if (selected != null && !foundSelected) {
+    opts.unshift('<option value="' + selected + '" selected>' + selected + ' min (custom)</option>');
+  }
+  return opts.join('');
+}
+
 async function generateDefaultTournament() {
   if (_teams.length < 24) {
     alert('Need at least 24 teams in the database (have ' + _teams.length + '). Paste teams in the Add teams card first.');
@@ -1005,16 +1079,19 @@ function renderScheduleEditor() {
       currentBracket = r.bracket;
     }
     const sample = firstRealMatchInRound(r.bracket, r.round);
-    const scheduledAt = sample && sample.scheduled_at ? sample.scheduled_at.slice(0, 16) : '';
+    const dt = splitDateTime(sample && sample.scheduled_at ? sample.scheduled_at : '');
     const payout = sample && sample.payout != null ? sample.payout : '';
     const tip = sample && sample.tables_in_parallel ? sample.tables_in_parallel : 1;
     const durMin = sample && sample.duration_min != null ? sample.duration_min : 240;
     const id = 'sched-' + r.bracket + '-' + r.round;
     html += '<div class="sched-row" id="' + id + '">'
       + '<span class="rlabel">R' + r.round + '</span>'
-      + '<input type="datetime-local" data-field="scheduled_at" step="1800" value="' + escapeHtml(scheduledAt) + '">'
+      + '<div class="dt-pair">'
+      +   '<input type="date" data-field="date" value="' + escapeHtml(dt.date) + '">'
+      +   '<select data-field="time">' + buildTimeOptions(dt.time) + '</select>'
+      + '</div>'
       + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="Click to toggle. 2 tables means matches play in parallel and the round takes half as long.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
-      + '<input type="number" data-field="duration_min" value="' + durMin + '" placeholder="Min" min="15" step="15" title="Duration (minutes) per match in this round. Default 240 = 4 hours.">'
+      + '<select class="dur-select" data-field="duration_min" title="Total expected duration for this round.">' + buildDurationOptions(durMin) + '</select>'
       + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
       + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
       + '</div>';
@@ -1032,11 +1109,18 @@ function toggleTablesInParallel(btn) {
   // (round finishes twice as fast in parallel), double when going back to 1.
   // Duration here represents the round's TOTAL expected time.
   const row = btn.parentElement;
-  const durInput = row && row.querySelector('input[data-field="duration_min"]');
-  if (durInput && durInput.value !== '') {
-    const curDur = parseInt(durInput.value, 10);
+  const durSel = row && row.querySelector('select[data-field="duration_min"]');
+  if (durSel && durSel.value !== '') {
+    const curDur = parseInt(durSel.value, 10);
     if (Number.isInteger(curDur) && curDur > 0) {
-      durInput.value = next === 2 ? Math.round(curDur / 2) : curDur * 2;
+      const newDur = next === 2 ? Math.round(curDur / 2) : curDur * 2;
+      // Pick the closest available option in the dropdown.
+      const opt = Array.from(durSel.options).find(o => parseInt(o.value, 10) === newDur);
+      if (opt) durSel.value = String(newDur);
+      else {
+        // Rebuild the dropdown so the custom value is selectable.
+        durSel.innerHTML = buildDurationOptions(newDur);
+      }
     }
   }
 }
@@ -1045,11 +1129,13 @@ async function applyRoundSchedule(bracket, round) {
   if (!_activeMatchTournament) return;
   const rowEl = document.getElementById('sched-' + bracket + '-' + round);
   if (!rowEl) return;
-  const dtV     = rowEl.querySelector('input[data-field="scheduled_at"]').value;
+  const dateV   = rowEl.querySelector('input[data-field="date"]').value;
+  const timeV   = rowEl.querySelector('select[data-field="time"]').value;
+  const dtV     = combineDateTime(dateV, timeV);
   const payoutV = rowEl.querySelector('input[data-field="payout"]').value.trim();
   const payout  = payoutV === '' ? null : parseInt(payoutV, 10);
   const tipV    = parseInt(rowEl.querySelector('.tables-toggle').dataset.tables, 10) || 1;
-  const durV    = rowEl.querySelector('input[data-field="duration_min"]').value.trim();
+  const durV    = rowEl.querySelector('select[data-field="duration_min"]').value;
   const dur     = durV === '' ? 240 : parseInt(durV, 10);
 
   // Snapshot to roll back on failure.
@@ -1476,7 +1562,9 @@ function openMatchEditModal(matchId) {
       !x.is_bye && x.bracket === m.bracket && x.round === m.round && x.scheduled_at);
     if (sibling) initialDt = sibling.scheduled_at;
   }
-  document.getElementById('matchEditScheduledAt').value = initialDt ? initialDt.slice(0, 16) : '';
+  const dtParts = splitDateTime(initialDt || '');
+  document.getElementById('matchEditScheduledDate').value = dtParts.date;
+  document.getElementById('matchEditScheduledTime').innerHTML = buildTimeOptions(dtParts.time);
   document.getElementById('matchEditPayout').value  = m.payout != null ? m.payout : '';
   document.getElementById('matchEditTable').value   = m.table_no != null ? m.table_no : '';
 
@@ -1548,12 +1636,12 @@ async function saveMatchEdit() {
   m.top_from = top.from;
   m.bot_seed = bot.seed;
   m.bot_from = bot.from;
-  const dtV    = document.getElementById('matchEditScheduledAt').value;
+  const dateV  = document.getElementById('matchEditScheduledDate').value;
+  const timeV  = document.getElementById('matchEditScheduledTime').value;
+  const dtV    = combineDateTime(dateV, timeV);
   const payV   = document.getElementById('matchEditPayout').value.trim();
   const tblV   = document.getElementById('matchEditTable').value.trim();
   m.scheduled_at = dtV || null;
-  // Drop legacy day/time strings once a picker value is set, so the
-  // renderer reads from the canonical scheduled_at field.
   if (dtV) { m.day = null; m.time = null; }
   m.payout   = payV  !== '' ? parseInt(payV, 10) : null;
   m.table_no = tblV  !== '' ? parseInt(tblV, 10) : null;
