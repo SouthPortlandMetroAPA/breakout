@@ -503,6 +503,46 @@
   }
   .match.match-jump-flash { animation: matchJumpFlash 1.8s ease-out; }
 
+  /* Bracket Champ — promoted OUT of the card so it can be loud. Sits in
+     the final round's column, centered under the final match. Pulses
+     gently to draw the eye. Same SPM gradient as the in-card pill version
+     used to be, but ~2× the size and with a soft red halo. */
+  .bracket-champ-big {
+    position: absolute;
+    left: 50%;
+    top: calc(var(--slot-h) * var(--y, 4) + var(--card-h) / 2 + 22px);
+    transform: translateX(-50%);
+    padding: 11px 22px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 900;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.18);
+    white-space: nowrap;
+    box-shadow:
+      0 10px 24px rgba(234,0,42,0.32),
+      0 0 0 4px rgba(234,0,42,0.10),
+      0 0 0 8px rgba(0,49,161,0.06);
+    animation: champBounce 2.4s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 5;
+  }
+  @keyframes champBounce {
+    0%, 100% { transform: translateX(-50%) translateY(0) scale(1); }
+    50%      { transform: translateX(-50%) translateY(-4px) scale(1.05); }
+  }
+  @media (max-width: 767px) {
+    .bracket-champ-big {
+      top: calc(var(--slot-h-mob) * var(--y, 4) + var(--card-h-mob) / 2 + 16px);
+      padding: 8px 16px;
+      font-size: 0.82rem;
+      letter-spacing: 0.1em;
+    }
+  }
+
   /* Final-of-each-bracket emphasis: gradient top-strip on the card,
      deeper winner-row tint, and the winning team's name in SPM blue.
      The bracket-champ chip in the top-right already carries the gold
@@ -1273,13 +1313,26 @@ function roundHtml(roundMatches, roundIdx, totalRounds, slots) {
   const real = roundMatches.filter(m => !m.bye);
   const tip = real[0] && real[0].tables_in_parallel ? real[0].tables_in_parallel : 1;
   const tipLabel = tip > 1 ? '<div class="round-tables">' + tip + ' tables</div>' : '';
+  // For each match in this round, render the card. If this round is the
+  // bracket's final, also drop a big "Bracket Champ" chip OUTSIDE and below
+  // the match card — bigger, brighter, animated.
+  const matchesContent = roundMatches.map(m => {
+    let h = matchHtml(m, isFinal);
+    if (isFinal && !m.bye) {
+      const y = matchYUnits(m);
+      h += '<div class="bracket-champ-big" style="--y:' + y + '">'
+         + '&#x1F3C6; ' + esc(TOURNAMENT_TEXT.bracketChampText)
+         + '</div>';
+    }
+    return h;
+  }).join('');
   return '<div class="round' + (isFinal ? ' is-final' : '') + '" style="--bracket-slots:' + slots + '">'
     + '<div class="round-header">'
     +   '<div class="round-name">Round ' + (roundIdx + 1) + '</div>'
     +   tipLabel
     + '</div>'
     + '<div class="matches" style="--bracket-slots:' + slots + '">'
-    +   roundMatches.map(m => matchHtml(m, isFinal)).join('')
+    +   matchesContent
     + '</div>'
     + '</div>';
 }
@@ -1337,16 +1390,14 @@ function matchHtml(m, isFinalOfBracket) {
   const schedulePay  = m.payout ? fmtMoney(m.payout) : '';
 
   // Destination chips — pills in the top-right that link to the linked match.
-  // Every bracket final (incl the 64-team) uses the same "Bracket Champ" pill;
-  // this template doesn't crown an overall champion.
+  // For bracket finals the Bracket Champ pill is rendered OUTSIDE the card
+  // (see roundHtml) so it can be big and prominent. No in-card chip for finals.
   let winnerChip = '';
   if (m.winnerAdvancesTo) {
     winnerChip = '<a class="dest-chip win" data-jump="' + m.winnerAdvancesTo.globalNo
       + '" href="#m' + m.winnerAdvancesTo.globalNo
       + '" title="Jump to M' + m.winnerAdvancesTo.globalNo + '">W &rarr; M'
       + m.winnerAdvancesTo.globalNo + '</a>';
-  } else if (isFinalOfBracket) {
-    winnerChip = '<span class="dest-chip bracket-champ">&#x1F3C6; ' + esc(TOURNAMENT_TEXT.bracketChampText) + '</span>';
   }
 
   let loserChip = '';
