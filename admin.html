@@ -293,7 +293,7 @@
         <button class="btn btn-outline btn-sm" onclick="loadMatchesView()">Refresh</button>
       </div>
     </div>
-    <p class="hint" style="margin-top:0">Read-only view of the active tournament's match wiring. <em>Stage 1.</em> Edit modal and validation banner land in stages 2 and 3.</p>
+    <p class="hint" style="margin-top:0">Every match in the active tournament with live validation. Click any row to edit its wiring, schedule, or table assignment. Use <strong>+ Add match</strong> for custom matches.</p>
     <div id="matchesBody" class="table-wrap"><p class="hint">Loading&hellip;</p></div>
   </div>
 </div>
@@ -1160,75 +1160,6 @@ async function addMatchToEditor() {
     _activeMatchTournament.matches = _activeMatchTournament.matches.filter(x => x.id !== newMatch.id);
     alert('Add failed: ' + e.message);
   }
-}
-
-function renderMatchesTable(matches, tournamentName) {
-  const byId = {};
-  matches.forEach(m => { byId[m.id] = m; });
-
-  const sourceLabel = (src) => {
-    if (!src) return '<span class="hint">&mdash;</span>';
-    const source = byId[src.match_id];
-    if (!source) {
-      return '<span style="color:var(--danger)">missing ' + escapeHtml(src.match_id) + '</span>';
-    }
-    if (source.is_bye) {
-      const seed = source.top_seed != null ? source.top_seed : '?';
-      return '<span class="src-bye" title="' + escapeHtml(source.id) + '">BYE&nbsp;&rarr;&nbsp;Seed ' + seed + '</span>';
-    }
-    const prefix = src.kind === 'winner' ? 'W of M' : 'L of M';
-    const cls    = src.kind === 'winner' ? 'src-win' : 'src-lose';
-    return '<span class="' + cls + '" title="' + escapeHtml(source.id) + '">' + prefix + (source.match_no || '?') + '</span>';
-  };
-
-  const entrantCell = (m, side) => {
-    const seed = side === 'top' ? m.top_seed : m.bot_seed;
-    const from = side === 'top' ? m.top_from : m.bot_from;
-    if (seed != null) return '<span class="src-seed">Seed ' + seed + '</span>';
-    if (from) return sourceLabel(from);
-    if (m.is_bye && side === 'bot') return '<span class="hint">&mdash;</span>';
-    return '<span style="color:var(--danger)">none</span>';
-  };
-
-  // Sort by match_no — byes and real matches now share a single numbering.
-  const sorted = matches.slice().sort((a, b) => (a.match_no || 9999) - (b.match_no || 9999));
-
-  const rowsHtml = sorted.map(m => {
-    const mno = m.match_no != null
-      ? '<strong>M' + m.match_no + '</strong>' + (m.is_bye ? ' <span class="bye-tag-mini">BYE</span>' : '')
-      : '<span style="color:var(--danger)">?</span>';
-    return '<tr' + (m.is_bye ? ' class="bye-row"' : '') + '>'
-      + '<td>' + mno + '</td>'
-      + '<td>' + escapeHtml(m.bracket) + '</td>'
-      + '<td>' + m.round + '</td>'
-      + '<td>' + m.slot + '</td>'
-      + '<td>' + entrantCell(m, 'top') + '</td>'
-      + '<td>' + entrantCell(m, 'bot') + '</td>'
-      + '<td>' + escapeHtml(m.day || '') + '</td>'
-      + '<td>' + escapeHtml(m.time || '') + '</td>'
-      + '<td class="num-cell">' + (m.payout != null && m.payout !== '' ? '$' + m.payout : '') + '</td>'
-      + '<td class="num-cell">' + (m.table_no != null ? m.table_no : '') + '</td>'
-      + '<td class="hint" style="font-family:\'SF Mono\',Consolas,Menlo,monospace;font-size:0.72rem">' + escapeHtml(m.id) + '</td>'
-      + '</tr>';
-  }).join('');
-
-  document.getElementById('matchesBody').innerHTML =
-    '<table class="table matches-table">'
-    + '<thead><tr>'
-    +   '<th style="width:60px">M#</th>'
-    +   '<th style="width:40px">Br</th>'
-    +   '<th style="width:36px">R</th>'
-    +   '<th style="width:40px">Slot</th>'
-    +   '<th>Top from</th>'
-    +   '<th>Bot from</th>'
-    +   '<th style="width:80px">Day</th>'
-    +   '<th style="width:80px">Time</th>'
-    +   '<th style="width:60px">$</th>'
-    +   '<th style="width:50px">Table</th>'
-    +   '<th style="width:120px">id</th>'
-    + '</tr></thead>'
-    + '<tbody>' + rowsHtml + '</tbody>'
-    + '</table>';
 }
 
 async function clearAllMatchResults() {
