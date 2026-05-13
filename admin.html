@@ -178,6 +178,19 @@
       </table>
     </div>
   </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Tournament</h2>
+      <span class="hint" id="tournamentStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate default (Mod-SE 12+12&rarr;64)</button>
+        <button class="btn btn-outline btn-sm" onclick="deactivateTournaments()">Deactivate all</button>
+      </div>
+    </div>
+    <p class="hint">Picks the first 24 teams (by number) and writes a fully-wired tournament into <code>breakout.tournaments</code>. The viewer auto-loads the active tournament.</p>
+    <div id="tournamentBody" class="hint">Loading&hellip;</div>
+  </div>
 </div>
 
 <div class="modal" id="editModal">
@@ -439,6 +452,235 @@ function closeConfirm(ok) {
 document.getElementById('newNum').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); document.getElementById('newName').focus(); } });
 document.getElementById('newName').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); addTeam(); } });
 
+/* ── Tournament management ────────────────── */
+const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
+
+async function loadTournaments() {
+  const body = document.getElementById('tournamentBody');
+  const status = document.getElementById('tournamentStatus');
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?order=id.desc&select=id,name,format_template,is_active,created_at', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    if (!list.length) {
+      body.innerHTML = '<p class="hint">No tournament yet. Click <strong>Generate default</strong> to create one.</p>';
+      status.textContent = '';
+      return;
+    }
+    status.textContent = list.length + (list.length === 1 ? ' record' : ' records') + ', '
+      + list.filter(t => t.is_active).length + ' active';
+    body.innerHTML = '<table class="table"><thead><tr><th>ID</th><th>Name</th><th>Template</th><th>Active</th><th>Created</th></tr></thead><tbody>'
+      + list.map(t =>
+          '<tr>' +
+            '<td>' + t.id + '</td>' +
+            '<td>' + escapeHtml(t.name) + '</td>' +
+            '<td><code>' + escapeHtml(t.format_template) + '</code></td>' +
+            '<td>' + (t.is_active ? '<strong style="color:#15803d">yes</strong>' : '<span style="opacity:0.6">no</span>') + '</td>' +
+            '<td class="hint">' + new Date(t.created_at).toLocaleString() + '</td>' +
+          '</tr>'
+        ).join('') + '</tbody></table>';
+  } catch (e) {
+    body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function generateDefaultTournament() {
+  if (_teams.length < 24) {
+    alert('Need at least 24 teams (have ' + _teams.length + '). Add teams or run "Reset to sample data" first.');
+    return;
+  }
+  confirmModal({
+    title: 'Generate default tournament?',
+    message: 'Creates a fully-wired Modified-SE 12+12→64 tournament using the first 24 teams (by number). Any existing tournaments are deactivated.',
+    okText: 'Generate',
+    onOk: doGenerateDefaultTournament
+  });
+}
+
+async function doGenerateDefaultTournament() {
+  try {
+    // Deactivate existing tournaments first
+    await sb('PATCH', 'tournaments?is_active=eq.true', { is_active: false });
+    // Generate
+    const matchData = templateModSe12_12To64();
+    const teams = _teams.slice().sort((a, b) => a.number - b.number);
+    const seedAssignments = [];
+    teams.slice(0, 12).forEach((t, i)  => seedAssignments.push({ bracket: 'A', seed: i + 1, team_number: t.number }));
+    teams.slice(12, 24).forEach((t, i) => seedAssignments.push({ bracket: 'B', seed: i + 1, team_number: t.number }));
+    const row = {
+      name: 'Default — ' + new Date().toLocaleDateString(),
+      format_template: 'mod-se-12-12-to-64',
+      config: { bracketChampText: 'Bracket Champ', championText: 'Champion' },
+      seed_assignments: seedAssignments,
+      matches: matchData,
+      is_active: true
+    };
+    await sb('POST', 'tournaments', row);
+    loadTournaments();
+  } catch (e) {
+    alert('Generate failed: ' + e.message);
+  }
+}
+
+async function deactivateTournaments() {
+  confirmModal({
+    title: 'Deactivate all tournaments?',
+    message: 'Sets is_active=false on every tournament row. The viewer falls back to generating from the inline template.',
+    okText: 'Deactivate',
+    onOk: async () => {
+      try {
+        await sb('PATCH', 'tournaments?is_active=eq.true', { is_active: false });
+        loadTournaments();
+      } catch (e) { alert('Deactivate failed: ' + e.message); }
+    }
+  });
+}
+
+/* ── Template (mirror of viewer's templateModSe12_12To64) ─────────── */
+function templateModSe12_12To64() {
+  const md = [];
+  md.push(...gen12Bracket('A'));
+  md.push(...gen12Bracket('B'));
+  md.push(...gen64Bracket());
+  applyTemplateSchedule(md);
+  assignMatchNumbers(md);
+  assignTableNumbers(md);
+  return md;
+}
+
+const TEMPLATE_SCHEDULES = {
+  twelve: [
+    { day: 'Saturday', time: '9:00 AM',  payout: null },
+    { day: 'Saturday', time: '10:30 AM', payout: null },
+    { day: 'Saturday', time: '12:00 PM', payout: 100 },
+    { day: 'Saturday', time: '1:30 PM',  payout: 400 }
+  ],
+  sixtyfour: [
+    { day: 'Saturday', time: '11:00 AM', payout: null },
+    { day: 'Saturday', time: '1:00 PM',  payout: null },
+    { day: 'Saturday', time: '3:00 PM',  payout: null },
+    { day: 'Saturday', time: '5:00 PM',  payout: null },
+    { day: 'Sunday',   time: '10:00 AM', payout: 100 },
+    { day: 'Sunday',   time: '12:00 PM', payout: 600 }
+  ]
+};
+
+function gen12Bracket(label) {
+  const matches = [];
+  for (let i = 0; i < 8; i++) {
+    const topSeed = SEED_ORDER_16[i * 2];
+    const botSeed = SEED_ORDER_16[i * 2 + 1];
+    const topReal = topSeed <= 12 ? topSeed : null;
+    const botReal = botSeed <= 12 ? botSeed : null;
+    if (topReal && botReal) {
+      matches.push({ id: label + '-R1-M' + i, bracket: label, round: 1, slot: i, is_bye: false,
+                     top_seed: topReal, bot_seed: botReal });
+    } else {
+      const seededTeam = topReal || botReal;
+      matches.push({ id: label + '-R1-BYE' + i, bracket: label, round: 1, slot: i, is_bye: true,
+                     top_seed: seededTeam, bot_seed: null });
+    }
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: label + '-R2-M' + (i + 1), bracket: label, round: 2, slot: i, is_bye: false,
+                   top_from: { match_id: matches[i * 2].id, kind: 'winner' },
+                   bot_from: { match_id: matches[i * 2 + 1].id, kind: 'winner' } });
+  }
+  const r2 = matches.filter(m => m.round === 2);
+  for (let i = 0; i < 2; i++) {
+    matches.push({ id: label + '-R3-M' + (i + 1), bracket: label, round: 3, slot: i, is_bye: false,
+                   top_from: { match_id: r2[i * 2].id, kind: 'winner' },
+                   bot_from: { match_id: r2[i * 2 + 1].id, kind: 'winner' } });
+  }
+  const r3 = matches.filter(m => m.round === 3);
+  matches.push({ id: label + '-R4-M1', bracket: label, round: 4, slot: 0, is_bye: false,
+                 top_from: { match_id: r3[0].id, kind: 'winner' },
+                 bot_from: { match_id: r3[1].id, kind: 'winner' } });
+  return matches;
+}
+
+function gen64Bracket() {
+  const matches = [];
+  const aR1Real = [1, 3, 5, 7].map(i => 'A-R1-M' + i);
+  const aR2     = [1, 2, 3, 4].map(i => 'A-R2-M' + i);
+  const bR1Real = [1, 3, 5, 7].map(i => 'B-R1-M' + i);
+  const bR2     = [1, 2, 3, 4].map(i => 'B-R2-M' + i);
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R1-M' + (i + 1), bracket: '64', round: 1, slot: i, is_bye: false,
+                   top_from: { match_id: aR1Real[i], kind: 'loser' },
+                   bot_from: { match_id: aR2[i],     kind: 'loser' } });
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R1-M' + (i + 5), bracket: '64', round: 1, slot: i + 4, is_bye: false,
+                   top_from: { match_id: bR1Real[i], kind: 'loser' },
+                   bot_from: { match_id: bR2[i],     kind: 'loser' } });
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R2-M' + (i + 1), bracket: '64', round: 2, slot: i, is_bye: false,
+                   top_from: { match_id: '64-R1-M' + (i * 2 + 1), kind: 'winner' },
+                   bot_from: { match_id: '64-R1-M' + (i * 2 + 2), kind: 'winner' } });
+  }
+  const integ = [
+    ['64-R3-M1', 'A-R3-M1', '64-R2-M1'],
+    ['64-R3-M2', 'A-R3-M2', '64-R2-M2'],
+    ['64-R3-M3', 'B-R3-M1', '64-R2-M3'],
+    ['64-R3-M4', 'B-R3-M2', '64-R2-M4']
+  ];
+  integ.forEach((row, idx) => {
+    matches.push({ id: row[0], bracket: '64', round: 3, slot: idx, is_bye: false,
+                   top_from: { match_id: row[1], kind: 'loser' },
+                   bot_from: { match_id: row[2], kind: 'winner' } });
+  });
+  for (let i = 0; i < 2; i++) {
+    matches.push({ id: '64-R4-M' + (i + 1), bracket: '64', round: 4, slot: i, is_bye: false,
+                   top_from: { match_id: '64-R3-M' + (i * 2 + 1), kind: 'winner' },
+                   bot_from: { match_id: '64-R3-M' + (i * 2 + 2), kind: 'winner' } });
+  }
+  matches.push({ id: '64-R5-M1', bracket: '64', round: 5, slot: 0, is_bye: false,
+                 top_from: { match_id: 'A-R4-M1', kind: 'loser' },
+                 bot_from: { match_id: '64-R4-M1', kind: 'winner' } });
+  matches.push({ id: '64-R5-M2', bracket: '64', round: 5, slot: 1, is_bye: false,
+                 top_from: { match_id: 'B-R4-M1', kind: 'loser' },
+                 bot_from: { match_id: '64-R4-M2', kind: 'winner' } });
+  matches.push({ id: '64-R6-M1', bracket: '64', round: 6, slot: 0, is_bye: false,
+                 top_from: { match_id: '64-R5-M1', kind: 'winner' },
+                 bot_from: { match_id: '64-R5-M2', kind: 'winner' } });
+  return matches;
+}
+
+function applyTemplateSchedule(md) {
+  for (const m of md) {
+    const sched = (m.bracket === '64' ? TEMPLATE_SCHEDULES.sixtyfour : TEMPLATE_SCHEDULES.twelve)[m.round - 1];
+    if (sched) { m.day = sched.day; m.time = sched.time; m.payout = sched.payout; }
+  }
+}
+
+function assignMatchNumbers(md) {
+  const order = [['A',1],['B',1],['A',2],['B',2],['64',1],['A',3],['B',3],['64',2],['64',3],['A',4],['B',4],['64',4],['64',5],['64',6]];
+  let no = 1;
+  for (const pair of order) {
+    md.filter(m => m.bracket === pair[0] && m.round === pair[1] && !m.is_bye)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach(m => { m.match_no = no++; });
+  }
+}
+
+function assignTableNumbers(md) {
+  for (const bracket of ['A', 'B', '64']) {
+    for (let r = 1; r <= 6; r++) {
+      md.filter(m => m.bracket === bracket && m.round === r && !m.is_bye)
+        .sort((a, b) => a.slot - b.slot)
+        .forEach((m, idx) => { m.table_no = idx + 1; });
+    }
+  }
+}
+
 /* ── Init ─────────────────────────────────── */
 async function init() {
   document.title = 'BreakOut Admin';
@@ -461,6 +703,7 @@ async function init() {
   document.getElementById('adminMain').classList.remove('hidden');
   try { await loadTeams(); } catch (e) { setStatus('newStatus', 'Load failed: ' + e.message, 'err'); return; }
   renderTeams();
+  loadTournaments();
 }
 document.addEventListener('DOMContentLoaded', init);
 </script>

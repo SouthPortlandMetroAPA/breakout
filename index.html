@@ -122,12 +122,16 @@
   @media (max-width: 767px) { .round { width: var(--cell-w-mob); } }
 
   .round-header {
-    text-align: center; padding-bottom: 8px;
-    border-bottom: 1px solid var(--border); margin-bottom: 6px;
+    text-align: center; padding: 6px 0 10px;
+    border-bottom: 1px solid var(--border); margin-bottom: 8px;
   }
-  .round-day { font-size: 0.66rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1px; }
-  .round-time { font-size: 0.95rem; font-weight: 800; color: var(--text); letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
-  .round-payout { font-size: 0.76rem; font-weight: 700; color: #15803d; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .round-name {
+    font-size: 0.92rem; font-weight: 900;
+    color: var(--spm-accent);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+  }
 
   /* Matches column: fixed height = bracket-slots × slot-h, cells absolutely
      positioned at their canonical bracket Y centers. */
@@ -453,151 +457,227 @@ async function loadTeams() {
    TOURNAMENT BUILD
    ════════════════════════════════════════════════════════════════════════ */
 
+/* ════════════════════════════════════════════════════════════════════════
+   TEMPLATE — produces a flat array of match-data objects describing the
+   wiring of the 12+12→64 modified-SE tournament. Each match references
+   either seed indices (R1 entrants) OR another match by id + 'winner'/'loser'
+   kind. This is the shape we'll eventually store in breakout.tournaments.matches.
+   ════════════════════════════════════════════════════════════════════════ */
+
 /* Bracket order for a 16-team SE bracket: positions 0..15 ↦ seeds.
  *  Used to place 12 real teams + 4 ghost byes so the structural bracket
  *  is regular while the top 4 seeds get R1 byes. */
 const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
 
-function buildTwelveBracket(label, teams) {
-  // teams: 12 teams, already in seed order (teams[0]=seed1, teams[11]=seed12)
-  const seats = SEED_ORDER_16.map(s => s <= 12 ? teams[s - 1] : null);
+const TEMPLATE_SCHEDULES = {
+  twelve: [
+    { day: 'Saturday', time: '9:00 AM',  payout: null },
+    { day: 'Saturday', time: '10:30 AM', payout: null },
+    { day: 'Saturday', time: '12:00 PM', payout: 100 },
+    { day: 'Saturday', time: '1:30 PM',  payout: 400 }
+  ],
+  sixtyfour: [
+    { day: 'Saturday', time: '11:00 AM', payout: null },
+    { day: 'Saturday', time: '1:00 PM',  payout: null },
+    { day: 'Saturday', time: '3:00 PM',  payout: null },
+    { day: 'Saturday', time: '5:00 PM',  payout: null },
+    { day: 'Sunday',   time: '10:00 AM', payout: 100 },
+    { day: 'Sunday',   time: '12:00 PM', payout: 600 }
+  ]
+};
 
-  const matches = [];
-  // 16-slot layout — 4 real R1 matches + 4 visible byes. Every R1 seat-pair
-  // becomes its own card. Byes are rendered as their own (de-emphasized)
-  // card showing the seeded team auto-advancing.
-  const r1 = [];
-  for (let i = 0; i < 8; i++) {
-    const top = seats[i * 2], bot = seats[i * 2 + 1];
-    if (top && bot) {
-      const m = { id: label + '-R1-M' + i,
-                  bracket: label, round: 1, slot: i, bye: false,
-                  top, bottom: bot, topFromMatch: null, botFromMatch: null,
-                  topFromMatchLoser: null, botFromMatchLoser: null,
-                  winner: null, loser: null, topWins: null };
-      r1.push(m); matches.push(m);
-    } else {
-      const seededTeam = top || bot;
-      const m = { id: label + '-R1-BYE' + i,
-                  bracket: label, round: 1, slot: i, bye: true,
-                  top: seededTeam, bottom: null,
-                  topFromMatch: null, botFromMatch: null,
-                  topFromMatchLoser: null, botFromMatchLoser: null,
-                  winner: seededTeam, loser: null, topWins: true };
-      r1.push(m); matches.push(m);
-    }
-  }
-  // R2: 4 matches. Each pairs r1[2i] and r1[2i+1] — both feeders are real
-  // match-objects now (real R1 or a bye-card), so always wire via from-match.
-  const r2 = [];
-  for (let i = 0; i < 4; i++) {
-    const a = r1[i * 2], b = r1[i * 2 + 1];
-    const m = { id: label + '-R2-M' + (i + 1), bracket: label, round: 2, slot: i, bye: false,
-                top: null, bottom: null,
-                topFromMatch: a, botFromMatch: b,
-                topFromMatchLoser: null, botFromMatchLoser: null,
-                winner: null, loser: null, topWins: null };
-    r2.push(m); matches.push(m);
-  }
-  // R3: 2 matches. Each pairs slots (2i, 2i+1) from R2.
-  const r3 = [];
-  for (let i = 0; i < 2; i++) {
-    const m = { id: label + '-R3-M' + (i + 1), bracket: label, round: 3, slot: i,
-                top: null, bottom: null,
-                topFromMatch: r2[i * 2], botFromMatch: r2[i * 2 + 1],
-                topFromMatchLoser: null, botFromMatchLoser: null,
-                winner: null, loser: null, topWins: null };
-    r3.push(m); matches.push(m);
-  }
-  // R4: 1 match (final)
-  const fin = { id: label + '-R4-M1', bracket: label, round: 4, slot: 0,
-                top: null, bottom: null,
-                topFromMatch: r3[0], botFromMatch: r3[1],
-                topFromMatchLoser: null, botFromMatchLoser: null,
-                winner: null, loser: null, topWins: null };
-  matches.push(fin);
-
-  return { label, matches };
+function templateModSe12_12To64() {
+  const md = [];
+  md.push(...gen12Bracket('A'));
+  md.push(...gen12Bracket('B'));
+  md.push(...gen64Bracket());
+  applyTemplateSchedule(md);
+  assignMatchNumbers(md);
+  assignTableNumbers(md);
+  return md;
 }
 
-function buildSixtyFour(A, B) {
-  // R1 includes 4 byes after the byes-as-cards change — filter them out
-  // so 64-team R1 only wires REAL R1 losers as entry sources.
-  const Ar1 = A.matches.filter(m => m.round === 1 && !m.bye);  // 4 real
-  const Ar2 = A.matches.filter(m => m.round === 2);            // 4
-  const Ar3 = A.matches.filter(m => m.round === 3);            // 2
-  const Ar4 = A.matches.filter(m => m.round === 4)[0];
-  const Br1 = B.matches.filter(m => m.round === 1 && !m.bye);
-  const Br2 = B.matches.filter(m => m.round === 2);
-  const Br3 = B.matches.filter(m => m.round === 3);
-  const Br4 = B.matches.filter(m => m.round === 4)[0];
-
+function gen12Bracket(label) {
   const matches = [];
-  const newMatch = (props) => {
-    const m = Object.assign({ top: null, bottom: null, topFromMatch: null, botFromMatch: null,
-                              topFromMatchLoser: null, botFromMatchLoser: null,
-                              winner: null, loser: null, topWins: null }, props);
-    matches.push(m); return m;
-  };
-  // R1 (8 matches) — WITHIN-bracket pairing of R1 + R2 losers.
-  //   64-R1-M1..M4 : A's R1[i] loser vs A's R2[i] loser
-  //   64-R1-M5..M8 : B's R1[i] loser vs B's R2[i] loser
-  const r1 = [];
-  for (let i = 0; i < 4; i++) {
-    r1.push(newMatch({ id: '64-R1-M' + (i + 1), bracket: '64', round: 1, slot: i,
-      topFromMatchLoser: Ar1[i], botFromMatchLoser: Ar2[i] }));
+  for (let i = 0; i < 8; i++) {
+    const topSeed = SEED_ORDER_16[i * 2];
+    const botSeed = SEED_ORDER_16[i * 2 + 1];
+    const topReal = topSeed <= 12 ? topSeed : null;
+    const botReal = botSeed <= 12 ? botSeed : null;
+    if (topReal && botReal) {
+      matches.push({ id: label + '-R1-M' + i, bracket: label, round: 1, slot: i, is_bye: false,
+                     top_seed: topReal, bot_seed: botReal });
+    } else {
+      const seededTeam = topReal || botReal;
+      matches.push({ id: label + '-R1-BYE' + i, bracket: label, round: 1, slot: i, is_bye: true,
+                     top_seed: seededTeam, bot_seed: null });
+    }
   }
   for (let i = 0; i < 4; i++) {
-    r1.push(newMatch({ id: '64-R1-M' + (i + 5), bracket: '64', round: 1, slot: i + 4,
-      topFromMatchLoser: Br1[i], botFromMatchLoser: Br2[i] }));
+    matches.push({ id: label + '-R2-M' + (i + 1), bracket: label, round: 2, slot: i, is_bye: false,
+                   top_from: { match_id: matches[i * 2].id, kind: 'winner' },
+                   bot_from: { match_id: matches[i * 2 + 1].id, kind: 'winner' } });
   }
-  // R2 (4 matches) — pairs of R1 winners
-  const r2 = [];
-  for (let i = 0; i < 4; i++) {
-    r2.push(newMatch({ id: '64-R2-M' + (i + 1), bracket: '64', round: 2, slot: i,
-      topFromMatch: r1[i * 2], botFromMatch: r1[i * 2 + 1] }));
-  }
-  // R3 (4 matches) — 12-team R3 losers integrate + R2 winners
-  const r3 = [];
-  r3.push(newMatch({ id: '64-R3-M1', bracket: '64', round: 3, slot: 0, topFromMatchLoser: Ar3[0], botFromMatch: r2[0] }));
-  r3.push(newMatch({ id: '64-R3-M2', bracket: '64', round: 3, slot: 1, topFromMatchLoser: Ar3[1], botFromMatch: r2[1] }));
-  r3.push(newMatch({ id: '64-R3-M3', bracket: '64', round: 3, slot: 2, topFromMatchLoser: Br3[0], botFromMatch: r2[2] }));
-  r3.push(newMatch({ id: '64-R3-M4', bracket: '64', round: 3, slot: 3, topFromMatchLoser: Br3[1], botFromMatch: r2[3] }));
-  // R4 (2 matches) — pairs of R3 winners
-  const r4 = [];
+  const r2 = matches.filter(m => m.round === 2);
   for (let i = 0; i < 2; i++) {
-    r4.push(newMatch({ id: '64-R4-M' + (i + 1), bracket: '64', round: 4, slot: i,
-      topFromMatch: r3[i * 2], botFromMatch: r3[i * 2 + 1] }));
+    matches.push({ id: label + '-R3-M' + (i + 1), bracket: label, round: 3, slot: i, is_bye: false,
+                   top_from: { match_id: r2[i * 2].id, kind: 'winner' },
+                   bot_from: { match_id: r2[i * 2 + 1].id, kind: 'winner' } });
   }
-  // R5 (2 matches) — 12-team Final losers integrate + R4 winners
-  const r5 = [];
-  r5.push(newMatch({ id: '64-R5-M1', bracket: '64', round: 5, slot: 0, topFromMatchLoser: Ar4, botFromMatch: r4[0] }));
-  r5.push(newMatch({ id: '64-R5-M2', bracket: '64', round: 5, slot: 1, topFromMatchLoser: Br4, botFromMatch: r4[1] }));
-  // R6 (1 match) — Final
-  newMatch({ id: '64-R6-M1', bracket: '64', round: 6, slot: 0,
-    topFromMatch: r5[0], botFromMatch: r5[1] });
-  return { label: '64', matches };
+  const r3 = matches.filter(m => m.round === 3);
+  matches.push({ id: label + '-R4-M1', bracket: label, round: 4, slot: 0, is_bye: false,
+                 top_from: { match_id: r3[0].id, kind: 'winner' },
+                 bot_from: { match_id: r3[1].id, kind: 'winner' } });
+  return matches;
+}
+
+function gen64Bracket() {
+  const matches = [];
+  const aR1Real = [1, 3, 5, 7].map(i => 'A-R1-M' + i);
+  const aR2     = [1, 2, 3, 4].map(i => 'A-R2-M' + i);
+  const bR1Real = [1, 3, 5, 7].map(i => 'B-R1-M' + i);
+  const bR2     = [1, 2, 3, 4].map(i => 'B-R2-M' + i);
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R1-M' + (i + 1), bracket: '64', round: 1, slot: i, is_bye: false,
+                   top_from: { match_id: aR1Real[i], kind: 'loser' },
+                   bot_from: { match_id: aR2[i], kind: 'loser' } });
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R1-M' + (i + 5), bracket: '64', round: 1, slot: i + 4, is_bye: false,
+                   top_from: { match_id: bR1Real[i], kind: 'loser' },
+                   bot_from: { match_id: bR2[i], kind: 'loser' } });
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R2-M' + (i + 1), bracket: '64', round: 2, slot: i, is_bye: false,
+                   top_from: { match_id: '64-R1-M' + (i * 2 + 1), kind: 'winner' },
+                   bot_from: { match_id: '64-R1-M' + (i * 2 + 2), kind: 'winner' } });
+  }
+  const integ = [
+    ['64-R3-M1', 'A-R3-M1', '64-R2-M1'],
+    ['64-R3-M2', 'A-R3-M2', '64-R2-M2'],
+    ['64-R3-M3', 'B-R3-M1', '64-R2-M3'],
+    ['64-R3-M4', 'B-R3-M2', '64-R2-M4']
+  ];
+  integ.forEach((row, idx) => {
+    const [id, loserSrc, winnerSrc] = row;
+    matches.push({ id: id, bracket: '64', round: 3, slot: idx, is_bye: false,
+                   top_from: { match_id: loserSrc, kind: 'loser' },
+                   bot_from: { match_id: winnerSrc, kind: 'winner' } });
+  });
+  for (let i = 0; i < 2; i++) {
+    matches.push({ id: '64-R4-M' + (i + 1), bracket: '64', round: 4, slot: i, is_bye: false,
+                   top_from: { match_id: '64-R3-M' + (i * 2 + 1), kind: 'winner' },
+                   bot_from: { match_id: '64-R3-M' + (i * 2 + 2), kind: 'winner' } });
+  }
+  matches.push({ id: '64-R5-M1', bracket: '64', round: 5, slot: 0, is_bye: false,
+                 top_from: { match_id: 'A-R4-M1', kind: 'loser' },
+                 bot_from: { match_id: '64-R4-M1', kind: 'winner' } });
+  matches.push({ id: '64-R5-M2', bracket: '64', round: 5, slot: 1, is_bye: false,
+                 top_from: { match_id: 'B-R4-M1', kind: 'loser' },
+                 bot_from: { match_id: '64-R4-M2', kind: 'winner' } });
+  matches.push({ id: '64-R6-M1', bracket: '64', round: 6, slot: 0, is_bye: false,
+                 top_from: { match_id: '64-R5-M1', kind: 'winner' },
+                 bot_from: { match_id: '64-R5-M2', kind: 'winner' } });
+  return matches;
+}
+
+function applyTemplateSchedule(matchData) {
+  for (const m of matchData) {
+    const sched = (m.bracket === '64' ? TEMPLATE_SCHEDULES.sixtyfour : TEMPLATE_SCHEDULES.twelve)[m.round - 1];
+    if (sched) { m.day = sched.day; m.time = sched.time; m.payout = sched.payout; }
+  }
+}
+
+function assignMatchNumbers(matchData) {
+  const order = [
+    ['A', 1], ['B', 1], ['A', 2], ['B', 2], ['64', 1],
+    ['A', 3], ['B', 3], ['64', 2], ['64', 3],
+    ['A', 4], ['B', 4], ['64', 4], ['64', 5], ['64', 6]
+  ];
+  let no = 1;
+  for (const pair of order) {
+    const bracket = pair[0], round = pair[1];
+    matchData.filter(m => m.bracket === bracket && m.round === round && !m.is_bye)
+             .sort((a, b) => a.slot - b.slot)
+             .forEach(m => { m.match_no = no++; });
+  }
+}
+
+function assignTableNumbers(matchData) {
+  for (const bracket of ['A', 'B', '64']) {
+    for (let r = 1; r <= 6; r++) {
+      const ms = matchData.filter(m => m.bracket === bracket && m.round === r && !m.is_bye)
+                          .sort((a, b) => a.slot - b.slot);
+      ms.forEach((m, idx) => { m.table_no = idx + 1; });
+    }
+  }
+}
+
+function defaultSeedAssignments(teams) {
+  const sa = [];
+  teams.slice(0, 12).forEach((t, i)  => sa.push({ bracket: 'A', seed: i + 1, team_number: t.number }));
+  teams.slice(12, 24).forEach((t, i) => sa.push({ bracket: 'B', seed: i + 1, team_number: t.number }));
+  return sa;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   RECONSTRUCT — build the in-memory tournament graph from template data
+   + seed assignments + teams catalog. Output shape matches what the old
+   inline build*() functions produced, so the renderer is unchanged.
+   ════════════════════════════════════════════════════════════════════════ */
+function reconstructTournament(matchData, seedAssignments, teamsByNumber) {
+  const teamByBracketSeed = {};
+  for (const sa of seedAssignments) {
+    const t = teamsByNumber[sa.team_number];
+    if (t) teamByBracketSeed[sa.bracket + '.' + sa.seed] = Object.assign({}, t, { seed: sa.seed });
+  }
+  const resolveTeam = (bracket, seed) => seed == null ? null : (teamByBracketSeed[bracket + '.' + seed] || null);
+  const matchById = {};
+  const allMatches = [];
+  for (const md of matchData) {
+    const m = {
+      id: md.id, bracket: md.bracket, round: md.round, slot: md.slot,
+      bye: !!md.is_bye,
+      top: resolveTeam(md.bracket, md.top_seed),
+      bottom: resolveTeam(md.bracket, md.bot_seed),
+      topFromMatch: null, botFromMatch: null,
+      topFromMatchLoser: null, botFromMatchLoser: null,
+      winner: null, loser: null, topWins: null,
+      globalNo: md.match_no || null,
+      day: md.day, time: md.time, payout: md.payout, table_no: md.table_no
+    };
+    if (m.bye && m.top) { m.winner = m.top; m.topWins = true; }
+    matchById[m.id] = m;
+    allMatches.push(m);
+  }
+  for (const md of matchData) {
+    const m = matchById[md.id];
+    if (md.top_from) {
+      const ref = matchById[md.top_from.match_id];
+      if (md.top_from.kind === 'winner') m.topFromMatch = ref;
+      else if (md.top_from.kind === 'loser') m.topFromMatchLoser = ref;
+    }
+    if (md.bot_from) {
+      const ref = matchById[md.bot_from.match_id];
+      if (md.bot_from.kind === 'winner') m.botFromMatch = ref;
+      else if (md.bot_from.kind === 'loser') m.botFromMatchLoser = ref;
+    }
+  }
+  return {
+    A:   { label: 'A',  matches: allMatches.filter(m => m.bracket === 'A')  },
+    B:   { label: 'B',  matches: allMatches.filter(m => m.bracket === 'B')  },
+    T64: { label: '64', matches: allMatches.filter(m => m.bracket === '64') },
+    all: allMatches
+  };
 }
 
 function resolveTournament(t) {
-  // Play-order list: 12A R1, 12B R1, 12A R2, 12B R2, 64 R1, 12A R3, 12B R3,
-  //                  64 R2, 64 R3, 12A R4, 12B R4, 64 R4, 64 R5, 64 R6.
-  // Byes are NOT numbered (no actual match is played).
-  const order = [];
-  const pick = (b, r) => order.push(...b.matches.filter(m => m.round === r && !m.bye));
-  pick(t.A, 1); pick(t.B, 1);
-  pick(t.A, 2); pick(t.B, 2);
-  pick(t.T64, 1);
-  pick(t.A, 3); pick(t.B, 3);
-  pick(t.T64, 2); pick(t.T64, 3);
-  pick(t.A, 4); pick(t.B, 4);
-  pick(t.T64, 4); pick(t.T64, 5); pick(t.T64, 6);
-
-  order.forEach((m, i) => { m.globalNo = i + 1; });
-
-  // Resolve teams + winners along the play order
+  // Walk matches in match_no order; PRNG resolves a sample winner if both
+  // teams are present. Real results would arrive from the DB instead.
+  const ordered = t.all.filter(m => !m.bye && m.globalNo != null)
+                        .slice().sort((a, b) => a.globalNo - b.globalNo);
   const prng = makePrng(24);
-  for (const m of order) {
+  for (const m of ordered) {
     if (m.top == null) {
       if (m.topFromMatch) m.top = m.topFromMatch.winner;
       else if (m.topFromMatchLoser) m.top = m.topFromMatchLoser.loser;
@@ -612,66 +692,59 @@ function resolveTournament(t) {
       const gap = Math.abs(m.top.seed - m.bottom.seed);
       const upset = prng() < (gap > 4 ? 0.15 : 0.30);
       m.winner = upset ? higher : lower;
-      m.loser = upset ? lower : higher;
+      m.loser  = upset ? lower  : higher;
       m.topWins = m.winner === m.top;
     }
   }
-
-  // Annotate destinations for the card header. Iterate ALL matches in the
-  // tournament (including byes) so byes get winnerAdvancesTo too — they
-  // never appear in `order`, but they ARE feeders of R2 matches.
-  const allMatches = [].concat(t.A.matches, t.B.matches, t.T64.matches);
-  for (const m of allMatches) {
+  for (const m of t.all) {
     if (m.topFromMatchLoser) m.topFromMatchLoser.loserDropTo = m;
     if (m.botFromMatchLoser) m.botFromMatchLoser.loserDropTo = m;
     if (m.topFromMatch) m.topFromMatch.winnerAdvancesTo = m;
     if (m.botFromMatch) m.botFromMatch.winnerAdvancesTo = m;
   }
-  return order;
-}
-
-function buildTournament() {
-  if (_teams.length < 24) throw new Error('Need at least 24 teams in the DB (have ' + _teams.length + ').');
-  const teams24 = _teams.slice(0, 24);
-  const aTeams = teams24.slice(0, 12).map((t, i) => ({ ...t, seed: i + 1 }));
-  const bTeams = teams24.slice(12, 24).map((t, i) => ({ ...t, seed: i + 1 }));
-  const A = buildTwelveBracket('A', aTeams);
-  const B = buildTwelveBracket('B', bTeams);
-  const T64 = buildSixtyFour(A, B);
-  const all = resolveTournament({ A, B, T64 });
-  return { A, B, T64, all };
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   ROUND CONFIG (admin-set later; placeholder defaults for the PoC)
+   TOURNAMENT LOAD — prefer the active row in breakout.tournaments. Falls
+   back to inline template generation when the DB has no row yet, so the
+   PoC page never goes blank.
    ════════════════════════════════════════════════════════════════════════ */
-function twelveRoundConfig() {
-  return [
-    { day: 'Saturday', time: '9:00 AM',  payout: null },  // R1
-    { day: 'Saturday', time: '10:30 AM', payout: null },  // R2
-    { day: 'Saturday', time: '12:00 PM', payout: 100 },   // R3 (semis)
-    { day: 'Saturday', time: '1:30 PM',  payout: 400 }    // R4 (final)
-  ];
+async function loadActiveTournament() {
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=*', { headers: HEADERS_DB });
+    if (!r.ok) return null;
+    const arr = await r.json();
+    return arr && arr[0] ? arr[0] : null;
+  } catch (e) { return null; }
 }
-function sixtyFourRoundConfig() {
-  return [
-    { day: 'Saturday', time: '11:00 AM', payout: null },  // R1
-    { day: 'Saturday', time: '1:00 PM',  payout: null },  // R2
-    { day: 'Saturday', time: '3:00 PM',  payout: null },  // R3
-    { day: 'Saturday', time: '5:00 PM',  payout: null },  // R4
-    { day: 'Sunday',   time: '10:00 AM', payout: 100 },   // R5
-    { day: 'Sunday',   time: '12:00 PM', payout: 600 }    // R6 (final)
-  ];
-}
-function assignTable(matchesInRound, idx, bracketLabel) {
-  // Placeholder: sequential within round; 12-A on T1.., 12-B on T1.. (different physical area), 64 on T1..
-  return idx + 1;
+
+async function buildTournament() {
+  if (_teams.length < 24) throw new Error('Need at least 24 teams in the DB (have ' + _teams.length + ').');
+  const dbRow = await loadActiveTournament();
+  let matchData, seedAssignments, config;
+  if (dbRow && Array.isArray(dbRow.matches) && dbRow.matches.length) {
+    matchData = dbRow.matches;
+    seedAssignments = Array.isArray(dbRow.seed_assignments) && dbRow.seed_assignments.length
+                       ? dbRow.seed_assignments
+                       : defaultSeedAssignments(_teams);
+    config = dbRow.config || {};
+  } else {
+    matchData = templateModSe12_12To64();
+    seedAssignments = defaultSeedAssignments(_teams);
+    config = {};
+  }
+  if (config.bracketChampText) TOURNAMENT_TEXT.bracketChampText = config.bracketChampText;
+  if (config.championText)     TOURNAMENT_TEXT.championText     = config.championText;
+  const teamsByNumber = Object.fromEntries(_teams.map(t => [t.number, t]));
+  const tData = reconstructTournament(matchData, seedAssignments, teamsByNumber);
+  resolveTournament(tData);
+  return tData;
 }
 
 /* ════════════════════════════════════════════════════════════════════════
    RENDER
    ════════════════════════════════════════════════════════════════════════ */
-function bracketSectionHtml(bracket, kind, rounds, roundCfg, opts) {
+function bracketSectionHtml(bracket, kind, rounds, opts) {
   const sectionLabel = opts.label;
   const subLabel = opts.subLabel;
   const pillClass = opts.pillClass;
@@ -682,22 +755,20 @@ function bracketSectionHtml(bracket, kind, rounds, roundCfg, opts) {
     + '<div class="viewport"><div class="bracket-wrap" data-wrap="' + bracket.label + '" style="--bracket-slots:' + slots + '">'
     +   '<svg class="connectors" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>'
     +   '<div class="bracket">'
-    +     rounds.map((roundMatches, idx) => roundHtml(roundMatches, idx, rounds.length, roundCfg[idx], bracket.label, slots)).join('')
+    +     rounds.map((roundMatches, idx) => roundHtml(roundMatches, idx, rounds.length, slots)).join('')
     +   '</div>'
     + '</div></div>'
     + '</div>';
 }
 
-function roundHtml(roundMatches, roundIdx, totalRounds, cfg, bracketLabel, slots) {
+function roundHtml(roundMatches, roundIdx, totalRounds, slots) {
   const isFinal = roundIdx === totalRounds - 1;
   return '<div class="round' + (isFinal ? ' is-final' : '') + '" style="--bracket-slots:' + slots + '">'
     + '<div class="round-header">'
-    +   '<div class="round-day">' + esc(cfg.day || ' ') + '</div>'
-    +   '<div class="round-time">' + esc(cfg.time || ' ') + '</div>'
-    +   '<div class="round-payout">' + (cfg.payout ? esc(fmtMoney(cfg.payout)) : ' ') + '</div>'
+    +   '<div class="round-name">Round ' + (roundIdx + 1) + '</div>'
     + '</div>'
     + '<div class="matches" style="--bracket-slots:' + slots + '">'
-    +   roundMatches.map((m, i) => matchHtml(m, assignTable(roundMatches, i, bracketLabel), isFinal, cfg)).join('')
+    +   roundMatches.map(m => matchHtml(m, isFinal)).join('')
     + '</div>'
     + '</div>';
 }
@@ -731,15 +802,16 @@ function bracketSlotsFor(_bracket) {
   return 8;
 }
 
-function matchHtml(m, table, isFinalOfBracket, cfg) {
+function matchHtml(m, isFinalOfBracket) {
   if (m.bye) return byeMatchHtml(m);
   const tnum = m.globalNo ? 'M' + m.globalNo : '—';
   const y = matchYUnits(m);
   const topWin = m.topWins === true;
   const botWin = m.topWins === false;
-  const scheduleDay  = (cfg && cfg.day)  ? cfg.day.slice(0, 3).toUpperCase() : '';
-  const scheduleTime = (cfg && cfg.time) ? cfg.time : '';
-  const schedulePay  = (cfg && cfg.payout) ? fmtMoney(cfg.payout) : '';
+  const table  = m.table_no || null;
+  const scheduleDay  = m.day  ? m.day.slice(0, 3).toUpperCase() : '';
+  const scheduleTime = m.time ? m.time : '';
+  const schedulePay  = m.payout ? fmtMoney(m.payout) : '';
 
   // Destination chips — pills in the top-right that link to the linked match.
   let winnerChip = '';
@@ -1007,7 +1079,6 @@ function renderTournament() {
   const ab = (label, bracket, kind, sub, cls) => bracketSectionHtml(
     bracket, kind,
     Array.from({ length: 4 }, (_, i) => bracket.matches.filter(m => m.round === i + 1)),
-    twelveRoundConfig(),
     { label, subLabel: sub, pillClass: cls }
   );
   const root = document.getElementById('tournamentRoot');
@@ -1017,7 +1088,6 @@ function renderTournament() {
   html += bracketSectionHtml(
     t.T64, 'sixtyfour',
     Array.from({ length: 6 }, (_, i) => t.T64.matches.filter(m => m.round === i + 1)),
-    sixtyFourRoundConfig(),
     { label: '64-Team', subLabel: 'Consolation · alternates "integrate losers" / "winners advance" through 6 rounds', pillClass: 'consolation' }
   );
   root.innerHTML = html;
@@ -1171,7 +1241,7 @@ function setupPanScroll() {
     document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">Could not load teams: ' + esc(e.message) + '</p>';
     return;
   }
-  try { _tournament = buildTournament(); }
+  try { _tournament = await buildTournament(); }
   catch (e) {
     document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">' + esc(e.message) + '</p>';
     return;
