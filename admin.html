@@ -188,6 +188,41 @@
   .tournaments-table tbody tr.editable:hover { background: rgba(0,49,161,0.04); }
   .tournaments-table .status-pill { cursor: pointer; transition: opacity 0.15s; }
   .tournaments-table .status-pill:hover { opacity: 0.8; }
+
+  /* Schedule-by-round editor */
+  .sched-group { margin-bottom: 14px; }
+  .sched-group:last-child { margin-bottom: 0; }
+  .sched-group-label {
+    font-size: 0.74rem; font-weight: 800; color: var(--spm-accent);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+  .sched-row {
+    display: grid;
+    grid-template-columns: 42px 1fr 1fr 100px 90px;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 4px;
+    background: #fff;
+  }
+  .sched-row + .sched-row { margin-top: 0; }
+  .sched-row .rlabel { font-weight: 800; color: var(--muted); font-size: 0.82rem; }
+  .sched-row input {
+    padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: 5px;
+    font-size: 0.86rem; font-family: inherit;
+    width: 100%;
+  }
+  .sched-row input.payout-input { text-align: right; }
+  .sched-row .apply-btn {
+    padding: 5px 10px; border: 1px solid var(--spm-accent); background: #fff; color: var(--spm-accent);
+    font-size: 0.74rem; font-weight: 700; border-radius: 5px; cursor: pointer;
+  }
+  .sched-row .apply-btn:hover { background: rgba(0,49,161,0.06); }
+  .sched-row.applied { background: rgba(22,163,74,0.06); border-color: rgba(22,163,74,0.5); }
+  .sched-row .apply-btn.success { background: var(--success); color: #fff; border-color: var(--success); }
   code { background: #eef1f7; padding: 2px 6px; border-radius: 4px; font-size: 0.86em; color: var(--spm-accent); font-weight: 700; }
 
   .status-line { padding: 9px 13px; border-radius: 10px; font-size: 0.84rem; font-weight: 600; margin: 6px 0; display: none; }
@@ -283,6 +318,18 @@
     </div>
     <p class="hint">Uses the <code>Mod-SE 12+12&rarr;64</code> template and assigns the first 24 teams (by number) to seeds 1&ndash;12 in each 12-team bracket. The viewer auto-loads the active tournament.</p>
     <div id="tournamentBody" class="hint">Loading&hellip;</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Schedule by round</h2>
+      <span class="hint" id="scheduleStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-outline btn-sm" onclick="renumberAllTables()">Renumber tables</button>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:0">Bulk-set Day, Time, and Payout for every match in a round. <strong>Apply</strong> stamps the values onto each match. Individual matches can still be overridden via the per-match edit modal in the table below.</p>
+    <div id="scheduleEditorBody"><p class="hint">Loading&hellip;</p></div>
   </div>
 
   <div class="card">
@@ -846,6 +893,7 @@ async function loadMatchesView() {
     _activeMatchTournament = list[0];
     if (!Array.isArray(_activeMatchTournament.matches)) _activeMatchTournament.matches = [];
     renderMatchesEditor();
+    renderScheduleEditor();
     const matches = _activeMatchTournament.matches;
     const real = matches.filter(m => !m.is_bye).length;
     const byes = matches.length - real;
@@ -854,6 +902,148 @@ async function loadMatchesView() {
     body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
     status.textContent = '';
   }
+}
+
+/* ── Schedule-by-round bulk editor ─────────
+ *  Lists every (bracket, round) present in the active tournament. Each
+ *  row's inputs auto-populate from the first non-bye match in that round.
+ *  Clicking Apply stamps the entered values onto every (non-bye) match in
+ *  that round and PATCHes the matches JSONB. The matches table refreshes
+ *  to reflect the new values. */
+function bracketOrderRank(b) {
+  if (b === 'A') return 1;
+  if (b === 'B') return 2;
+  if (b === '64') return 3;
+  return 99;
+}
+
+function bracketLabel(b) {
+  return b === '64' ? '64-Team' : 'Bracket ' + b;
+}
+
+function listRounds(matches) {
+  const seen = {};
+  const out = [];
+  for (const m of matches) {
+    const key = m.bracket + '/' + m.round;
+    if (seen[key]) continue;
+    seen[key] = true;
+    out.push({ bracket: m.bracket, round: m.round, key });
+  }
+  return out.sort((a, b) => bracketOrderRank(a.bracket) - bracketOrderRank(b.bracket) || a.round - b.round);
+}
+
+function firstRealMatchInRound(bracket, round) {
+  if (!_activeMatchTournament) return null;
+  return _activeMatchTournament.matches.find(m => m.bracket === bracket && m.round === round && !m.is_bye) || null;
+}
+
+function renderScheduleEditor() {
+  const body = document.getElementById('scheduleEditorBody');
+  if (!_activeMatchTournament) { body.innerHTML = '<p class="hint">No live tournament loaded.</p>'; return; }
+  const rounds = listRounds(_activeMatchTournament.matches);
+  if (!rounds.length) { body.innerHTML = '<p class="hint">No matches to schedule.</p>'; return; }
+
+  let html = '';
+  let currentBracket = null;
+  for (const r of rounds) {
+    if (r.bracket !== currentBracket) {
+      if (currentBracket !== null) html += '</div>';
+      html += '<div class="sched-group"><div class="sched-group-label">' + escapeHtml(bracketLabel(r.bracket)) + '</div>';
+      currentBracket = r.bracket;
+    }
+    const sample = firstRealMatchInRound(r.bracket, r.round);
+    const day    = sample && sample.day ? sample.day : '';
+    const time   = sample && sample.time ? sample.time : '';
+    const payout = sample && sample.payout != null ? sample.payout : '';
+    const id = 'sched-' + r.bracket + '-' + r.round;
+    html += '<div class="sched-row" id="' + id + '">'
+      + '<span class="rlabel">R' + r.round + '</span>'
+      + '<input type="text" data-field="day" value="'    + escapeHtml(day)    + '" placeholder="Saturday">'
+      + '<input type="text" data-field="time" value="'   + escapeHtml(time)   + '" placeholder="9:00 AM">'
+      + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
+      + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
+      + '</div>';
+  }
+  if (currentBracket !== null) html += '</div>';
+  body.innerHTML = html;
+}
+
+async function applyRoundSchedule(bracket, round) {
+  if (!_activeMatchTournament) return;
+  const rowEl = document.getElementById('sched-' + bracket + '-' + round);
+  if (!rowEl) return;
+  const dayV    = rowEl.querySelector('input[data-field="day"]').value.trim();
+  const timeV   = rowEl.querySelector('input[data-field="time"]').value.trim();
+  const payoutV = rowEl.querySelector('input[data-field="payout"]').value.trim();
+  const payout  = payoutV === '' ? null : parseInt(payoutV, 10);
+
+  // Snapshot to roll back on failure.
+  const snapshot = JSON.stringify(_activeMatchTournament.matches);
+  let touched = 0;
+  for (const m of _activeMatchTournament.matches) {
+    if (m.bracket !== bracket || m.round !== round) continue;
+    if (m.is_bye) continue;
+    m.day    = dayV || null;
+    m.time   = timeV || null;
+    m.payout = payout;
+    touched++;
+  }
+
+  const applyBtn = rowEl.querySelector('.apply-btn');
+  applyBtn.disabled = true;
+  applyBtn.textContent = 'Saving…';
+
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+    rowEl.classList.add('applied');
+    applyBtn.classList.add('success');
+    applyBtn.textContent = 'Applied ✓ (' + touched + ')';
+    setTimeout(() => {
+      rowEl.classList.remove('applied');
+      applyBtn.classList.remove('success');
+      applyBtn.textContent = 'Apply';
+      applyBtn.disabled = false;
+    }, 1800);
+    renderMatchesEditor();
+  } catch (e) {
+    _activeMatchTournament.matches = JSON.parse(snapshot);
+    applyBtn.textContent = 'Apply';
+    applyBtn.disabled = false;
+    alert('Apply failed: ' + e.message);
+  }
+}
+
+async function renumberAllTables() {
+  if (!_activeMatchTournament) { alert('No live tournament loaded.'); return; }
+  confirmModal({
+    title: 'Renumber tables?',
+    message: 'Assigns table_no = 1, 2, 3 … to every non-bye match in slot order, within each (bracket, round). Overwrites any custom table assignments.',
+    okText: 'Renumber',
+    onOk: async () => {
+      const snapshot = JSON.stringify(_activeMatchTournament.matches);
+      const rounds = listRounds(_activeMatchTournament.matches);
+      for (const r of rounds) {
+        const ms = _activeMatchTournament.matches
+          .filter(m => m.bracket === r.bracket && m.round === r.round && !m.is_bye)
+          .sort((a, b) => a.slot - b.slot);
+        ms.forEach((m, idx) => { m.table_no = idx + 1; });
+      }
+      try {
+        await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+        renderMatchesEditor();
+        renderScheduleEditor();
+        const status = document.getElementById('scheduleStatus');
+        if (status) {
+          status.textContent = 'Tables renumbered';
+          setTimeout(() => { status.textContent = ''; }, 2400);
+        }
+      } catch (e) {
+        _activeMatchTournament.matches = JSON.parse(snapshot);
+        alert('Renumber failed: ' + e.message);
+      }
+    }
+  });
 }
 
 function renderMatchesEditor() {
