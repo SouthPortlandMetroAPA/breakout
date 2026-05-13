@@ -167,6 +167,14 @@
 
   .bracket-wrap { position: relative; display: inline-block; min-width: 100%; }
   .connectors { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
+  .connectors text.cross-source-link {
+    pointer-events: auto;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  .connectors text.cross-source-link:hover { fill: #7c3a04; }
   /* padding-left = round-gap gives the first round's cross-bracket source
      labels somewhere to live (specifically the 64-team R1, where every row
      comes from another bracket). */
@@ -941,7 +949,6 @@ async function recordWinner(side) {
   const md = _tournament.matchData;
   const idx = md.findIndex(x => x.id === _staffEditingMatchId);
   if (idx < 0) return;
-  // Disallow setting a winner when either team is still TBD.
   const m = _tournament.all.find(x => x.id === _staffEditingMatchId);
   if (side && (!m.top || !m.bottom)) {
     showToast('Both teams must be determined before recording a winner', 'err');
@@ -952,6 +959,21 @@ async function recordWinner(side) {
     // No-op for winner; still flush any pending override edits.
     await saveStaffOverrides();
     return;
+  }
+  // Confirm when overwriting a previously-recorded winner.
+  if (prevSide) {
+    const prevTeam = prevSide === 'top' ? m.top : m.bottom;
+    const prevName = prevTeam ? prevTeam.name : '(unknown)';
+    const mLabel = m.globalNo ? 'M' + m.globalNo : 'this match';
+    let prompt;
+    if (side === null) {
+      prompt = 'Clear the winner of ' + mLabel + '?\n\nCurrently recorded: ' + prevName + '.';
+    } else {
+      const newTeam = side === 'top' ? m.top : m.bottom;
+      const newName = newTeam ? newTeam.name : '(unknown)';
+      prompt = 'Change the winner of ' + mLabel + '?\n\nFrom: ' + prevName + '\nTo: ' + newName;
+    }
+    if (!window.confirm(prompt)) return;
   }
   const prevOverrides = readStaffOverrides(md, idx);
   md[idx].winner_side = side;
@@ -1702,18 +1724,20 @@ function drawConnectorsFor(wrap, matches) {
     // horizontal stub is fine and reads cleaner.
     const intraRanges = intraFeederYRanges(m, getCellGeom);
     if (m.topFromMatchLoser && down.topRowY != null) {
-      const label = 'L of M' + m.topFromMatchLoser.globalNo;
+      const targetNo = m.topFromMatchLoser.globalNo;
+      const label = 'L of M' + targetNo;
       if (inAnyRange(down.topRowY, intraRanges))
-        drawCrossSourceL(svg, down.left, down.topRowY, 'top', label);
+        drawCrossSourceL(svg, down.left, down.topRowY, 'top', label, targetNo);
       else
-        drawCrossSource(svg, down.left, down.topRowY, label);
+        drawCrossSource(svg, down.left, down.topRowY, label, targetNo);
     }
     if (m.botFromMatchLoser && down.botRowY != null) {
-      const label = 'L of M' + m.botFromMatchLoser.globalNo;
+      const targetNo = m.botFromMatchLoser.globalNo;
+      const label = 'L of M' + targetNo;
       if (inAnyRange(down.botRowY, intraRanges))
-        drawCrossSourceL(svg, down.left, down.botRowY, 'bot', label);
+        drawCrossSourceL(svg, down.left, down.botRowY, 'bot', label, targetNo);
       else
-        drawCrossSource(svg, down.left, down.botRowY, label);
+        drawCrossSource(svg, down.left, down.botRowY, label, targetNo);
     }
   }
 }
@@ -1749,26 +1773,20 @@ function inAnyRange(y, ranges) {
 
 /* Straight horizontal stub + label at the target row's Y. Used when the
  * downstream match has NO intra-bracket feeder (e.g. 64-team R1, where both
- * rows are cross-bracket loser drops, so there's no Z-path to collide with). */
-function drawCrossSource(svg, x, y, label) {
+ * rows are cross-bracket loser drops, so there's no Z-path to collide with).
+ * jumpToNo (optional): if present, the label becomes a clickable hyperlink
+ * to that match's global match number. */
+function drawCrossSource(svg, x, y, label, jumpToNo) {
   appendCrossPath(svg, 'M ' + (x - 22) + ' ' + y + ' L ' + x + ' ' + y);
-  appendCrossLabel(svg, x - 26, y, label);
+  appendCrossLabel(svg, x - 26, y, label, jumpToNo);
 }
 
 /* L-shaped variant. Label parks OUTSIDE the target row (just above for
  * top targets, just below for bot targets), and the dashed path bends
- * INTO the row from outside. The bend lives at x = target.left - 10,
- * far from xMid where the intra-bracket Z-segment lives, and the label's
- * Y is offset from any row, so the label can never coincide with the
- * connector regardless of the connector's path.
- *
- *   label  ───┐
- *             │ ← bend at x-10, OUT of the connector's xMid zone
- *             └── target row
- */
-function drawCrossSourceL(svg, x, rowY, side, label) {
+ * INTO the row from outside. */
+function drawCrossSourceL(svg, x, rowY, side, label, jumpToNo) {
   const STUB = 22;
-  const OFFSET = 14;                // distance from target row to label
+  const OFFSET = 14;
   const VERT_X = x - 10;
   const labelY = side === 'top' ? rowY - OFFSET : rowY + OFFSET;
   const d = 'M ' + (x - STUB) + ' ' + labelY
@@ -1776,7 +1794,7 @@ function drawCrossSourceL(svg, x, rowY, side, label) {
         + ' L ' + VERT_X + ' ' + rowY
         + ' L ' + x + ' ' + rowY;
   appendCrossPath(svg, d);
-  appendCrossLabel(svg, x - 26, labelY, label);
+  appendCrossLabel(svg, x - 26, labelY, label, jumpToNo);
 }
 
 function appendCrossPath(svg, d) {
@@ -1791,7 +1809,7 @@ function appendCrossPath(svg, d) {
   svg.appendChild(p);
 }
 
-function appendCrossLabel(svg, x, y, label) {
+function appendCrossLabel(svg, x, y, label, jumpToNo) {
   const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
   t.setAttribute('x', x);
   t.setAttribute('y', y);
@@ -1803,6 +1821,11 @@ function appendCrossLabel(svg, x, y, label) {
   t.setAttribute('font-family', 'system-ui, -apple-system, "Segoe UI", sans-serif');
   t.setAttribute('letter-spacing', '0.04em');
   t.textContent = label;
+  if (jumpToNo) {
+    t.setAttribute('data-jump', jumpToNo);
+    t.setAttribute('class', 'cross-source-link');
+    t.setAttribute('title', 'Jump to M' + jumpToNo);
+  }
   svg.appendChild(t);
 }
 function cssEscape(s) { return String(s).replace(/(["\\])/g, '\\$1'); }
@@ -2016,18 +2039,28 @@ window.addEventListener('resize', () => {
  *  Clicking "W → M37" or "L → M53" scrolls to the target match and
  *  pulses it with a flash highlight. Uses event delegation so it works
  *  for any re-rendered cards too. */
-document.addEventListener('click', (e) => {
-  const chip = e.target.closest('a.dest-chip[data-jump]');
-  if (!chip) return;
-  e.preventDefault();
-  const target = document.querySelector('.match[data-global-no="' + chip.dataset.jump + '"]');
+function jumpToMatch(globalNo) {
+  if (!globalNo) return;
+  const target = document.querySelector('.match[data-global-no="' + globalNo + '"]');
   if (!target) return;
   target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
   document.querySelectorAll('.match.match-jump-flash').forEach(m => m.classList.remove('match-jump-flash'));
-  // Force reflow so the animation re-triggers if the same target is clicked twice.
   void target.offsetWidth;
   target.classList.add('match-jump-flash');
   setTimeout(() => target.classList.remove('match-jump-flash'), 1800);
+}
+document.addEventListener('click', (e) => {
+  // W → / L → chip on a match card
+  const chip = e.target.closest('a.dest-chip[data-jump]');
+  if (chip) { e.preventDefault(); jumpToMatch(chip.dataset.jump); return; }
+  // Floating "L of M_N" SVG label (cross-bracket source annotation)
+  const t = e.target;
+  if (t && (t.tagName === 'text' || t.tagName === 'TEXT' || (typeof t.localName === 'string' && t.localName === 'text'))
+        && t.getAttribute && t.getAttribute('data-jump')) {
+    e.preventDefault();
+    jumpToMatch(t.getAttribute('data-jump'));
+    return;
+  }
 });
 
 /* ── Pan & scroll on bracket viewports ───────
