@@ -200,7 +200,7 @@
   }
   .sched-row {
     display: grid;
-    grid-template-columns: 42px 1fr 110px 100px 90px;
+    grid-template-columns: 42px 1fr 110px 88px 100px 90px;
     gap: 8px;
     align-items: center;
     padding: 6px 8px;
@@ -222,6 +222,23 @@
     text-align: center;
     transition: background 0.15s, color 0.15s;
   }
+  .capacity-table .demand-bar {
+    display: inline-block;
+    height: 10px;
+    background: linear-gradient(90deg, #15803d, var(--spm-accent));
+    border-radius: 5px;
+    vertical-align: middle;
+  }
+  .capacity-table .demand-bar.over { background: var(--danger); }
+  .capacity-table tr.over td { background: rgba(220,38,38,0.08); }
+  .capacity-table tr.at-cap td { background: rgba(0,49,161,0.05); }
+  .capacity-table .over-tag {
+    color: var(--danger); font-weight: 800; font-size: 0.74rem;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .capacity-table .ok-tag { color: var(--success); font-weight: 700; font-size: 0.78rem; }
+  .capacity-table .matches-cell { font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.74rem; color: var(--muted); }
+
   .tables-toggle[data-tables="2"] {
     background: rgba(0,49,161,0.12);
     border-color: var(--spm-accent);
@@ -354,6 +371,18 @@
 
   <div class="card">
     <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Capacity analysis</h2>
+      <span class="hint" id="capacityStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-outline btn-sm" onclick="renderCapacityAnalyzer()">Refresh</button>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. A match occupies one table from its scheduled start through start + duration. With 2 tables in parallel for a round, matches play in waves (slots 0,1 first; 2,3 next wave; …).</p>
+    <div id="capacityBody"><p class="hint">Loading&hellip;</p></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
       <h2 style="margin-bottom:0">Matches</h2>
       <span class="hint" id="matchesStatus"></span>
       <div style="margin-left:auto" class="actions">
@@ -410,8 +439,11 @@
 
       <fieldset>
         <legend>Venue</legend>
-        <label>Name <input type="text" id="tEditVenueName" placeholder="Spare Time Recreation"></label>
+        <p class="hint" style="margin:0 0 4px;font-size:0.76rem">Type a name &mdash; we&rsquo;ll auto-fill if you&rsquo;ve used it before, or save it for next time.</p>
+        <label>Name <input type="text" id="tEditVenueName" list="venueList" placeholder="Spare Time Recreation"></label>
+        <datalist id="venueList"></datalist>
         <label>Address <input type="text" id="tEditVenueAddress" placeholder="123 Main St, Westbrook ME"></label>
+        <label>Total tables at this venue <input type="number" id="tEditTotalTables" min="1" max="80" placeholder="8"></label>
       </fieldset>
 
       <fieldset>
@@ -883,6 +915,7 @@ async function doGenerateDefaultTournament() {
     await sb('POST', 'tournaments', row);
     loadTournaments();
     loadMatchesView();
+    renderCapacityAnalyzer();
   } catch (e) {
     alert('Generate failed: ' + e.message);
   }
@@ -975,11 +1008,13 @@ function renderScheduleEditor() {
     const scheduledAt = sample && sample.scheduled_at ? sample.scheduled_at.slice(0, 16) : '';
     const payout = sample && sample.payout != null ? sample.payout : '';
     const tip = sample && sample.tables_in_parallel ? sample.tables_in_parallel : 1;
+    const durMin = sample && sample.duration_min != null ? sample.duration_min : 240;
     const id = 'sched-' + r.bracket + '-' + r.round;
     html += '<div class="sched-row" id="' + id + '">'
       + '<span class="rlabel">R' + r.round + '</span>'
       + '<input type="datetime-local" data-field="scheduled_at" value="' + escapeHtml(scheduledAt) + '">'
       + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="Click to toggle. 2 tables means matches play in parallel and the round takes half as long.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
+      + '<input type="number" data-field="duration_min" value="' + durMin + '" placeholder="Min" min="15" step="15" title="Duration (minutes) per match in this round. Default 240 = 4 hours.">'
       + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
       + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
       + '</div>';
@@ -1003,6 +1038,8 @@ async function applyRoundSchedule(bracket, round) {
   const payoutV = rowEl.querySelector('input[data-field="payout"]').value.trim();
   const payout  = payoutV === '' ? null : parseInt(payoutV, 10);
   const tipV    = parseInt(rowEl.querySelector('.tables-toggle').dataset.tables, 10) || 1;
+  const durV    = rowEl.querySelector('input[data-field="duration_min"]').value.trim();
+  const dur     = durV === '' ? 240 : parseInt(durV, 10);
 
   // Snapshot to roll back on failure.
   const snapshot = JSON.stringify(_activeMatchTournament.matches);
@@ -1015,6 +1052,7 @@ async function applyRoundSchedule(bracket, round) {
     if (dtV) { m.day = null; m.time = null; }
     m.payout = payout;
     m.tables_in_parallel = tipV;
+    m.duration_min = dur;
     touched++;
   }
 
@@ -1034,6 +1072,7 @@ async function applyRoundSchedule(bracket, round) {
       applyBtn.disabled = false;
     }, 1800);
     renderMatchesEditor();
+    renderCapacityAnalyzer();
   } catch (e) {
     _activeMatchTournament.matches = JSON.parse(snapshot);
     applyBtn.textContent = 'Apply';
@@ -1072,6 +1111,127 @@ async function renumberAllTables() {
       }
     }
   });
+}
+
+/* ── Capacity analyzer ─────────────────────
+ *  Walks every non-bye match in the active tournament, computes its
+ *  [effective_start, effective_end] interval, then buckets demand into
+ *  30-min slots. Compares each bucket's count to the venue's total_tables.
+ *  Red rows when demand exceeds capacity. */
+function computeMatchInterval(m) {
+  if (!m.scheduled_at) return null;
+  const baseStart = new Date(m.scheduled_at);
+  if (isNaN(baseStart.getTime())) return null;
+  const duration = m.duration_min != null ? m.duration_min : 240;
+  const tip = m.tables_in_parallel || 1;
+  // Slot index within bracket+round = position 0..N-1 in slot order.
+  // Determine by looking at sibling matches in the same round.
+  const wave = Math.floor((m._slotIdx || 0) / tip);
+  const start = new Date(baseStart.getTime() + wave * duration * 60 * 1000);
+  const end   = new Date(start.getTime() + duration * 60 * 1000);
+  return { start, end, m };
+}
+
+function fmtSlot(d) {
+  return d.toLocaleDateString('en-US', { weekday: 'short' })
+       + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+async function renderCapacityAnalyzer() {
+  const body = document.getElementById('capacityBody');
+  const status = document.getElementById('capacityStatus');
+  body.innerHTML = '<p class="hint">Loading&hellip;</p>';
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,name,slug,venue_name,total_tables,matches', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    if (!list.length) {
+      body.innerHTML = '<p class="hint">No live tournament. Generate one above.</p>';
+      status.textContent = '';
+      return;
+    }
+    const t = list[0];
+    const cap = t.total_tables != null ? t.total_tables : null;
+    const matches = (Array.isArray(t.matches) ? t.matches : []).filter(m => !m.is_bye);
+
+    // Assign per-round slot indexes (0..N-1) so the wave math works.
+    const groups = {};
+    for (const m of matches) {
+      const key = m.bracket + '/' + m.round;
+      (groups[key] = groups[key] || []).push(m);
+    }
+    for (const k in groups) {
+      groups[k].sort((a, b) => a.slot - b.slot);
+      groups[k].forEach((m, i) => { m._slotIdx = i; });
+    }
+
+    const intervals = matches.map(computeMatchInterval).filter(Boolean);
+    if (!intervals.length) {
+      body.innerHTML = '<p class="hint">No matches have a scheduled start yet. Set times in the <strong>Schedule by round</strong> card above.</p>';
+      status.textContent = '';
+      return;
+    }
+
+    // 30-min bucket sweep
+    const SLOT_MIN = 30;
+    const SLOT_MS  = SLOT_MIN * 60 * 1000;
+    let minT = Infinity, maxT = -Infinity;
+    for (const it of intervals) {
+      if (it.start.getTime() < minT) minT = it.start.getTime();
+      if (it.end.getTime()   > maxT) maxT = it.end.getTime();
+    }
+    // Round down to nearest slot boundary
+    minT = Math.floor(minT / SLOT_MS) * SLOT_MS;
+    maxT = Math.ceil(maxT / SLOT_MS) * SLOT_MS;
+
+    const rows = [];
+    let maxDemand = 0;
+    for (let t0 = minT; t0 < maxT; t0 += SLOT_MS) {
+      const t1 = t0 + SLOT_MS;
+      const active = intervals.filter(it => it.start.getTime() < t1 && it.end.getTime() > t0);
+      if (active.length > maxDemand) maxDemand = active.length;
+      rows.push({
+        start: new Date(t0),
+        count: active.length,
+        ids: active.map(it => 'M' + (it.m.match_no || '?')).join(', ')
+      });
+    }
+
+    const venueLine = (t.venue_name || '(no venue set)') + ' &middot; '
+      + (cap != null ? cap + ' tables' : '<span style="color:var(--danger)">capacity not set</span>');
+    status.innerHTML = venueLine;
+
+    const overflowSlots = cap != null ? rows.filter(r => r.count > cap).length : 0;
+    const overflowNote = cap != null && overflowSlots > 0
+      ? '<p class="validation-banner" style="margin:8px 0">⚠ ' + overflowSlots + ' time slot' + (overflowSlots === 1 ? '' : 's') + ' exceed capacity (' + cap + ' tables). Reduce overlap by adjusting round start times or table assignments.</p>'
+      : (cap != null ? '<p class="validation-banner ok" style="margin:8px 0">Within capacity at every slot</p>' : '<p class="hint" style="margin:8px 0">Set the venue\'s <strong>Total tables</strong> in the tournament edit modal to enable capacity checking.</p>');
+
+    const tableHtml = '<table class="table capacity-table">'
+      + '<thead><tr><th style="width:200px">Time slot</th><th style="width:80px">Demand</th><th style="width:200px">Bar</th><th>Matches</th></tr></thead>'
+      + '<tbody>'
+      + rows.map(rw => {
+          const over = cap != null && rw.count > cap;
+          const atCap = cap != null && rw.count === cap;
+          const rowCls = over ? 'over' : (atCap ? 'at-cap' : '');
+          const widthPct = cap ? Math.min(100, Math.round(rw.count * 100 / cap)) : Math.round(rw.count * 100 / Math.max(1, maxDemand));
+          const tag = cap == null
+            ? '<span class="hint">' + rw.count + '</span>'
+            : (over ? '<span class="over-tag">+' + (rw.count - cap) + ' over</span>'
+              : (atCap ? '<span class="ok-tag">at cap</span>' : '<span class="ok-tag">ok</span>'));
+          return '<tr class="' + rowCls + '">'
+            + '<td>' + escapeHtml(fmtSlot(rw.start)) + '</td>'
+            + '<td><strong>' + rw.count + '</strong> / ' + (cap != null ? cap : '?') + ' &nbsp; ' + tag + '</td>'
+            + '<td><span class="demand-bar' + (over ? ' over' : '') + '" style="width:' + widthPct + '%"></span></td>'
+            + '<td class="matches-cell">' + escapeHtml(rw.ids) + '</td>'
+            + '</tr>';
+        }).join('')
+      + '</tbody></table>';
+
+    body.innerHTML = overflowNote + '<div class="table-wrap">' + tableHtml + '</div>';
+  } catch (e) {
+    body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
+    status.textContent = '';
+  }
 }
 
 function renderMatchesEditor() {
@@ -1424,9 +1584,65 @@ async function doClearAllMatchResults(active) {
     await sb('PATCH', 'tournaments?id=eq.' + active.id, { matches: cleared });
     loadTournaments();
     loadMatchesView();
+    renderCapacityAnalyzer();
   } catch (e) {
     alert('Clear failed: ' + e.message);
   }
+}
+
+/* ── Venues catalog ───────────────────────
+ *  Reusable host locations. When a tournament's venue name matches an
+ *  existing venue, we link via venue_id and pre-fill address + table count.
+ *  Typing a new name + saving creates a new venue row for future use. */
+let _venuesByName = {};
+
+async function loadVenues() {
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/venues?select=id,name,address,total_tables&order=name.asc', { headers: HEADERS_READ });
+    if (!r.ok) return;
+    const list = await r.json();
+    _venuesByName = {};
+    for (const v of list) _venuesByName[v.name.toLowerCase()] = v;
+    const dl = document.getElementById('venueList');
+    if (dl) dl.innerHTML = list.map(v => '<option value="' + escapeHtml(v.name) + '">').join('');
+  } catch (e) { /* non-fatal */ }
+}
+
+function maybeAutofillVenue() {
+  const name = (document.getElementById('tEditVenueName').value || '').trim();
+  if (!name) return;
+  const v = _venuesByName[name.toLowerCase()];
+  if (!v) return;
+  // Only autofill empty fields so we don't clobber edits in progress.
+  const addr = document.getElementById('tEditVenueAddress');
+  const tt   = document.getElementById('tEditTotalTables');
+  if (!addr.value && v.address) addr.value = v.address;
+  if (!tt.value   && v.total_tables) tt.value = v.total_tables;
+}
+
+async function ensureVenue(name, address, totalTables) {
+  if (!name) return null;
+  const existing = _venuesByName[name.toLowerCase()];
+  if (existing) {
+    // Update if any field changed.
+    const patch = {};
+    if (address && address !== existing.address) patch.address = address;
+    if (totalTables != null && totalTables !== existing.total_tables) patch.total_tables = totalTables;
+    if (Object.keys(patch).length) {
+      try { await sb('PATCH', 'venues?id=eq.' + existing.id, patch); } catch (_) {}
+      Object.assign(existing, patch);
+    }
+    return existing.id;
+  }
+  // Create new.
+  const row = { name, address: address || null, total_tables: totalTables != null ? totalTables : null };
+  const created = await sb('POST', 'venues', row);
+  const c = Array.isArray(created) ? created[0] : created;
+  if (c) {
+    _venuesByName[c.name.toLowerCase()] = c;
+    return c.id;
+  }
+  return null;
 }
 
 /* ── Tournament edit modal ──────────────── */
@@ -1448,6 +1664,7 @@ async function openTournamentEditModal(tournamentId, focusStatus) {
     document.getElementById('tEditEndDate').value        = t.end_date || '';
     document.getElementById('tEditVenueName').value      = t.venue_name || '';
     document.getElementById('tEditVenueAddress').value   = t.venue_address || '';
+    document.getElementById('tEditTotalTables').value    = t.total_tables != null ? t.total_tables : '';
     document.getElementById('tEditDirectorName').value   = t.director_name || '';
     document.getElementById('tEditDirectorContact').value= t.director_contact || '';
     document.getElementById('tEditDescription').value    = t.description || '';
@@ -1488,14 +1705,19 @@ async function saveTournamentEdit() {
     bracketChampText: document.getElementById('tEditBracketChamp').value.trim() || 'Bracket Champ',
     championText:     document.getElementById('tEditChampion').value.trim()     || 'Champion'
   };
+  const venueName = document.getElementById('tEditVenueName').value.trim();
+  const venueAddr = document.getElementById('tEditVenueAddress').value.trim();
+  const totalTblV = document.getElementById('tEditTotalTables').value.trim();
+  const totalTbl  = totalTblV === '' ? null : parseInt(totalTblV, 10);
   const patch = {
     name:             document.getElementById('tEditName').value.trim(),
     status:           status,
     is_active:        status === 'live',
     start_date:       document.getElementById('tEditStartDate').value || null,
     end_date:         document.getElementById('tEditEndDate').value || null,
-    venue_name:       document.getElementById('tEditVenueName').value.trim() || null,
-    venue_address:    document.getElementById('tEditVenueAddress').value.trim() || null,
+    venue_name:       venueName || null,
+    venue_address:    venueAddr || null,
+    total_tables:     totalTbl,
     director_name:    document.getElementById('tEditDirectorName').value.trim() || null,
     director_contact: document.getElementById('tEditDirectorContact').value.trim() || null,
     description:      document.getElementById('tEditDescription').value.trim() || null,
@@ -1507,10 +1729,17 @@ async function saveTournamentEdit() {
     return;
   }
   try {
+    // Save venue first (creates or updates), then link from tournament.
+    if (venueName) {
+      const vId = await ensureVenue(venueName, venueAddr, totalTbl);
+      if (vId) patch.venue_id = vId;
+    }
     await sb('PATCH', 'tournaments?id=eq.' + _editingTournamentId, patch);
     closeTournamentEditModal();
     loadTournaments();
     loadMatchesView();
+    renderCapacityAnalyzer();
+    loadVenues();  // refresh datalist
   } catch (e) {
     setStatus('tournamentEditStatus', 'Save failed: ' + e.message, 'err');
   }
@@ -1718,6 +1947,10 @@ async function init() {
   renderTeams();
   loadTournaments();
   loadMatchesView();
+  loadVenues();
+  renderCapacityAnalyzer();
+  document.getElementById('tEditVenueName').addEventListener('change', maybeAutofillVenue);
+  document.getElementById('tEditVenueName').addEventListener('blur', maybeAutofillVenue);
 }
 document.addEventListener('DOMContentLoaded', init);
 </script>

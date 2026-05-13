@@ -437,7 +437,30 @@
   .staff-modal-head .mno { font-size: 1.05rem; font-weight: 900; color: var(--spm-accent); }
   .staff-modal-head .ctx { font-size: 0.74rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 3px; }
   .staff-modal-body { padding: 16px 18px; }
-  .staff-modal-body .q { font-size: 0.84rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .staff-modal-body .q { font-size: 0.84rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 10px; }
+  .staff-overrides {
+    display: grid;
+    grid-template-columns: 1fr 88px auto;
+    gap: 8px;
+    align-items: end;
+    padding: 10px 12px;
+    background: #fafbfc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .staff-overrides label {
+    display: flex; flex-direction: column; gap: 3px;
+    font-size: 0.7rem; font-weight: 800; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .staff-overrides input {
+    padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 5px;
+    font-size: 0.86rem; font-family: inherit;
+  }
+  .staff-btn.save { background: var(--spm-accent); color: #fff; border-color: var(--spm-accent); }
+  .staff-btn.save:hover { opacity: 0.92; }
+  .staff-btn.save.success { background: var(--success); border-color: var(--success); }
   .staff-team-btn {
     display: flex; align-items: center; gap: 10px;
     width: 100%;
@@ -628,6 +651,11 @@
       <div class="ctx" id="staffModalCtx"></div>
     </div>
     <div class="staff-modal-body">
+      <div class="staff-overrides">
+        <label>Start <input type="datetime-local" id="staffStartInput"></label>
+        <label>Table <input type="number" id="staffTableInput" min="1" placeholder="—"></label>
+        <button type="button" class="staff-btn save" id="staffSaveOverridesBtn">Save</button>
+      </div>
       <div class="q">Who won?</div>
       <button type="button" class="staff-team-btn" id="staffPickTop"></button>
       <button type="button" class="staff-team-btn" id="staffPickBot"></button>
@@ -800,6 +828,7 @@ function setupStaffMode() {
   document.getElementById('staffClearBtn').addEventListener('click', () => recordWinner(null));
   document.getElementById('staffPickTop').addEventListener('click', () => recordWinner('top'));
   document.getElementById('staffPickBot').addEventListener('click', () => recordWinner('bot'));
+  document.getElementById('staffSaveOverridesBtn').addEventListener('click', saveStaffOverrides);
   document.getElementById('staffModal').addEventListener('click', (e) => {
     if (e.target.id === 'staffModal') closeStaffModal();    // click outside the box
   });
@@ -813,22 +842,6 @@ let _staffEditingMatchId = null;
 function openStaffModal(matchId) {
   const m = _tournament && _tournament.all.find(x => x.id === matchId);
   if (!m) return;
-  // Can't record a winner while either entrant is waiting on an upstream
-  // match — there's no game to score yet. Toast the dependency and bail.
-  if (!m.top || !m.bottom) {
-    const waitOn = [];
-    if (!m.top) {
-      const src = m.topFromMatch || m.topFromMatchLoser;
-      if (src && src.globalNo) waitOn.push('M' + src.globalNo);
-    }
-    if (!m.bottom) {
-      const src = m.botFromMatch || m.botFromMatchLoser;
-      if (src && src.globalNo) waitOn.push('M' + src.globalNo);
-    }
-    const tail = waitOn.length ? ' on ' + waitOn.join(' and ') : '';
-    showToast('Waiting' + tail + ' before scoring this match', 'err');
-    return;
-  }
   _staffEditingMatchId = matchId;
   const modal = document.getElementById('staffModal');
   document.getElementById('staffModalMno').textContent =
@@ -841,6 +854,13 @@ function openStaffModal(matchId) {
   if (m.time) ctx.push(m.time);
   if (m.table_no) ctx.push('Table ' + m.table_no);
   document.getElementById('staffModalCtx').textContent = ctx.join(' · ');
+
+  // Override fields: Start datetime + Table number.
+  document.getElementById('staffStartInput').value = m.scheduled_at ? m.scheduled_at.slice(0, 16) : '';
+  document.getElementById('staffTableInput').value = m.table_no != null ? m.table_no : '';
+  const saveBtn = document.getElementById('staffSaveOverridesBtn');
+  saveBtn.classList.remove('success');
+  saveBtn.textContent = 'Save';
 
   renderStaffPick('staffPickTop', m, 'top');
   renderStaffPick('staffPickBot', m, 'bot');
@@ -885,29 +905,80 @@ function closeStaffModal() {
   _staffEditingMatchId = null;
 }
 
+function readStaffOverrides(md, idx) {
+  const dtV  = document.getElementById('staffStartInput').value;
+  const tblV = document.getElementById('staffTableInput').value.trim();
+  const prev = { scheduled_at: md[idx].scheduled_at || null, table_no: md[idx].table_no != null ? md[idx].table_no : null };
+  md[idx].scheduled_at = dtV || null;
+  md[idx].table_no = tblV === '' ? null : parseInt(tblV, 10);
+  if (dtV) { md[idx].day = null; md[idx].time = null; }
+  return prev;
+}
+
 async function recordWinner(side) {
   if (!_tournament || !_staffEditingMatchId) return;
   const md = _tournament.matchData;
   const idx = md.findIndex(x => x.id === _staffEditingMatchId);
   if (idx < 0) return;
+  // Disallow setting a winner when either team is still TBD.
+  const m = _tournament.all.find(x => x.id === _staffEditingMatchId);
+  if (side && (!m.top || !m.bottom)) {
+    showToast('Both teams must be determined before recording a winner', 'err');
+    return;
+  }
   const prevSide = md[idx].winner_side || null;
-  if (prevSide === side) { closeStaffModal(); return; }
+  if (prevSide === side) {
+    // No-op for winner; still flush any pending override edits.
+    await saveStaffOverrides();
+    return;
+  }
+  const prevOverrides = readStaffOverrides(md, idx);
   md[idx].winner_side = side;
 
-  // Re-reconstruct + resolve so downstream propagates immediately.
   reapplyTournamentInMemory();
   renderTournament();
   closeStaffModal();
 
-  // Persist. Last-write-wins for now.
   try {
     await saveTournamentMatches();
     showToast('Saved', 'ok');
   } catch (e) {
-    // Roll back and re-render with the previous state.
     md[idx].winner_side = prevSide;
+    md[idx].scheduled_at = prevOverrides.scheduled_at;
+    md[idx].table_no = prevOverrides.table_no;
     reapplyTournamentInMemory();
     renderTournament();
+    showToast('Save failed: ' + e.message, 'err');
+  }
+}
+
+async function saveStaffOverrides() {
+  if (!_tournament || !_staffEditingMatchId) return;
+  const md = _tournament.matchData;
+  const idx = md.findIndex(x => x.id === _staffEditingMatchId);
+  if (idx < 0) return;
+  const prev = readStaffOverrides(md, idx);
+  reapplyTournamentInMemory();
+  renderTournament();
+  const btn = document.getElementById('staffSaveOverridesBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    await saveTournamentMatches();
+    btn.classList.add('success');
+    btn.textContent = 'Saved ✓';
+    setTimeout(() => {
+      btn.classList.remove('success');
+      btn.textContent = 'Save';
+      btn.disabled = false;
+    }, 1600);
+  } catch (e) {
+    md[idx].scheduled_at = prev.scheduled_at;
+    md[idx].table_no = prev.table_no;
+    reapplyTournamentInMemory();
+    renderTournament();
+    btn.disabled = false;
+    btn.textContent = 'Save';
     showToast('Save failed: ' + e.message, 'err');
   }
 }
