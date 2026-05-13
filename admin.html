@@ -453,8 +453,11 @@
   <div class="modal-box" style="max-width:580px;max-height:85vh;overflow-y:auto">
     <div class="modal-title" id="tournamentEditTitle">Edit tournament</div>
     <div class="t-edit-grid">
-      <label>Slug <span class="hint" style="font-weight:600">(immutable)</span>
-        <input type="text" id="tEditSlug" readonly style="background:#fafbfc;font-family:'SF Mono',Consolas,Menlo,monospace;color:var(--spm-accent)">
+      <label>Slug <span class="hint" style="font-weight:600">(URL identifier — derived from name)</span>
+        <div style="display:flex;gap:6px;align-items:stretch">
+          <input type="text" id="tEditSlug" readonly style="flex:1 1 auto;background:#fafbfc;font-family:'SF Mono',Consolas,Menlo,monospace;color:var(--spm-accent)">
+          <button type="button" class="btn btn-outline btn-sm" onclick="regenerateSlugFromName()" style="flex:0 0 auto">Regenerate from name</button>
+        </div>
       </label>
       <label>Name
         <input type="text" id="tEditName" placeholder="SPM Spring 2026">
@@ -904,10 +907,12 @@ function slugify(s) {
     || 'tournament';
 }
 
-async function uniqueSlug(base) {
+async function uniqueSlug(base, excludeId) {
   for (let i = 0; i < 100; i++) {
     const candidate = i === 0 ? base : base + '-' + i;
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?slug=eq.' + encodeURIComponent(candidate) + '&select=id&limit=1', { headers: HEADERS_READ });
+    let q = 'tournaments?slug=eq.' + encodeURIComponent(candidate) + '&select=id&limit=1';
+    if (excludeId != null) q += '&id=not.eq.' + excludeId;
+    const r = await fetch(SB_URL + '/rest/v1/' + q, { headers: HEADERS_READ });
     if (!r.ok) throw new Error('Slug check failed: HTTP ' + r.status);
     const arr = await r.json();
     if (!arr.length) return candidate;
@@ -1919,8 +1924,14 @@ async function saveTournamentEdit() {
   const venueAddr = document.getElementById('tEditVenueAddress').value.trim();
   const totalTblV = document.getElementById('tEditTotalTables').value.trim();
   const totalTbl  = totalTblV === '' ? null : parseInt(totalTblV, 10);
+  const slugVal = document.getElementById('tEditSlug').value.trim();
+  if (!slugVal) {
+    setStatus('tournamentEditStatus', 'Slug is required.', 'err');
+    return;
+  }
   const patch = {
     name:             document.getElementById('tEditName').value.trim(),
+    slug:             slugVal,
     status:           status,
     is_active:        status === 'live',
     start_date:       document.getElementById('tEditStartDate').value || null,
@@ -1953,6 +1964,40 @@ async function saveTournamentEdit() {
   } catch (e) {
     setStatus('tournamentEditStatus', 'Save failed: ' + e.message, 'err');
   }
+}
+
+/* Rebuild the slug from the current Name input. Per the slug-conventions
+ * memory rule, slugs are usually immutable post-creation so permalinks stay
+ * stable — this confirms before regenerating to make that trade-off explicit. */
+async function regenerateSlugFromName() {
+  if (!_editingTournamentId) return;
+  const name = (document.getElementById('tEditName').value || '').trim();
+  if (!name) {
+    setStatus('tournamentEditStatus', 'Enter a name first.', 'err');
+    return;
+  }
+  const base = slugify(name);
+  let nextSlug;
+  try {
+    nextSlug = await uniqueSlug(base, _editingTournamentId);
+  } catch (e) {
+    setStatus('tournamentEditStatus', 'Slug generation failed: ' + e.message, 'err');
+    return;
+  }
+  const current = document.getElementById('tEditSlug').value;
+  if (nextSlug === current) {
+    setStatus('tournamentEditStatus', 'Slug is already derived from "' + name + '" — nothing to regenerate.', 'progress');
+    return;
+  }
+  confirmModal({
+    title: 'Regenerate slug?',
+    message: 'New slug will be "' + nextSlug + '". Any existing links pointing at "' + current + '" will 404 after you save. Continue?',
+    okText: 'Regenerate',
+    onOk: () => {
+      document.getElementById('tEditSlug').value = nextSlug;
+      setStatus('tournamentEditStatus', 'Slug regenerated. Click Save to apply.', 'progress');
+    }
+  });
 }
 
 function deleteEditingTournament() {
