@@ -285,6 +285,32 @@
   .match-foot .when .pay { color: #15803d; font-weight: 900; font-variant-numeric: tabular-nums; }
   .match-foot .table     { color: var(--spm-accent); font-weight: 800; flex: 0 0 auto; }
 
+  /* Bye card — de-emphasized version of a match card. Same dimensions so
+     card spacing stays uniform, but lighter background, italic "BYE" row,
+     and the seeded team's advancement arrow instead of a W/L chip. */
+  .match.bye { background: linear-gradient(180deg, #fafbfc, #f4f5f7); }
+  .match.bye .mno.bye-label {
+    color: var(--muted);
+    font-weight: 800;
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  .match.bye .match-row.winner { background: rgba(0,49,161,0.04); }
+  .match.bye .match-row.winner .trophy {
+    opacity: 1; color: var(--spm-accent); font-weight: 900;
+    font-size: 1.05rem;
+  }
+  .match.bye .match-row.bye-row .name {
+    color: var(--muted); font-style: italic; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    font-size: 0.78rem;
+  }
+  .match.bye .match-row.bye-row .seed,
+  .match.bye .match-row.bye-row .team-num {
+    opacity: 0.45; background: transparent; color: var(--muted);
+  }
+
   /* Jump-to flash — when a dest chip is clicked, the target match
      pulses with an SPM red glow for 1.8s. */
   @keyframes matchJumpFlash {
@@ -459,34 +485,38 @@ function buildTwelveBracket(label, teams) {
   const seats = SEED_ORDER_16.map(s => s <= 12 ? teams[s - 1] : null);
 
   const matches = [];
-  // R1: 8 seat-pairs, but only emit a match where BOTH sides are real teams.
-  // The 4 byes "vanish" — their seeded team carries forward to R2.
-  // slot = index AMONG real matches (0..3) for consistent 1-slot spacing.
+  // 16-slot layout — 4 real R1 matches + 4 visible byes. Every R1 seat-pair
+  // becomes its own card. Byes are rendered as their own (de-emphasized)
+  // card showing the seeded team auto-advancing.
   const r1 = [];
-  let realIdx = 0;
   for (let i = 0; i < 8; i++) {
     const top = seats[i * 2], bot = seats[i * 2 + 1];
     if (top && bot) {
-      const m = { id: label + '-R1-M' + (realIdx + 1),
-                  bracket: label, round: 1, slot: realIdx, seatPair: i,
+      const m = { id: label + '-R1-M' + i,
+                  bracket: label, round: 1, slot: i, bye: false,
                   top, bottom: bot, topFromMatch: null, botFromMatch: null,
                   topFromMatchLoser: null, botFromMatchLoser: null,
                   winner: null, loser: null, topWins: null };
-      r1.push(m); matches.push(m); realIdx++;
+      r1.push(m); matches.push(m);
     } else {
-      // Bye placeholder — not rendered, just feeds the advanced team into R2.
-      r1.push({ bye: true, slot: i, seatPair: i, advanceTeam: top || bot });
+      const seededTeam = top || bot;
+      const m = { id: label + '-R1-BYE' + i,
+                  bracket: label, round: 1, slot: i, bye: true,
+                  top: seededTeam, bottom: null,
+                  topFromMatch: null, botFromMatch: null,
+                  topFromMatchLoser: null, botFromMatchLoser: null,
+                  winner: seededTeam, loser: null, topWins: true };
+      r1.push(m); matches.push(m);
     }
   }
-  // R2: 4 matches. Each pairs slots (2i, 2i+1) from R1.
+  // R2: 4 matches. Each pairs r1[2i] and r1[2i+1] — both feeders are real
+  // match-objects now (real R1 or a bye-card), so always wire via from-match.
   const r2 = [];
   for (let i = 0; i < 4; i++) {
     const a = r1[i * 2], b = r1[i * 2 + 1];
-    const m = { id: label + '-R2-M' + (i + 1), bracket: label, round: 2, slot: i,
-                top: a.bye ? a.advanceTeam : null,
-                bottom: b.bye ? b.advanceTeam : null,
-                topFromMatch: a.bye ? null : a,
-                botFromMatch: b.bye ? null : b,
+    const m = { id: label + '-R2-M' + (i + 1), bracket: label, round: 2, slot: i, bye: false,
+                top: null, bottom: null,
+                topFromMatch: a, botFromMatch: b,
                 topFromMatchLoser: null, botFromMatchLoser: null,
                 winner: null, loser: null, topWins: null };
     r2.push(m); matches.push(m);
@@ -570,8 +600,9 @@ function buildSixtyFour(A, B) {
 function resolveTournament(t) {
   // Play-order list: 12A R1, 12B R1, 12A R2, 12B R2, 64 R1, 12A R3, 12B R3,
   //                  64 R2, 64 R3, 12A R4, 12B R4, 64 R4, 64 R5, 64 R6.
+  // Byes are NOT numbered (no actual match is played).
   const order = [];
-  const pick = (b, r) => order.push(...b.matches.filter(m => m.round === r));
+  const pick = (b, r) => order.push(...b.matches.filter(m => m.round === r && !m.bye));
   pick(t.A, 1); pick(t.B, 1);
   pick(t.A, 2); pick(t.B, 2);
   pick(t.T64, 1);
@@ -604,10 +635,11 @@ function resolveTournament(t) {
     }
   }
 
-  // Annotate destinations for the card header.
-  //   loserDropTo:        where THIS match's loser drops in (cross-bracket).
-  //   winnerAdvancesTo:   where THIS match's winner plays next (any bracket).
-  for (const m of order) {
+  // Annotate destinations for the card header. Iterate ALL matches in the
+  // tournament (including byes) so byes get winnerAdvancesTo too — they
+  // never appear in `order`, but they ARE feeders of R2 matches.
+  const allMatches = [].concat(t.A.matches, t.B.matches, t.T64.matches);
+  for (const m of allMatches) {
     if (m.topFromMatchLoser) m.topFromMatchLoser.loserDropTo = m;
     if (m.botFromMatchLoser) m.botFromMatchLoser.loserDropTo = m;
     if (m.topFromMatch) m.topFromMatch.winnerAdvancesTo = m;
@@ -734,18 +766,21 @@ function matchYUnits(m) {
     if (m.round === 5) return m.slot * 4 + 2;   // aligned with R4 feeder
     if (m.round === 6) return 4;                // midpoint of R5 pair
   } else {
-    if (m.round === 1) return m.slot + 0.5;     // 0.5, 1.5, 2.5, 3.5
-    if (m.round === 2) return m.slot + 0.5;     // aligned with R1 feeder
-    if (m.round === 3) return m.slot * 2 + 1;   // midpoint of R2 pair: 1, 3
-    if (m.round === 4) return 2;                // midpoint of R3 pair
+    // 12-team modified SE rendered as full 16-slot bracket (4 byes shown).
+    if (m.round === 1) return m.slot + 0.5;     // 0.5, 1.5, …, 7.5 (slot = seat-pair index)
+    if (m.round === 2) return m.slot * 2 + 1;   // midpoint of R1 pair: 1, 3, 5, 7
+    if (m.round === 3) return m.slot * 4 + 2;   // midpoint of R2 pair: 2, 6
+    if (m.round === 4) return 4;                // midpoint of R3 pair
   }
   return 0.5;
 }
-function bracketSlotsFor(bracket) {
-  return bracket.label === '64' ? 8 : 4;
+function bracketSlotsFor(_bracket) {
+  // 12-team-as-16 and 64-team both use 8 lanes in R1 → 8 slots per bracket.
+  return 8;
 }
 
 function matchHtml(m, table, isFinalOfBracket, cfg) {
+  if (m.bye) return byeMatchHtml(m);
   const tnum = m.globalNo ? 'M' + m.globalNo : '—';
   const y = matchYUnits(m);
   const topWin = m.topWins === true;
@@ -803,6 +838,39 @@ function matchHtml(m, table, isFinalOfBracket, cfg) {
     + '</div>'
     + rows
     + foot
+    + '</div>';
+}
+
+function byeMatchHtml(m) {
+  const y = matchYUnits(m);
+  const team = m.top;
+  let advanceChip = '';
+  if (m.winnerAdvancesTo) {
+    advanceChip = '<a class="dest-chip win" data-jump="' + m.winnerAdvancesTo.globalNo
+      + '" href="#m' + m.winnerAdvancesTo.globalNo
+      + '" title="Auto-advances to M' + m.winnerAdvancesTo.globalNo + '">&rarr; M'
+      + m.winnerAdvancesTo.globalNo + '</a>';
+  }
+  return '<div class="match bye" data-match-id="' + m.id + '" data-global-no="" style="--y:' + y + '">'
+    + '<div class="match-top">'
+    +   '<span class="mno bye-label">BYE</span>'
+    +   '<span class="destinations">' + advanceChip + '</span>'
+    + '</div>'
+    + '<div class="match-rows">'
+    +   '<div class="match-row winner" data-team="' + esc((team.name || '').toLowerCase()) + '" data-team-num="' + team.number + '">'
+    +     '<span class="seed">' + esc(team.seed) + '</span>'
+    +     '<span class="team-num">' + pad4(team.number) + '</span>'
+    +     '<span class="name" title="' + esc(team.name) + '">' + esc(team.name) + '</span>'
+    +     '<span class="trophy" aria-label="Advances">&#x21E2;</span>'
+    +   '</div>'
+    +   '<div class="match-row bye-row">'
+    +     '<span class="seed">&mdash;</span>'
+    +     '<span class="team-num">&mdash;</span>'
+    +     '<span class="name">BYE</span>'
+    +     '<span class="trophy"></span>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="match-foot"><span class="when"></span><span class="table"></span></div>'
     + '</div>';
 }
 
