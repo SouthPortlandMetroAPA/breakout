@@ -930,17 +930,33 @@ function combineDateTime(date, time) {
   if (!date || !time) return '';
   return date + 'T' + time;
 }
-function buildTimeOptions(selected) {
-  const opts = ['<option value="">—</option>'];
-  for (let h = 0; h < 24; h++) {
-    for (let m = 0; m < 60; m += 30) {
-      const val = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
-      let dh = h % 12; if (dh === 0) dh = 12;
-      const display = dh + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
-      opts.push('<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + display + '</option>');
-    }
+function buildTimeOptions(selected, startHour, endHour) {
+  // Default range matches tournament-typical play hours (9 AM to 9 PM).
+  // Out-of-range saved times are preserved as a "(out of range)" option.
+  const sH = startHour != null ? startHour : 9;
+  const eH = endHour   != null ? endHour   : 21;
+  const inRange = [];
+  let foundSelected = !selected;
+  for (let totalMin = sH * 60; totalMin <= eH * 60; totalMin += 30) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    const val = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    let dh = h % 12; if (dh === 0) dh = 12;
+    const display = dh + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+    if (val === selected) foundSelected = true;
+    inRange.push('<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + display + '</option>');
   }
-  return opts.join('');
+  const result = ['<option value="">—</option>'];
+  if (!foundSelected && selected) {
+    const parts = selected.split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    let dh = h % 12; if (dh === 0) dh = 12;
+    const display = dh + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+    result.push('<option value="' + selected + '" selected>' + display + ' (out of range)</option>');
+  }
+  result.push(...inRange);
+  return result.join('');
 }
 function buildDurationOptions(selected) {
   const opts = [];
