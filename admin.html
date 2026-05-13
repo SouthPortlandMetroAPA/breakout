@@ -1028,6 +1028,17 @@ function toggleTablesInParallel(btn) {
   const next = cur === 1 ? 2 : 1;
   btn.dataset.tables = next;
   btn.textContent = next + ' table' + (next === 1 ? '' : 's');
+  // Auto-adjust the duration in the same row: halve when going to 2 tables
+  // (round finishes twice as fast in parallel), double when going back to 1.
+  // Duration here represents the round's TOTAL expected time.
+  const row = btn.parentElement;
+  const durInput = row && row.querySelector('input[data-field="duration_min"]');
+  if (durInput && durInput.value !== '') {
+    const curDur = parseInt(durInput.value, 10);
+    if (Number.isInteger(curDur) && curDur > 0) {
+      durInput.value = next === 2 ? Math.round(curDur / 2) : curDur * 2;
+    }
+  }
 }
 
 async function applyRoundSchedule(bracket, round) {
@@ -1113,22 +1124,39 @@ async function renumberAllTables() {
   });
 }
 
-/* ── Capacity analyzer ─────────────────────
- *  Walks every non-bye match in the active tournament, computes its
- *  [effective_start, effective_end] interval, then buckets demand into
- *  30-min slots. Compares each bucket's count to the venue's total_tables.
- *  Red rows when demand exceeds capacity. */
-function computeMatchInterval(m) {
+/* ── Schedule math ─────────────────────────
+ *  duration_min represents the ROUND's TOTAL expected duration. When
+ *  matches play in waves (tables_in_parallel > 1), each match consumes
+ *  (duration_min / wave_count) of that total. */
+function indexMatchSlots(matches) {
+  const groups = {};
+  for (const m of matches) {
+    if (m.is_bye) continue;
+    const key = m.bracket + '/' + m.round;
+    (groups[key] = groups[key] || []).push(m);
+  }
+  for (const k in groups) {
+    groups[k].sort((a, b) => a.slot - b.slot);
+    groups[k].forEach((m, i) => { m._slotIdx = i; });
+  }
+  const counts = {};
+  for (const k in groups) counts[k] = groups[k].length;
+  return counts;
+}
+
+function computeMatchInterval(m, roundCounts) {
   if (!m.scheduled_at) return null;
   const baseStart = new Date(m.scheduled_at);
   if (isNaN(baseStart.getTime())) return null;
-  const duration = m.duration_min != null ? m.duration_min : 240;
+  const totalRoundDur = m.duration_min != null ? m.duration_min : 240;
   const tip = m.tables_in_parallel || 1;
-  // Slot index within bracket+round = position 0..N-1 in slot order.
-  // Determine by looking at sibling matches in the same round.
+  const roundKey = m.bracket + '/' + m.round;
+  const numMatches = (roundCounts && roundCounts[roundKey]) || 1;
+  const numWaves = Math.max(1, Math.ceil(numMatches / tip));
+  const perMatchDur = totalRoundDur / numWaves;
   const wave = Math.floor((m._slotIdx || 0) / tip);
-  const start = new Date(baseStart.getTime() + wave * duration * 60 * 1000);
-  const end   = new Date(start.getTime() + duration * 60 * 1000);
+  const start = new Date(baseStart.getTime() + wave * perMatchDur * 60 * 1000);
+  const end   = new Date(start.getTime() + perMatchDur * 60 * 1000);
   return { start, end, m };
 }
 
@@ -1153,19 +1181,8 @@ async function renderCapacityAnalyzer() {
     const t = list[0];
     const cap = t.total_tables != null ? t.total_tables : null;
     const matches = (Array.isArray(t.matches) ? t.matches : []).filter(m => !m.is_bye);
-
-    // Assign per-round slot indexes (0..N-1) so the wave math works.
-    const groups = {};
-    for (const m of matches) {
-      const key = m.bracket + '/' + m.round;
-      (groups[key] = groups[key] || []).push(m);
-    }
-    for (const k in groups) {
-      groups[k].sort((a, b) => a.slot - b.slot);
-      groups[k].forEach((m, i) => { m._slotIdx = i; });
-    }
-
-    const intervals = matches.map(computeMatchInterval).filter(Boolean);
+    const roundCounts = indexMatchSlots(matches);
+    const intervals = matches.map(m => computeMatchInterval(m, roundCounts)).filter(Boolean);
     if (!intervals.length) {
       body.innerHTML = '<p class="hint">No matches have a scheduled start yet. Set times in the <strong>Schedule by round</strong> card above.</p>';
       status.textContent = '';
@@ -1378,6 +1395,46 @@ function validateMatches(matches) {
     color[id] = BLACK;
   }
   for (const m of matches) visit(m.id, []);
+
+  // Schedule dependency check: a downstream match cannot start until its
+  // feeder matches are expected to finish. Computes effective end times
+  // (accounting for tables_in_parallel waves) and flags violations.
+  issues.push(...validateScheduleDependencies(matches));
+  return issues;
+}
+
+function validateScheduleDependencies(matches) {
+  const issues = [];
+  const realMatches = matches.filter(m => !m.is_bye);
+  if (!realMatches.length) return issues;
+  const roundCounts = indexMatchSlots(realMatches);
+  const byId = {};
+  const intervalById = {};
+  for (const m of matches) byId[m.id] = m;
+  for (const m of realMatches) {
+    const iv = computeMatchInterval(m, roundCounts);
+    if (iv) intervalById[m.id] = iv;
+  }
+  const fmtTime = (d) => d.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  for (const m of matches) {
+    if (m.is_bye) continue;
+    const mIv = intervalById[m.id];
+    if (!mIv) continue;
+    const feeders = [];
+    if (m.top_from) feeders.push({ ref: m.top_from, side: 'top' });
+    if (m.bot_from) feeders.push({ ref: m.bot_from, side: 'bot' });
+    for (const f of feeders) {
+      const feeder = byId[f.ref.match_id];
+      if (!feeder || feeder.is_bye) continue;  // byes auto-finish
+      const fIv = intervalById[feeder.id];
+      if (!fIv) continue;  // feeder has no schedule yet
+      if (fIv.end.getTime() > mIv.start.getTime()) {
+        const mLabel = m.match_no ? 'M' + m.match_no : m.id;
+        const fLabel = feeder.match_no ? 'M' + feeder.match_no : feeder.id;
+        issues.push(mLabel + ' starts ' + fmtTime(mIv.start) + ' but feeder ' + fLabel + ' (' + f.side + ') doesn’t finish until ' + fmtTime(fIv.end));
+      }
+    }
+  }
   return issues;
 }
 
