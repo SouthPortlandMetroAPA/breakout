@@ -20,8 +20,8 @@
     --pill: 999px;
     --cell-w: 240px;
     --cell-w-mob: 200px;
-    --round-gap: 64px;
-    --round-gap-mob: 44px;
+    --round-gap: 110px;
+    --round-gap-mob: 72px;
     /* One shared vertical slot unit across every bracket so cards are
        spaced identically regardless of bracket size. Each bracket sets
        its own --bracket-slots (12-team modified = 4 R1 lanes; 64-team
@@ -85,20 +85,33 @@
   .section-title .pill.consolation { background: #6b7280; }
   .section-title .desc { font-weight: 600; color: var(--muted); font-size: 0.78rem; }
 
+  /* Each bracket section gets a horizontal-scroll viewport. It also acts as
+     a pan surface: click-drag to scroll, Shift+wheel for mouse, arrow keys
+     when focused. Native touch scrolling handles mobile. */
   .viewport {
     overflow-x: auto; overflow-y: hidden;
     padding: 4px 16px 24px;
     -webkit-overflow-scrolling: touch;
     scroll-snap-type: x proximity;
+    cursor: grab;
+    outline: none;
   }
-  .viewport::-webkit-scrollbar { height: 9px; }
+  .viewport.panning { cursor: grabbing; user-select: none; }
+  .viewport:focus-visible { box-shadow: inset 0 0 0 2px rgba(0,49,161,0.45); border-radius: 4px; }
+  .viewport::-webkit-scrollbar { height: 10px; }
   .viewport::-webkit-scrollbar-track { background: #e5e7eb; }
   .viewport::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 5px; }
+  .viewport::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+  /* Cards keep default cursor so users can read text without the grab hint. */
+  .viewport .match, .viewport .champion-card { cursor: default; }
 
   .bracket-wrap { position: relative; display: inline-block; min-width: 100%; }
   .connectors { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
-  .bracket { position: relative; display: flex; align-items: stretch; gap: var(--round-gap); }
-  @media (max-width: 767px) { .bracket { gap: var(--round-gap-mob); } }
+  /* padding-left = round-gap gives the first round's cross-bracket source
+     labels somewhere to live (specifically the 64-team R1, where every row
+     comes from another bracket). */
+  .bracket { position: relative; display: flex; align-items: stretch; gap: var(--round-gap); padding-left: var(--round-gap); padding-right: 8px; }
+  @media (max-width: 767px) { .bracket { gap: var(--round-gap-mob); padding-left: var(--round-gap-mob); } }
 
   .round {
     display: flex; flex-direction: column;
@@ -732,11 +745,8 @@ function matchHtml(m, table, isFinalOfBracket, cfg) {
     ? 'L → M' + m.loserDropTo.globalNo
     : (m.bracket === '64' || isFinalOfBracket ? 'Eliminated' : '');
 
-  // For 64-team integration matches, where do entrants come from?
-  const fromBits = [];
-  if (m.topFromMatchLoser) fromBits.push('M' + m.topFromMatchLoser.globalNo + ' loser');
-  if (m.botFromMatchLoser) fromBits.push('M' + m.botFromMatchLoser.globalNo + ' loser');
-  const fromLine = fromBits.length ? ('From ' + fromBits.join(' · ')) : '';
+  // Cross-bracket source annotation is now rendered as a floating SVG
+  // connector in drawConnectorsFor(), not as footer text.
 
   const winnerClass = (m.bracket === '64' && m.round === 6) ? ' dest-out' : ' dest-win';
   const destinations =
@@ -749,8 +759,8 @@ function matchHtml(m, table, isFinalOfBracket, cfg) {
     + '</div>';
 
   const foot = '<div class="match-foot">'
-    +   '<span class="from">' + esc(fromLine || ' ') + '</span>'
-    +   '<span class="table">' + (table ? 'Table ' + table : ' ') + '</span>'
+    +   '<span class="from">&nbsp;</span>'
+    +   '<span class="table">' + (table ? 'Table ' + table : '&nbsp;') + '</span>'
     + '</div>';
 
   const schedule = '<div class="match-schedule">'
@@ -840,22 +850,21 @@ function drawConnectorsFor(wrap, matches) {
     const feeders = [];
     if (m.topFromMatch) feeders.push({ feeder: m.topFromMatch, side: 'top' });
     if (m.botFromMatch) feeders.push({ feeder: m.botFromMatch, side: 'bot' });
-    if (!feeders.length) continue;
 
     const down = getCellGeom(m.id);
     if (!down) continue;
 
+    // Intra-bracket connectors (drawn solid).
     for (const { feeder, side } of feeders) {
       const f = getCellGeom(feeder.id);
       if (!f) continue;
 
-      // Source Y = winner-row of feeder (so the line traces the team that
+      // Source Y = winner-row of feeder (line traces the team that
       // actually advanced). Falls back to cell center when no winner yet.
       let y1 = f.cy;
       if (feeder.topWins === true)  y1 = f.topRowY != null ? f.topRowY : f.cy;
       if (feeder.topWins === false) y1 = f.botRowY != null ? f.botRowY : f.cy;
 
-      // Target Y = the row of the downstream cell this feeder fills.
       const y2 = side === 'top'
         ? (down.topRowY != null ? down.topRowY : down.cy)
         : (down.botRowY != null ? down.botRowY : down.cy);
@@ -869,7 +878,43 @@ function drawConnectorsFor(wrap, matches) {
                + ' L ' + xMid + ' ' + y2 + ' L ' + x2 + ' ' + y2);
       }
     }
+
+    // Cross-bracket source stubs (drawn dashed with a floating label
+    // — "L of M_N" — so users can see where the other team came from
+    // without drawing a long cross-bracket line).
+    if (m.topFromMatchLoser && down.topRowY != null) {
+      drawCrossSource(svg, down.left, down.topRowY, 'L of M' + m.topFromMatchLoser.globalNo);
+    }
+    if (m.botFromMatchLoser && down.botRowY != null) {
+      drawCrossSource(svg, down.left, down.botRowY, 'L of M' + m.botFromMatchLoser.globalNo);
+    }
   }
+}
+
+function drawCrossSource(svg, x, y, label) {
+  const STUB = 22;
+  const COLOR = '#b45309';
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M ' + (x - STUB) + ' ' + y + ' L ' + x + ' ' + y);
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', COLOR);
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-dasharray', '3 3');
+  path.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(path);
+
+  const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  text.setAttribute('x', x - STUB - 4);
+  text.setAttribute('y', y);
+  text.setAttribute('text-anchor', 'end');
+  text.setAttribute('dominant-baseline', 'middle');
+  text.setAttribute('fill', COLOR);
+  text.setAttribute('font-size', '10.5');
+  text.setAttribute('font-weight', '800');
+  text.setAttribute('font-family', 'system-ui, -apple-system, "Segoe UI", sans-serif');
+  text.setAttribute('letter-spacing', '0.04em');
+  text.textContent = label;
+  svg.appendChild(text);
 }
 function cssEscape(s) { return String(s).replace(/(["\\])/g, '\\$1'); }
 
@@ -902,6 +947,7 @@ function renderTournament() {
       const matches = label === 'A' ? t.A.matches : label === 'B' ? t.B.matches : t.T64.matches;
       drawConnectorsFor(wrap, matches);
     });
+    setupPanScroll();
     applySearch();
   });
 }
@@ -960,6 +1006,63 @@ window.addEventListener('resize', () => {
     });
   });
 });
+
+/* ── Pan & scroll on bracket viewports ───────
+ *  Drag with mouse, Shift+wheel, or arrow keys (when viewport focused).
+ *  Native touch scrolling already works via -webkit-overflow-scrolling. */
+function setupPanScroll() {
+  document.querySelectorAll('.viewport').forEach(vp => {
+    if (vp.dataset.panBound) return;
+    vp.dataset.panBound = '1';
+    vp.tabIndex = 0;
+
+    let isDown = false, startX = 0, startLeft = 0, moved = false;
+
+    vp.addEventListener('mousedown', (e) => {
+      // Don't hijack clicks on form controls; cards are fine to drag from.
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      isDown = true;
+      moved = false;
+      startX = e.pageX;
+      startLeft = vp.scrollLeft;
+      vp.classList.add('panning');
+    });
+    const stop = () => {
+      if (!isDown) return;
+      isDown = false;
+      vp.classList.remove('panning');
+    };
+    document.addEventListener('mouseup', stop);
+    vp.addEventListener('mouseleave', stop);
+    vp.addEventListener('mousemove', (e) => {
+      if (!isDown) return;
+      const dx = e.pageX - startX;
+      if (Math.abs(dx) > 3) moved = true;
+      vp.scrollLeft = startLeft - dx;
+      e.preventDefault();
+    });
+    // Suppress click after a drag so card-clicks don't fire spuriously.
+    vp.addEventListener('click', (e) => {
+      if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; }
+    }, true);
+
+    // Keyboard horizontal scroll when viewport has focus.
+    vp.addEventListener('keydown', (e) => {
+      const step = Math.max(120, vp.clientWidth * 0.4);
+      if (e.key === 'ArrowLeft')  { vp.scrollLeft -= step; e.preventDefault(); }
+      else if (e.key === 'ArrowRight') { vp.scrollLeft += step; e.preventDefault(); }
+      else if (e.key === 'Home')   { vp.scrollLeft = 0; e.preventDefault(); }
+      else if (e.key === 'End')    { vp.scrollLeft = vp.scrollWidth; e.preventDefault(); }
+    });
+
+    // Shift+wheel → horizontal scroll. (Trackpads already do horizontal natively.)
+    vp.addEventListener('wheel', (e) => {
+      if (!e.shiftKey) return;
+      e.preventDefault();
+      vp.scrollLeft += e.deltaY;
+    }, { passive: false });
+  });
+}
 
 /* ── Boot ──────────────────────────────────── */
 (async () => {
