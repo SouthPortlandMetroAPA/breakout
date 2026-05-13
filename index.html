@@ -293,12 +293,22 @@
      card spacing stays uniform, but lighter background, italic "BYE" row,
      and the seeded team's advancement arrow instead of a W/L chip. */
   .match.bye { background: linear-gradient(180deg, #fafbfc, #f4f5f7); }
-  .match.bye .mno.bye-label {
+  .match.bye .mno {
+    color: var(--spm-accent);
+    font-weight: 900;
+    font-size: 0.92rem;
+  }
+  .match.bye .bye-tag {
+    margin-left: 8px;
     color: var(--muted);
     font-weight: 800;
-    font-size: 0.7rem;
+    font-size: 0.62rem;
     letter-spacing: 0.16em;
     text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(0,0,0,0.05);
+    vertical-align: middle;
   }
   .match.bye .match-row.winner { background: rgba(0,49,161,0.04); }
   .match.bye .match-row.winner .trophy {
@@ -314,6 +324,99 @@
   .match.bye .match-row.bye-row .team-num {
     opacity: 0.45; background: transparent; color: var(--muted);
   }
+
+  /* Staff mode — banner + clickable match cards + score-entry modal. */
+  .staff-banner {
+    background: linear-gradient(180deg, #ea8c00, #d97400);
+    color: #fff;
+    padding: 8px 18px;
+    font-size: 0.84rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    display: flex; align-items: center; gap: 10px; justify-content: center;
+    position: sticky; top: 56px; z-index: 9;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.10);
+  }
+  .staff-banner .dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.35); }
+
+  body.staff .match:not(.bye) { cursor: pointer; }
+  body.staff .match:not(.bye):hover { box-shadow: 0 6px 18px rgba(217,116,0,0.20); border-color: #d97400; }
+
+  .staff-modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(10,20,40,0.55);
+    z-index: 9998;
+    display: none; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .staff-modal-overlay.shown { display: flex; }
+  .staff-modal {
+    background: #fff; border-radius: 12px;
+    width: 100%; max-width: 440px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.30);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .staff-modal-head { padding: 14px 18px 10px; background: linear-gradient(180deg, #fafbfc, #f4f5f7); border-bottom: 1px solid var(--border); }
+  .staff-modal-head .mno { font-size: 1.05rem; font-weight: 900; color: var(--spm-accent); }
+  .staff-modal-head .ctx { font-size: 0.74rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 3px; }
+  .staff-modal-body { padding: 16px 18px; }
+  .staff-modal-body .q { font-size: 0.84rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .staff-team-btn {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: #fff;
+    border: 2px solid var(--border-strong);
+    border-radius: 8px;
+    font-size: 0.94rem; font-weight: 700; color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  }
+  .staff-team-btn:hover:not(:disabled) { border-color: var(--spm-accent); background: rgba(0,49,161,0.04); transform: translateY(-1px); }
+  .staff-team-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+  .staff-team-btn.is-winner {
+    border-color: #15803d; background: rgba(21,128,61,0.08); color: #15803d;
+  }
+  .staff-team-btn .seed { font-size: 0.7rem; color: var(--muted); font-weight: 600; min-width: 24px; }
+  .staff-team-btn.is-winner .seed { color: #15803d; }
+  .staff-team-btn .team-num { font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.72rem; font-weight: 700; color: var(--spm-accent); background: rgba(0,49,161,0.08); padding: 2px 6px; border-radius: 5px; }
+  .staff-team-btn .name { flex: 1 1 auto; }
+  .staff-team-btn .check { color: #15803d; font-weight: 900; font-size: 1.05rem; display: none; }
+  .staff-team-btn.is-winner .check { display: inline; }
+  .staff-team-btn .tbd { color: var(--muted); font-style: italic; font-weight: 600; font-size: 0.84rem; }
+  .staff-modal-actions {
+    display: flex; gap: 8px; padding: 12px 18px 16px; border-top: 1px solid var(--border); background: #fafbfc;
+    align-items: center;
+  }
+  .staff-modal-actions .spacer { flex: 1 1 auto; }
+  .staff-btn {
+    padding: 7px 14px; font-size: 0.84rem; font-weight: 700;
+    border-radius: 6px; cursor: pointer; border: 1px solid var(--border-strong);
+    background: #fff; color: var(--text);
+    transition: background 0.15s;
+  }
+  .staff-btn:hover { background: var(--bg); }
+  .staff-btn.clear { border-color: #b45309; color: #b45309; }
+  .staff-btn.clear:hover { background: rgba(180,83,9,0.08); }
+  .staff-btn.clear:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Save toast — confirms PATCH succeeded. */
+  .save-toast {
+    position: fixed; bottom: 20px; right: 20px;
+    background: #15803d; color: #fff;
+    padding: 9px 16px; border-radius: 8px;
+    font-size: 0.84rem; font-weight: 700;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    z-index: 10000;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+  }
+  .save-toast.shown { opacity: 1; transform: translateY(0); }
+  .save-toast.err { background: var(--spm-primary); }
 
   /* Jump-to flash — when a dest chip is clicked, the target match
      pulses with an SPM red glow for 1.8s. */
@@ -354,6 +457,27 @@
   </div>
 </div>
 
+<div class="staff-modal-overlay" id="staffModal" aria-hidden="true">
+  <div class="staff-modal">
+    <div class="staff-modal-head">
+      <div class="mno" id="staffModalMno">M—</div>
+      <div class="ctx" id="staffModalCtx"></div>
+    </div>
+    <div class="staff-modal-body">
+      <div class="q">Who won?</div>
+      <button type="button" class="staff-team-btn" id="staffPickTop"></button>
+      <button type="button" class="staff-team-btn" id="staffPickBot"></button>
+    </div>
+    <div class="staff-modal-actions">
+      <button type="button" class="staff-btn clear" id="staffClearBtn">Clear result</button>
+      <span class="spacer"></span>
+      <button type="button" class="staff-btn" id="staffCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="save-toast" id="saveToast"></div>
+
 <div class="header">
   <div class="header-inner">
     <h1><span class="brand-dot"></span>BreakOut</h1>
@@ -392,6 +516,17 @@ const HEADERS_DB  = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Acce
 let _versionMismatch = false;
 let _teams = [];        // sorted ASC by number
 let _tournament = null;
+let _tournamentRow = null;  // raw row from breakout.tournaments (incl id, matches JSONB)
+
+/* Staff mode — append `?role=staff&key=<service_role>` to the viewer URL
+ * to enable click-to-record-winner. The service_role key is the same one
+ * admin.html uses; future iteration will swap in a scoped JWT. */
+const URL_PARAMS = new URLSearchParams(location.search);
+const IS_STAFF = URL_PARAMS.get('role') === 'staff';
+const STAFF_KEY = URL_PARAMS.get('key') || '';
+const HEADERS_STAFF = STAFF_KEY
+  ? { apikey: STAFF_KEY, Authorization: 'Bearer ' + STAFF_KEY, 'Accept-Profile': 'breakout', 'Content-Profile': 'breakout', 'Content-Type': 'application/json' }
+  : null;
 
 /* Tournament-wide configurable text. Will eventually load from
  * breakout.tournaments(text JSONB) — hardcoded for the PoC. */
@@ -440,7 +575,7 @@ setInterval(checkVersion, 30000);
 let _lastTournamentUpdatedAt = null;
 async function pollTournamentUpdate() {
   if (document.hidden) return;
-  if (document.querySelector('.modal.shown, input:focus, textarea:focus')) return;
+  if (document.querySelector('.modal.shown, .staff-modal-overlay.shown, input:focus, textarea:focus')) return;
   if (!_tournament) return;          // initial load hasn't finished
   try {
     const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=updated_at,id', { headers: HEADERS_DB });
@@ -457,6 +592,167 @@ async function pollTournamentUpdate() {
   } catch (_) {}
 }
 setInterval(pollTournamentUpdate, 15000);
+
+/* ── Staff mode (click-to-record-winner) ────
+ *  Active when URL has ?role=staff&key=<service_role>.
+ *  Clicking any match opens a modal with two team buttons; click a team to
+ *  record them as winner. Optimistic update + PATCH to breakout.tournaments.
+ *  Re-renders bracket with downstream propagation. */
+function setupStaffMode() {
+  if (!IS_STAFF) return;
+  document.body.classList.add('staff');
+  // Inject the banner under the existing header.
+  const banner = document.createElement('div');
+  banner.className = 'staff-banner';
+  banner.innerHTML = '<span class="dot"></span>STAFF MODE — click any match to record a winner';
+  const header = document.querySelector('.header');
+  if (header && header.parentNode) header.parentNode.insertBefore(banner, header.nextSibling);
+
+  // Click delegation on matches. Ignore clicks on the dest chips (they
+  // already navigate to other matches) and on bye cards.
+  document.addEventListener('click', (e) => {
+    if (!IS_STAFF) return;
+    if (e.target.closest('a.dest-chip')) return;       // chip click → jump
+    const cell = e.target.closest('.match');
+    if (!cell) return;
+    if (cell.classList.contains('bye')) return;        // byes have no result
+    const matchId = cell.dataset.matchId;
+    if (!matchId) return;
+    openStaffModal(matchId);
+  });
+
+  document.getElementById('staffCancelBtn').addEventListener('click', closeStaffModal);
+  document.getElementById('staffClearBtn').addEventListener('click', () => recordWinner(null));
+  document.getElementById('staffPickTop').addEventListener('click', () => recordWinner('top'));
+  document.getElementById('staffPickBot').addEventListener('click', () => recordWinner('bot'));
+  document.getElementById('staffModal').addEventListener('click', (e) => {
+    if (e.target.id === 'staffModal') closeStaffModal();    // click outside the box
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('staffModal').classList.contains('shown')) closeStaffModal();
+  });
+}
+
+let _staffEditingMatchId = null;
+
+function openStaffModal(matchId) {
+  const m = _tournament && _tournament.all.find(x => x.id === matchId);
+  if (!m) return;
+  _staffEditingMatchId = matchId;
+  const modal = document.getElementById('staffModal');
+  document.getElementById('staffModalMno').textContent =
+    m.globalNo ? 'M' + m.globalNo : '—';
+  const ctx = [];
+  if (m.bracket === '64') ctx.push('64-team');
+  else ctx.push('Bracket ' + m.bracket);
+  ctx.push('Round ' + m.round);
+  if (m.day) ctx.push(m.day);
+  if (m.time) ctx.push(m.time);
+  if (m.table_no) ctx.push('Table ' + m.table_no);
+  document.getElementById('staffModalCtx').textContent = ctx.join(' · ');
+
+  renderStaffPick('staffPickTop', m, 'top');
+  renderStaffPick('staffPickBot', m, 'bot');
+
+  const clearBtn = document.getElementById('staffClearBtn');
+  clearBtn.disabled = !m.winner_side;
+
+  modal.classList.add('shown');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function renderStaffPick(btnId, m, side) {
+  const btn = document.getElementById(btnId);
+  const team = side === 'top' ? m.top : m.bottom;
+  const isCurrentWinner = m.winner_side === side;
+  btn.classList.toggle('is-winner', isCurrentWinner);
+  if (!team) {
+    btn.disabled = true;
+    const source = side === 'top'
+      ? (m.topFromMatch || m.topFromMatchLoser)
+      : (m.botFromMatch || m.botFromMatchLoser);
+    const waitOn = source && source.globalNo
+      ? 'Waiting on M' + source.globalNo
+      : 'Waiting on upstream match';
+    btn.innerHTML = '<span class="seed">—</span>'
+      + '<span class="team-num">—</span>'
+      + '<span class="tbd">' + esc(waitOn) + '</span>'
+      + '<span class="check">&#x2713;</span>';
+    return;
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<span class="seed">' + esc(team.seed) + '</span>'
+    + '<span class="team-num">' + pad4(team.number) + '</span>'
+    + '<span class="name">' + esc(team.name) + '</span>'
+    + '<span class="check">&#x2713;</span>';
+}
+
+function closeStaffModal() {
+  const modal = document.getElementById('staffModal');
+  modal.classList.remove('shown');
+  modal.setAttribute('aria-hidden', 'true');
+  _staffEditingMatchId = null;
+}
+
+async function recordWinner(side) {
+  if (!_tournament || !_staffEditingMatchId) return;
+  const md = _tournament.matchData;
+  const idx = md.findIndex(x => x.id === _staffEditingMatchId);
+  if (idx < 0) return;
+  const prevSide = md[idx].winner_side || null;
+  if (prevSide === side) { closeStaffModal(); return; }
+  md[idx].winner_side = side;
+
+  // Re-reconstruct + resolve so downstream propagates immediately.
+  reapplyTournamentInMemory();
+  renderTournament();
+  closeStaffModal();
+
+  // Persist. Last-write-wins for now.
+  try {
+    await saveTournamentMatches();
+    showToast('Saved', 'ok');
+  } catch (e) {
+    // Roll back and re-render with the previous state.
+    md[idx].winner_side = prevSide;
+    reapplyTournamentInMemory();
+    renderTournament();
+    showToast('Save failed: ' + e.message, 'err');
+  }
+}
+
+function reapplyTournamentInMemory() {
+  const teamsByNumber = Object.fromEntries(_teams.map(t => [t.number, t]));
+  const seedAssignments = (_tournamentRow && Array.isArray(_tournamentRow.seed_assignments)
+                          && _tournamentRow.seed_assignments.length)
+    ? _tournamentRow.seed_assignments
+    : defaultSeedAssignments(_teams);
+  const fresh = reconstructTournament(_tournament.matchData, seedAssignments, teamsByNumber);
+  fresh.matchData = _tournament.matchData;
+  resolveTournament(fresh);
+  _tournament = fresh;
+}
+
+async function saveTournamentMatches() {
+  if (!_tournamentRow || !_tournamentRow.id) throw new Error('No active tournament loaded — generate one in admin first.');
+  if (!HEADERS_STAFF) throw new Error('Staff key missing in URL (?key=…)');
+  const r = await fetch(SB_URL + '/rest/v1/tournaments?id=eq.' + _tournamentRow.id,
+    { method: 'PATCH', headers: HEADERS_STAFF, body: JSON.stringify({ matches: _tournament.matchData }) });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error('HTTP ' + r.status + (txt ? ': ' + txt.slice(0, 120) : ''));
+  }
+}
+
+let _toastTimer = null;
+function showToast(msg, kind) {
+  const t = document.getElementById('saveToast');
+  t.textContent = msg;
+  t.classList.toggle('err', kind === 'err');
+  t.classList.add('shown');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove('shown'), kind === 'err' ? 4000 : 1800);
+}
 
 /* ── Util ─────────────────────────────────── */
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
@@ -616,17 +912,34 @@ function applyTemplateSchedule(matchData) {
 }
 
 function assignMatchNumbers(matchData) {
-  const order = [
+  // M# = bracket-position number: bracket A → B → 64, then round, then slot.
+  // Every match (real + bye) gets one. Stable IDs for cross-references.
+  // For BreakOut today: M1..M15 = A, M16..M30 = B, M31..M51 = 64.
+  const bracketOrder = ['A', 'B', '64'];
+  let no = 1;
+  for (const bracket of bracketOrder) {
+    const inBracket = matchData.filter(m => m.bracket === bracket);
+    if (!inBracket.length) continue;
+    const maxRound = Math.max.apply(null, inBracket.map(m => m.round));
+    for (let r = 1; r <= maxRound; r++) {
+      inBracket.filter(m => m.round === r)
+               .sort((a, b) => a.slot - b.slot)
+               .forEach(m => { m.match_no = no++; });
+    }
+  }
+  // play_order = scheduling sequence (which match is played first, etc).
+  // Byes have no play_order. Used by schedules/timetables, not by the
+  // bracket renderer's display.
+  const playSeq = [
     ['A', 1], ['B', 1], ['A', 2], ['B', 2], ['64', 1],
     ['A', 3], ['B', 3], ['64', 2], ['64', 3],
     ['A', 4], ['B', 4], ['64', 4], ['64', 5], ['64', 6]
   ];
-  let no = 1;
-  for (const pair of order) {
-    const bracket = pair[0], round = pair[1];
-    matchData.filter(m => m.bracket === bracket && m.round === round && !m.is_bye)
+  let p = 1;
+  for (const pair of playSeq) {
+    matchData.filter(m => m.bracket === pair[0] && m.round === pair[1] && !m.is_bye)
              .sort((a, b) => a.slot - b.slot)
-             .forEach(m => { m.match_no = no++; });
+             .forEach(m => { m.play_order = p++; });
   }
 }
 
@@ -767,15 +1080,18 @@ async function buildTournament() {
                        ? dbRow.seed_assignments
                        : defaultSeedAssignments(_teams);
     config = dbRow.config || {};
+    _tournamentRow = dbRow;
   } else {
     matchData = templateModSe12_12To64();
     seedAssignments = defaultSeedAssignments(_teams);
     config = {};
+    _tournamentRow = null;
   }
   if (config.bracketChampText) TOURNAMENT_TEXT.bracketChampText = config.bracketChampText;
   if (config.championText)     TOURNAMENT_TEXT.championText     = config.championText;
   const teamsByNumber = Object.fromEntries(_teams.map(t => [t.number, t]));
   const tData = reconstructTournament(matchData, seedAssignments, teamsByNumber);
+  tData.matchData = matchData;            // raw template/DB data — staff writes mutate this
   resolveTournament(tData);
   return tData;
 }
@@ -907,6 +1223,7 @@ function matchHtml(m, isFinalOfBracket) {
 function byeMatchHtml(m) {
   const y = matchYUnits(m);
   const team = m.top;
+  const mnoLabel = m.globalNo ? 'M' + m.globalNo : '—';
   let advanceChip = '';
   if (m.winnerAdvancesTo) {
     advanceChip = '<a class="dest-chip win" data-jump="' + m.winnerAdvancesTo.globalNo
@@ -914,9 +1231,10 @@ function byeMatchHtml(m) {
       + '" title="Auto-advances to M' + m.winnerAdvancesTo.globalNo + '">&rarr; M'
       + m.winnerAdvancesTo.globalNo + '</a>';
   }
-  return '<div class="match bye" data-match-id="' + m.id + '" data-global-no="" style="--y:' + y + '">'
+  const idAttr = m.globalNo ? ' id="m' + m.globalNo + '"' : '';
+  return '<div class="match bye" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '"' + idAttr + ' style="--y:' + y + '">'
     + '<div class="match-top">'
-    +   '<span class="mno bye-label">BYE</span>'
+    +   '<span class="mno">' + esc(mnoLabel) + '<span class="bye-tag">BYE</span></span>'
     +   '<span class="destinations">' + advanceChip + '</span>'
     + '</div>'
     + '<div class="match-rows">'
@@ -1311,6 +1629,7 @@ function setupPanScroll() {
     document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">Could not load teams: ' + esc(e.message) + '</p>';
     return;
   }
+  setupStaffMode();
   try { _tournament = await buildTournament(); }
   catch (e) {
     document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">' + esc(e.message) + '</p>';
