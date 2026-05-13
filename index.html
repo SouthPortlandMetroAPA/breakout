@@ -431,6 +431,33 @@ function pollForDeploy(target) {
 checkVersion();
 setInterval(checkVersion, 30000);
 
+/* ── Live data refresh ───────────────────────
+ *  Up-to-date data is a core principle: if the active tournament's
+ *  `updated_at` changes while the page is loaded, re-fetch and re-render
+ *  the bracket. Poll every 15s. Skip when the page is hidden or when an
+ *  interactive control (modal, input) is in use, to avoid clobbering UX.
+ *  Page-version updates (separate concern) are handled by checkVersion(). */
+let _lastTournamentUpdatedAt = null;
+async function pollTournamentUpdate() {
+  if (document.hidden) return;
+  if (document.querySelector('.modal.shown, input:focus, textarea:focus')) return;
+  if (!_tournament) return;          // initial load hasn't finished
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=updated_at,id', { headers: HEADERS_DB });
+    if (!r.ok) return;
+    const arr = await r.json();
+    if (!arr || !arr[0]) return;
+    const latest = arr[0].updated_at;
+    if (_lastTournamentUpdatedAt && latest !== _lastTournamentUpdatedAt) {
+      // Underlying tournament changed — pull fresh data and re-render.
+      _tournament = await buildTournament();
+      renderTournament();
+    }
+    _lastTournamentUpdatedAt = latest;
+  } catch (_) {}
+}
+setInterval(pollTournamentUpdate, 15000);
+
 /* ── Util ─────────────────────────────────── */
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 function pad4(n) { return String(n).padStart(4, '0'); }
@@ -643,6 +670,9 @@ function reconstructTournament(matchData, seedAssignments, teamsByNumber) {
       topFromMatch: null, botFromMatch: null,
       topFromMatchLoser: null, botFromMatchLoser: null,
       winner: null, loser: null, topWins: null,
+      // Staff-recorded result lives in winner_side ('top' | 'bot' | null).
+      // Resolved into winner/loser/topWins by resolveTournament().
+      winner_side: md.winner_side || null,
       globalNo: md.match_no || null,
       day: md.day, time: md.time, payout: md.payout, table_no: md.table_no
     };
@@ -676,7 +706,10 @@ function resolveTournament(t) {
   // teams are present. Real results would arrive from the DB instead.
   const ordered = t.all.filter(m => !m.bye && m.globalNo != null)
                         .slice().sort((a, b) => a.globalNo - b.globalNo);
-  const prng = makePrng(24);
+  // Sample mode is ON only while NO match has a staff-recorded winner.
+  // Once any winner_side is set, PRNG turns off for the whole tournament.
+  const sampleMode = !ordered.some(m => m.winner_side === 'top' || m.winner_side === 'bot');
+  const prng = sampleMode ? makePrng(24) : null;
   for (const m of ordered) {
     if (m.top == null) {
       if (m.topFromMatch) m.top = m.topFromMatch.winner;
@@ -686,11 +719,15 @@ function resolveTournament(t) {
       if (m.botFromMatch) m.bottom = m.botFromMatch.winner;
       else if (m.botFromMatchLoser) m.bottom = m.botFromMatchLoser.loser;
     }
-    if (m.top && m.bottom) {
-      const lower = m.top.seed < m.bottom.seed ? m.top : m.bottom;
+    if (m.winner_side === 'top' && m.top) {
+      m.winner = m.top; m.loser = m.bottom; m.topWins = true;
+    } else if (m.winner_side === 'bot' && m.bottom) {
+      m.winner = m.bottom; m.loser = m.top; m.topWins = false;
+    } else if (prng && m.top && m.bottom) {
+      const lower  = m.top.seed < m.bottom.seed ? m.top : m.bottom;
       const higher = m.top.seed < m.bottom.seed ? m.bottom : m.top;
-      const gap = Math.abs(m.top.seed - m.bottom.seed);
-      const upset = prng() < (gap > 4 ? 0.15 : 0.30);
+      const gap    = Math.abs(m.top.seed - m.bottom.seed);
+      const upset  = prng() < (gap > 4 ? 0.15 : 0.30);
       m.winner = upset ? higher : lower;
       m.loser  = upset ? lower  : higher;
       m.topWins = m.winner === m.top;
@@ -714,7 +751,9 @@ async function loadActiveTournament() {
     const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=*', { headers: HEADERS_DB });
     if (!r.ok) return null;
     const arr = await r.json();
-    return arr && arr[0] ? arr[0] : null;
+    const row = arr && arr[0] ? arr[0] : null;
+    if (row && row.updated_at) _lastTournamentUpdatedAt = row.updated_at;
+    return row;
   } catch (e) { return null; }
 }
 
