@@ -98,6 +98,14 @@
     min-width: 64px;
   }
   .table-wrap { overflow-x: auto; }
+
+  .matches-table td { font-size: 0.82rem; padding: 7px 6px; }
+  .matches-table .src-seed { font-weight: 700; color: var(--spm-accent); }
+  .matches-table .src-win  { font-weight: 800; color: #15803d; font-variant-numeric: tabular-nums; }
+  .matches-table .src-lose { font-weight: 800; color: #b45309; font-variant-numeric: tabular-nums; }
+  .matches-table .src-bye  { font-weight: 700; color: var(--muted); }
+  .matches-table .bye-row  { background: #fafbfc; opacity: 0.78; }
+  .matches-table .bye-row:hover { background: #f4f5f7; }
   code { background: #eef1f7; padding: 2px 6px; border-radius: 4px; font-size: 0.86em; color: var(--spm-accent); font-weight: 700; }
 
   .status-line { padding: 9px 13px; border-radius: 10px; font-size: 0.84rem; font-weight: 600; margin: 6px 0; display: none; }
@@ -193,6 +201,18 @@
     </div>
     <p class="hint">Picks the first 24 teams (by number) and writes a fully-wired tournament into <code>breakout.tournaments</code>. The viewer auto-loads the active tournament.</p>
     <div id="tournamentBody" class="hint">Loading&hellip;</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Matches</h2>
+      <span class="hint" id="matchesStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-outline btn-sm" onclick="loadMatchesView()">Refresh</button>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:0">Read-only view of the active tournament's match wiring. <em>Stage 1.</em> Edit modal and validation banner land in stages 2 and 3.</p>
+    <div id="matchesBody" class="table-wrap"><p class="hint">Loading&hellip;</p></div>
   </div>
 </div>
 
@@ -607,9 +627,117 @@ async function doGenerateDefaultTournament() {
     };
     await sb('POST', 'tournaments', row);
     loadTournaments();
+    loadMatchesView();
   } catch (e) {
     alert('Generate failed: ' + e.message);
   }
+}
+
+/* ── Matches read-only view (Stage 1) ──────── */
+async function loadMatchesView() {
+  const body = document.getElementById('matchesBody');
+  const status = document.getElementById('matchesStatus');
+  body.innerHTML = '<p class="hint">Loading&hellip;</p>';
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=id,name,matches', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    if (!list.length) {
+      body.innerHTML = '<p class="hint">No active tournament. Hit <strong>Generate default</strong> above to create one.</p>';
+      status.textContent = '';
+      return;
+    }
+    const t = list[0];
+    const matches = Array.isArray(t.matches) ? t.matches : [];
+    if (!matches.length) {
+      body.innerHTML = '<p class="hint">Active tournament has no matches yet.</p>';
+      status.textContent = '';
+      return;
+    }
+    renderMatchesTable(matches, t.name);
+    const real = matches.filter(m => !m.is_bye).length;
+    const byes = matches.length - real;
+    status.textContent = real + ' real · ' + byes + ' byes · ' + t.name;
+  } catch (e) {
+    body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
+    status.textContent = '';
+  }
+}
+
+function renderMatchesTable(matches, tournamentName) {
+  const byId = {};
+  matches.forEach(m => { byId[m.id] = m; });
+
+  const sourceLabel = (src) => {
+    if (!src) return '<span class="hint">&mdash;</span>';
+    const source = byId[src.match_id];
+    if (!source) {
+      return '<span style="color:var(--danger)">missing ' + escapeHtml(src.match_id) + '</span>';
+    }
+    if (source.is_bye) {
+      const seed = source.top_seed != null ? source.top_seed : '?';
+      return '<span class="src-bye" title="' + escapeHtml(source.id) + '">BYE&nbsp;&rarr;&nbsp;Seed ' + seed + '</span>';
+    }
+    const prefix = src.kind === 'winner' ? 'W of M' : 'L of M';
+    const cls    = src.kind === 'winner' ? 'src-win' : 'src-lose';
+    return '<span class="' + cls + '" title="' + escapeHtml(source.id) + '">' + prefix + (source.match_no || '?') + '</span>';
+  };
+
+  const entrantCell = (m, side) => {
+    const seed = side === 'top' ? m.top_seed : m.bot_seed;
+    const from = side === 'top' ? m.top_from : m.bot_from;
+    if (seed != null) return '<span class="src-seed">Seed ' + seed + '</span>';
+    if (from) return sourceLabel(from);
+    if (m.is_bye && side === 'bot') return '<span class="hint">&mdash;</span>';
+    return '<span style="color:var(--danger)">none</span>';
+  };
+
+  // Sort: real matches by play order (match_no), then byes by bracket+slot.
+  const sorted = matches.slice().sort((a, b) => {
+    if (a.is_bye && !b.is_bye) return 1;
+    if (!a.is_bye && b.is_bye) return -1;
+    if (!a.is_bye && !b.is_bye) return (a.match_no || 0) - (b.match_no || 0);
+    const bcmp = String(a.bracket).localeCompare(String(b.bracket));
+    if (bcmp !== 0) return bcmp;
+    return (a.round - b.round) || (a.slot - b.slot);
+  });
+
+  const rowsHtml = sorted.map(m => {
+    const mno = m.is_bye
+      ? '<span class="hint">bye</span>'
+      : (m.match_no != null ? '<strong>M' + m.match_no + '</strong>' : '<span style="color:var(--danger)">?</span>');
+    return '<tr' + (m.is_bye ? ' class="bye-row"' : '') + '>'
+      + '<td>' + mno + '</td>'
+      + '<td>' + escapeHtml(m.bracket) + '</td>'
+      + '<td>' + m.round + '</td>'
+      + '<td>' + m.slot + '</td>'
+      + '<td>' + entrantCell(m, 'top') + '</td>'
+      + '<td>' + entrantCell(m, 'bot') + '</td>'
+      + '<td>' + escapeHtml(m.day || '') + '</td>'
+      + '<td>' + escapeHtml(m.time || '') + '</td>'
+      + '<td class="num-cell">' + (m.payout != null && m.payout !== '' ? '$' + m.payout : '') + '</td>'
+      + '<td class="num-cell">' + (m.table_no != null ? m.table_no : '') + '</td>'
+      + '<td class="hint" style="font-family:\'SF Mono\',Consolas,Menlo,monospace;font-size:0.72rem">' + escapeHtml(m.id) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  document.getElementById('matchesBody').innerHTML =
+    '<table class="table matches-table">'
+    + '<thead><tr>'
+    +   '<th style="width:60px">M#</th>'
+    +   '<th style="width:40px">Br</th>'
+    +   '<th style="width:36px">R</th>'
+    +   '<th style="width:40px">Slot</th>'
+    +   '<th>Top from</th>'
+    +   '<th>Bot from</th>'
+    +   '<th style="width:80px">Day</th>'
+    +   '<th style="width:80px">Time</th>'
+    +   '<th style="width:60px">$</th>'
+    +   '<th style="width:50px">Table</th>'
+    +   '<th style="width:120px">id</th>'
+    + '</tr></thead>'
+    + '<tbody>' + rowsHtml + '</tbody>'
+    + '</table>';
 }
 
 async function deactivateTournaments() {
@@ -621,6 +749,7 @@ async function deactivateTournaments() {
       try {
         await sb('PATCH', 'tournaments?is_active=eq.true', { is_active: false });
         loadTournaments();
+        loadMatchesView();
       } catch (e) { alert('Deactivate failed: ' + e.message); }
     }
   });
@@ -785,9 +914,10 @@ async function init() {
     return;
   }
   document.getElementById('adminMain').classList.remove('hidden');
-  try { await loadTeams(); } catch (e) { setStatus('newStatus', 'Load failed: ' + e.message, 'err'); return; }
+  try { await loadTeams(); } catch (e) { setStatus('bulkStatus', 'Load failed: ' + e.message, 'err'); return; }
   renderTeams();
   loadTournaments();
+  loadMatchesView();
 }
 document.addEventListener('DOMContentLoaded', init);
 </script>
