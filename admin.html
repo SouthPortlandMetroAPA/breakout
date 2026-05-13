@@ -1294,14 +1294,16 @@ async function openTournamentEditModal(tournamentId, focusStatus) {
     document.getElementById('tEditBracketChamp').value   = cfg.bracketChampText || '';
     document.getElementById('tEditChampion').value       = cfg.championText || '';
     // Links
-    const publicHref = '../index.html?t=' + encodeURIComponent(t.slug);
-    const staffHref  = '../index.html?t=' + encodeURIComponent(t.slug) + '&role=staff&key=' + encodeURIComponent(SB_KEY || '');
+    // Viewer is in the same directory as admin — './' (not '../') so the
+    // GitHub Pages repo prefix is preserved.
+    const publicHref = './?t=' + encodeURIComponent(t.slug);
+    const staffHref  = './?t=' + encodeURIComponent(t.slug) + '&role=staff&key=' + encodeURIComponent(SB_KEY || '');
     const publicLink = document.getElementById('tEditPublicUrl');
     publicLink.href = publicHref;
     publicLink.textContent = publicHref;
     const staffLink = document.getElementById('tEditStaffUrl');
     staffLink.href = staffHref;
-    staffLink.textContent = '../index.html?t=' + t.slug + '&role=staff&key=…';
+    staffLink.textContent = './?t=' + t.slug + '&role=staff&key=…';
     hideStatus('tournamentEditStatus');
     document.getElementById('tournamentEditModal').classList.add('shown');
     if (focusStatus) {
