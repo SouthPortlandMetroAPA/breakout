@@ -960,12 +960,15 @@ async function recordWinner(side) {
     await saveStaffOverrides();
     return;
   }
-  // Confirm when overwriting a previously-recorded winner.
+  // Always confirm a winner change. Three flavors:
+  //   1. First-time set: "Record X as the winner?"
+  //   2. Override:       "Change the winner from X to Y?"
+  //   3. Clear:          "Clear the winner (currently X)?"
+  const mLabel = m.globalNo ? 'M' + m.globalNo : 'this match';
+  let prompt;
   if (prevSide) {
     const prevTeam = prevSide === 'top' ? m.top : m.bottom;
     const prevName = prevTeam ? prevTeam.name : '(unknown)';
-    const mLabel = m.globalNo ? 'M' + m.globalNo : 'this match';
-    let prompt;
     if (side === null) {
       prompt = 'Clear the winner of ' + mLabel + '?\n\nCurrently recorded: ' + prevName + '.';
     } else {
@@ -973,8 +976,13 @@ async function recordWinner(side) {
       const newName = newTeam ? newTeam.name : '(unknown)';
       prompt = 'Change the winner of ' + mLabel + '?\n\nFrom: ' + prevName + '\nTo: ' + newName;
     }
-    if (!window.confirm(prompt)) return;
+  } else if (side) {
+    const newTeam = side === 'top' ? m.top : m.bottom;
+    const newName = newTeam ? newTeam.name : '(unknown)';
+    prompt = 'Record ' + newName + ' as the winner of ' + mLabel + '?';
   }
+  // Note: clearing a result that wasn't set is a no-op above; no prompt needed.
+  if (prompt && !window.confirm(prompt)) return;
   const prevOverrides = readStaffOverrides(md, idx);
   md[idx].winner_side = side;
 

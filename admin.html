@@ -416,7 +416,7 @@
         <button class="btn btn-outline btn-sm" onclick="renderCapacityAnalyzer()">Refresh</button>
       </div>
     </div>
-    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. A match occupies one table from its scheduled start through start + duration. With 2 tables in parallel for a round, matches play in waves (slots 0,1 first; 2,3 next wave; …).</p>
+    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. Every match in a round shares the round's start time and runs for its duration. Demand at a given time = matches whose <code>[start, start + duration]</code> covers that slot.</p>
     <div id="capacityBody"><p class="hint">Loading&hellip;</p></div>
   </div>
 
@@ -1127,7 +1127,7 @@ function renderScheduleEditor() {
       +   '<input type="date" data-field="date" value="' + escapeHtml(dt.date) + '">'
       +   '<select data-field="time">' + buildTimeOptions(dt.time) + '</select>'
       + '</div>'
-      + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="Click to toggle. 2 tables means matches play in parallel and the round takes half as long.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
+      + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="Informational — how many tables this round uses concurrently. Shown as a badge on the round header.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
       + '<select class="dur-select" data-field="duration_min" title="Total expected duration for this round.">' + buildDurationOptions(durMin) + '</select>'
       + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
       + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
@@ -1142,24 +1142,9 @@ function toggleTablesInParallel(btn) {
   const next = cur === 1 ? 2 : 1;
   btn.dataset.tables = next;
   btn.textContent = next + ' table' + (next === 1 ? '' : 's');
-  // Auto-adjust the duration in the same row: halve when going to 2 tables
-  // (round finishes twice as fast in parallel), double when going back to 1.
-  // Duration here represents the round's TOTAL expected time.
-  const row = btn.parentElement;
-  const durSel = row && row.querySelector('select[data-field="duration_min"]');
-  if (durSel && durSel.value !== '') {
-    const curDur = parseInt(durSel.value, 10);
-    if (Number.isInteger(curDur) && curDur > 0) {
-      const newDur = next === 2 ? Math.round(curDur / 2) : curDur * 2;
-      // Pick the closest available option in the dropdown.
-      const opt = Array.from(durSel.options).find(o => parseInt(o.value, 10) === newDur);
-      if (opt) durSel.value = String(newDur);
-      else {
-        // Rebuild the dropdown so the custom value is selectable.
-        durSel.innerHTML = buildDurationOptions(newDur);
-      }
-    }
-  }
+  // Duration stays put — it's the per-match duration and doesn't depend on
+  // how many tables the round occupies. The capacity card will flag if the
+  // round needs more tables than the venue has.
 }
 
 async function applyRoundSchedule(bracket, round) {
@@ -1248,38 +1233,16 @@ async function renumberAllTables() {
 }
 
 /* ── Schedule math ─────────────────────────
- *  duration_min represents the ROUND's TOTAL expected duration. When
- *  matches play in waves (tables_in_parallel > 1), each match consumes
- *  (duration_min / wave_count) of that total. */
-function indexMatchSlots(matches) {
-  const groups = {};
-  for (const m of matches) {
-    if (m.is_bye) continue;
-    const key = m.bracket + '/' + m.round;
-    (groups[key] = groups[key] || []).push(m);
-  }
-  for (const k in groups) {
-    groups[k].sort((a, b) => a.slot - b.slot);
-    groups[k].forEach((m, i) => { m._slotIdx = i; });
-  }
-  const counts = {};
-  for (const k in groups) counts[k] = groups[k].length;
-  return counts;
-}
-
-function computeMatchInterval(m, roundCounts) {
+ *  duration_min is the PER-MATCH duration. All matches in a round share
+ *  the same scheduled_at (set by the bulk Apply) and play simultaneously
+ *  for `duration_min` minutes. tables_in_parallel is informational only —
+ *  use the capacity warning to spot rounds that need more tables. */
+function computeMatchInterval(m) {
   if (!m.scheduled_at) return null;
-  const baseStart = new Date(m.scheduled_at);
-  if (isNaN(baseStart.getTime())) return null;
-  const totalRoundDur = m.duration_min != null ? m.duration_min : 240;
-  const tip = m.tables_in_parallel || 1;
-  const roundKey = m.bracket + '/' + m.round;
-  const numMatches = (roundCounts && roundCounts[roundKey]) || 1;
-  const numWaves = Math.max(1, Math.ceil(numMatches / tip));
-  const perMatchDur = totalRoundDur / numWaves;
-  const wave = Math.floor((m._slotIdx || 0) / tip);
-  const start = new Date(baseStart.getTime() + wave * perMatchDur * 60 * 1000);
-  const end   = new Date(start.getTime() + perMatchDur * 60 * 1000);
+  const start = new Date(m.scheduled_at);
+  if (isNaN(start.getTime())) return null;
+  const dur = m.duration_min != null ? m.duration_min : 240;
+  const end = new Date(start.getTime() + dur * 60 * 1000);
   return { start, end, m };
 }
 
@@ -1304,8 +1267,7 @@ async function renderCapacityAnalyzer() {
     const t = list[0];
     const cap = t.total_tables != null ? t.total_tables : null;
     const matches = (Array.isArray(t.matches) ? t.matches : []).filter(m => !m.is_bye);
-    const roundCounts = indexMatchSlots(matches);
-    const intervals = matches.map(m => computeMatchInterval(m, roundCounts)).filter(Boolean);
+    const intervals = matches.map(m => computeMatchInterval(m)).filter(Boolean);
     if (!intervals.length) {
       body.innerHTML = '<p class="hint">No matches have a scheduled start yet. Set times in the <strong>Schedule by round</strong> card above.</p>';
       status.textContent = '';
@@ -1555,12 +1517,11 @@ function validateScheduleDependencies(matches) {
   const issues = [];
   const realMatches = matches.filter(m => !m.is_bye);
   if (!realMatches.length) return issues;
-  const roundCounts = indexMatchSlots(realMatches);
   const byId = {};
   const intervalById = {};
   for (const m of matches) byId[m.id] = m;
   for (const m of realMatches) {
-    const iv = computeMatchInterval(m, roundCounts);
+    const iv = computeMatchInterval(m);
     if (iv) intervalById[m.id] = iv;
   }
   const fmtTime = (d) => d.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
