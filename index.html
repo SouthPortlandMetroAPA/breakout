@@ -652,7 +652,7 @@
     </div>
     <div class="staff-modal-body">
       <div class="staff-overrides">
-        <label>Start <input type="datetime-local" id="staffStartInput"></label>
+        <label>Start <input type="datetime-local" id="staffStartInput" step="1800"></label>
         <label>Table <input type="number" id="staffTableInput" min="1" placeholder="—"></label>
         <button type="button" class="staff-btn save" id="staffSaveOverridesBtn">Save</button>
       </div>
@@ -856,7 +856,16 @@ function openStaffModal(matchId) {
   document.getElementById('staffModalCtx').textContent = ctx.join(' · ');
 
   // Override fields: Start datetime + Table number.
-  document.getElementById('staffStartInput').value = m.scheduled_at ? m.scheduled_at.slice(0, 16) : '';
+  // If this match has no scheduled_at yet, fall back to any sibling in the
+  // same round that does — so the picker opens at the round's assigned time
+  // instead of blank, and the staff can fine-tune from there.
+  let initialDt = m.scheduled_at;
+  if (!initialDt) {
+    const sibling = _tournament.all.find(x =>
+      !x.bye && x.bracket === m.bracket && x.round === m.round && x.scheduled_at);
+    if (sibling) initialDt = sibling.scheduled_at;
+  }
+  document.getElementById('staffStartInput').value = initialDt ? initialDt.slice(0, 16) : '';
   document.getElementById('staffTableInput').value = m.table_no != null ? m.table_no : '';
   const saveBtn = document.getElementById('staffSaveOverridesBtn');
   saveBtn.classList.remove('success');

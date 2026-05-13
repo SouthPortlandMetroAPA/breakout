@@ -509,7 +509,7 @@
       <fieldset>
         <legend>Schedule</legend>
         <div class="schedule-grid">
-          <label class="full">Start <input type="datetime-local" id="matchEditScheduledAt"></label>
+          <label class="full">Start <input type="datetime-local" id="matchEditScheduledAt" step="1800"></label>
           <label>Payout <input type="number" id="matchEditPayout" min="0" step="1" placeholder="0"></label>
           <label>Table <input type="number" id="matchEditTable" min="1" step="1" placeholder="1"></label>
         </div>
@@ -1012,7 +1012,7 @@ function renderScheduleEditor() {
     const id = 'sched-' + r.bracket + '-' + r.round;
     html += '<div class="sched-row" id="' + id + '">'
       + '<span class="rlabel">R' + r.round + '</span>'
-      + '<input type="datetime-local" data-field="scheduled_at" value="' + escapeHtml(scheduledAt) + '">'
+      + '<input type="datetime-local" data-field="scheduled_at" step="1800" value="' + escapeHtml(scheduledAt) + '">'
       + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="Click to toggle. 2 tables means matches play in parallel and the round takes half as long.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
       + '<input type="number" data-field="duration_min" value="' + durMin + '" placeholder="Min" min="15" step="15" title="Duration (minutes) per match in this round. Default 240 = 4 hours.">'
       + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
@@ -1411,7 +1411,15 @@ function openMatchEditModal(matchId) {
   setSideFields('top', m);
   setSideFields('bot', m);
 
-  document.getElementById('matchEditScheduledAt').value = m.scheduled_at ? m.scheduled_at.slice(0, 16) : '';
+  // Default the picker to this match's scheduled_at if set, else fall back to
+  // any sibling in the same round that's already been scheduled.
+  let initialDt = m.scheduled_at;
+  if (!initialDt && _activeMatchTournament) {
+    const sibling = _activeMatchTournament.matches.find(x =>
+      !x.is_bye && x.bracket === m.bracket && x.round === m.round && x.scheduled_at);
+    if (sibling) initialDt = sibling.scheduled_at;
+  }
+  document.getElementById('matchEditScheduledAt').value = initialDt ? initialDt.slice(0, 16) : '';
   document.getElementById('matchEditPayout').value  = m.payout != null ? m.payout : '';
   document.getElementById('matchEditTable').value   = m.table_no != null ? m.table_no : '';
 
