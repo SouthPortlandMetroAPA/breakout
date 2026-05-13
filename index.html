@@ -1123,6 +1123,7 @@ function reconstructTournament(matchData, seedAssignments, teamsByNumber) {
       // Resolved into winner/loser/topWins by resolveTournament().
       winner_side: md.winner_side || null,
       globalNo: md.match_no || null,
+      scheduled_at: md.scheduled_at || null,
       day: md.day, time: md.time, payout: md.payout, table_no: md.table_no
     };
     if (m.bye && m.top) { m.winner = m.top; m.topWins = true; }
@@ -1301,8 +1302,20 @@ function matchHtml(m, isFinalOfBracket) {
   const topWin = m.topWins === true;
   const botWin = m.topWins === false;
   const table  = m.table_no || null;
-  const scheduleDay  = m.day  ? m.day.slice(0, 3).toUpperCase() : '';
-  const scheduleTime = m.time ? m.time : '';
+  // Prefer the canonical scheduled_at (ISO datetime from the picker). Fall
+  // back to legacy m.day / m.time strings so older rows still display.
+  let scheduleDay  = '';
+  let scheduleTime = '';
+  if (m.scheduled_at) {
+    const d = new Date(m.scheduled_at);
+    if (!isNaN(d.getTime())) {
+      scheduleDay  = d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
+      scheduleTime = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    }
+  } else {
+    scheduleDay  = m.day  ? m.day.slice(0, 3).toUpperCase() : '';
+    scheduleTime = m.time || '';
+  }
   const schedulePay  = m.payout ? fmtMoney(m.payout) : '';
 
   // Destination chips — pills in the top-right that link to the linked match.

@@ -134,6 +134,7 @@
   .match-edit-grid .position-text { font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.84rem; color: var(--spm-accent); font-weight: 700; }
   .match-edit-grid .schedule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
   .match-edit-grid .schedule-grid label { flex-direction: column; align-items: stretch; gap: 4px; }
+  .match-edit-grid .schedule-grid label.full { grid-column: 1 / -1; }
   .match-edit-grid .schedule-grid input { padding: 6px 8px; }
   .match-edit-grid .seed-input { width: 64px; padding: 4px 6px; }
   .match-edit-grid select { padding: 4px 6px; font-size: 0.84rem; }
@@ -199,7 +200,7 @@
   }
   .sched-row {
     display: grid;
-    grid-template-columns: 42px 1fr 1fr 100px 90px;
+    grid-template-columns: 42px 1fr 100px 90px;
     gap: 8px;
     align-items: center;
     padding: 6px 8px;
@@ -457,8 +458,7 @@
       <fieldset>
         <legend>Schedule</legend>
         <div class="schedule-grid">
-          <label>Day <input type="text" id="matchEditDay" placeholder="Saturday"></label>
-          <label>Time <input type="text" id="matchEditTime" placeholder="9:00 AM"></label>
+          <label class="full">Start <input type="datetime-local" id="matchEditScheduledAt"></label>
           <label>Payout <input type="number" id="matchEditPayout" min="0" step="1" placeholder="0"></label>
           <label>Table <input type="number" id="matchEditTable" min="1" step="1" placeholder="1"></label>
         </div>
@@ -953,14 +953,12 @@ function renderScheduleEditor() {
       currentBracket = r.bracket;
     }
     const sample = firstRealMatchInRound(r.bracket, r.round);
-    const day    = sample && sample.day ? sample.day : '';
-    const time   = sample && sample.time ? sample.time : '';
+    const scheduledAt = sample && sample.scheduled_at ? sample.scheduled_at.slice(0, 16) : '';
     const payout = sample && sample.payout != null ? sample.payout : '';
     const id = 'sched-' + r.bracket + '-' + r.round;
     html += '<div class="sched-row" id="' + id + '">'
       + '<span class="rlabel">R' + r.round + '</span>'
-      + '<input type="text" data-field="day" value="'    + escapeHtml(day)    + '" placeholder="Saturday">'
-      + '<input type="text" data-field="time" value="'   + escapeHtml(time)   + '" placeholder="9:00 AM">'
+      + '<input type="datetime-local" data-field="scheduled_at" value="' + escapeHtml(scheduledAt) + '">'
       + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
       + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
       + '</div>';
@@ -973,8 +971,7 @@ async function applyRoundSchedule(bracket, round) {
   if (!_activeMatchTournament) return;
   const rowEl = document.getElementById('sched-' + bracket + '-' + round);
   if (!rowEl) return;
-  const dayV    = rowEl.querySelector('input[data-field="day"]').value.trim();
-  const timeV   = rowEl.querySelector('input[data-field="time"]').value.trim();
+  const dtV     = rowEl.querySelector('input[data-field="scheduled_at"]').value;
   const payoutV = rowEl.querySelector('input[data-field="payout"]').value.trim();
   const payout  = payoutV === '' ? null : parseInt(payoutV, 10);
 
@@ -984,8 +981,9 @@ async function applyRoundSchedule(bracket, round) {
   for (const m of _activeMatchTournament.matches) {
     if (m.bracket !== bracket || m.round !== round) continue;
     if (m.is_bye) continue;
-    m.day    = dayV || null;
-    m.time   = timeV || null;
+    m.scheduled_at = dtV || null;
+    // Clear legacy day/time so the renderer reads from scheduled_at only.
+    if (dtV) { m.day = null; m.time = null; }
     m.payout = payout;
     touched++;
   }
@@ -1083,6 +1081,19 @@ function renderMatchesTable(matches) {
     const mno = m.match_no != null
       ? '<strong>M' + m.match_no + '</strong>' + (m.is_bye ? ' <span class="bye-tag-mini">BYE</span>' : '')
       : '<span style="color:var(--danger)">?</span>';
+    // Schedule display: prefer scheduled_at; fall back to legacy day/time.
+    let dayCell = '';
+    let timeCell = '';
+    if (m.scheduled_at) {
+      const d = new Date(m.scheduled_at);
+      if (!isNaN(d.getTime())) {
+        dayCell  = d.toLocaleDateString('en-US', { weekday: 'short' });
+        timeCell = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      }
+    } else {
+      dayCell  = m.day || '';
+      timeCell = m.time || '';
+    }
     return '<tr class="editable' + (m.is_bye ? ' bye-row' : '') + '" data-match-id="' + escapeHtml(m.id) + '" onclick="openMatchEditModal(this.dataset.matchId)">'
       + '<td>' + mno + '</td>'
       + '<td>' + escapeHtml(m.bracket) + '</td>'
@@ -1090,8 +1101,8 @@ function renderMatchesTable(matches) {
       + '<td>' + m.slot + '</td>'
       + '<td>' + entrantCell(m, 'top') + '</td>'
       + '<td>' + entrantCell(m, 'bot') + '</td>'
-      + '<td>' + escapeHtml(m.day || '') + '</td>'
-      + '<td>' + escapeHtml(m.time || '') + '</td>'
+      + '<td>' + escapeHtml(dayCell) + '</td>'
+      + '<td>' + escapeHtml(timeCell) + '</td>'
       + '<td class="num-cell">' + (m.payout != null && m.payout !== '' ? '$' + m.payout : '') + '</td>'
       + '<td class="num-cell">' + (m.table_no != null ? m.table_no : '') + '</td>'
       + '<td class="hint" style="font-family:\'SF Mono\',Consolas,Menlo,monospace;font-size:0.72rem">' + escapeHtml(m.id) + '</td>'
@@ -1210,8 +1221,7 @@ function openMatchEditModal(matchId) {
   setSideFields('top', m);
   setSideFields('bot', m);
 
-  document.getElementById('matchEditDay').value     = m.day || '';
-  document.getElementById('matchEditTime').value    = m.time || '';
+  document.getElementById('matchEditScheduledAt').value = m.scheduled_at ? m.scheduled_at.slice(0, 16) : '';
   document.getElementById('matchEditPayout').value  = m.payout != null ? m.payout : '';
   document.getElementById('matchEditTable').value   = m.table_no != null ? m.table_no : '';
 
@@ -1283,12 +1293,13 @@ async function saveMatchEdit() {
   m.top_from = top.from;
   m.bot_seed = bot.seed;
   m.bot_from = bot.from;
-  const dayV   = document.getElementById('matchEditDay').value.trim();
-  const timeV  = document.getElementById('matchEditTime').value.trim();
+  const dtV    = document.getElementById('matchEditScheduledAt').value;
   const payV   = document.getElementById('matchEditPayout').value.trim();
   const tblV   = document.getElementById('matchEditTable').value.trim();
-  m.day      = dayV || null;
-  m.time     = timeV || null;
+  m.scheduled_at = dtV || null;
+  // Drop legacy day/time strings once a picker value is set, so the
+  // renderer reads from the canonical scheduled_at field.
+  if (dtV) { m.day = null; m.time = null; }
   m.payout   = payV  !== '' ? parseInt(payV, 10) : null;
   m.table_no = tblV  !== '' ? parseInt(tblV, 10) : null;
 
