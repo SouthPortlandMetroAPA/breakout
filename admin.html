@@ -178,7 +178,6 @@
       <h2 style="margin-bottom:0">Teams</h2>
       <span class="hint" id="teamsCount"></span>
       <div style="margin-left:auto" class="actions">
-        <button class="btn btn-outline btn-sm" onclick="resetToSample()">Reset to sample data</button>
         <button class="btn btn-outline btn-sm" onclick="clearAllTeams()" style="color:var(--danger);border-color:var(--danger)">Clear all</button>
       </div>
     </div>
@@ -195,12 +194,12 @@
       <h2 style="margin-bottom:0">Tournament</h2>
       <span class="hint" id="tournamentStatus"></span>
       <div style="margin-left:auto" class="actions">
-        <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate default (Mod-SE 12+12&rarr;64)</button>
+        <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate tournament</button>
         <button class="btn btn-outline btn-sm" onclick="clearAllMatchResults()" style="color:var(--danger);border-color:var(--danger)">Clear all results</button>
         <button class="btn btn-outline btn-sm" onclick="deactivateTournaments()">Deactivate all</button>
       </div>
     </div>
-    <p class="hint">Picks the first 24 teams (by number) and writes a fully-wired tournament into <code>breakout.tournaments</code>. The viewer auto-loads the active tournament.</p>
+    <p class="hint">Uses the <code>Mod-SE 12+12&rarr;64</code> template and assigns the first 24 teams (by number) to seeds 1&ndash;12 in each 12-team bracket. The viewer auto-loads the active tournament.</p>
     <div id="tournamentBody" class="hint">Loading&hellip;</div>
   </div>
 
@@ -265,17 +264,6 @@ const HEADERS_APA   = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Ac
 let _teams = [];
 let _versionMismatch = false;
 let _editingId = null;
-
-const SAMPLE_NAMES = [
-  "Average Joes","Bandits","Rack 'n' Roll","Sloppy Joes","Top Shelf","I'm Confused","Bad Ideas","Pumped Up Kicks",
-  "The Pooligans","Rack'em Rebels","O'Brien's Breakers","Under the Influence","Smashing Kitties","Chalkin Chit","Cute Shots","Pocket Rabbits",
-  "Rack'em & Weep","Chalk & Giggles","Blazed & Confused","Pocket Full of Dreams","O.C. Ballers","Inglorious Billiards","Black Flags","Mighty Mongoose",
-  "Side Pocket","Cue Crew","Combo Breakers","The Hustlers","Felt Fanatics","Bridge Bandits","Cushion Crashers","Eight Ballers",
-  "Hold My Beer","Stick Wizards","Triangle Trouble","Banked Right","Run the Rack","Scratch That","Tip Top","Slop Squad",
-  "Kiss Off","Snap Pool","Lag Dogs","Drop Shots","Sharp Shooters","Wild Strokes","Blue Chalk","Felt Force",
-  "9-Ball Knights","Combo Kids","Side Spin","Backspin","Push Out","Free Stroke","Rack 'em Up","Off the Rail",
-  "Pocket Lint","Soft Break","Hard Stop","Long Rail","Cue Tippers","Bank Job","Cross Side","Final Rack"
-];
 
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 function pad4(n) { return String(n).padStart(4, '0'); }
@@ -416,7 +404,7 @@ function renderTeams() {
   const body = document.getElementById('teamsBody');
   document.getElementById('teamsCount').textContent = _teams.length + ' team' + (_teams.length === 1 ? '' : 's');
   if (!_teams.length) {
-    body.innerHTML = '<tr><td colspan="3" class="hint">No teams yet. Paste tab-separated rows above, or hit "Reset to sample data".</td></tr>';
+    body.innerHTML = '<tr><td colspan="3" class="hint">No teams yet. Paste tab-separated rows in the Add teams card above.</td></tr>';
     return;
   }
   body.innerHTML = _teams.map(t => '<tr>'
@@ -506,33 +494,6 @@ async function doClearAllTeams() {
   }
 }
 
-/* ── Reset to sample data ─────────────────── */
-function resetToSample() {
-  confirmModal({
-    title: 'Reset teams to sample data?',
-    message: 'Wipes the current teams list and re-seeds 64 sample teams (numbers 0101–0416). Can’t be undone.',
-    okText: 'Reset',
-    onOk: doResetToSample
-  });
-}
-async function doResetToSample() {
-  try {
-    // Wipe — DELETE filtered by id>=0 catches all rows.
-    await sb('DELETE', 'teams?id=gte.0');
-    // Build the seed list
-    const rows = SAMPLE_NAMES.map((name, i) => {
-      const div = Math.floor(i / 16) + 1;   // 1..4
-      const pos = (i % 16) + 1;             // 1..16
-      return { number: div * 100 + pos, name };
-    });
-    const created = await sb('POST', 'teams', rows);
-    _teams = Array.isArray(created) ? created : [created];
-    _teams.sort((a, b) => a.number - b.number);
-    renderTeams();
-  } catch (e) {
-    alert('Reset failed: ' + e.message);
-  }
-}
 
 /* ── Confirm modal ────────────────────────── */
 function confirmModal(opts) {

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BreakOut — Tournament viewer (PoC)</title>
+<title>BreakOut — Tournament viewer</title>
 <style>
   :root {
     --spm-primary: #ea002a;
@@ -481,7 +481,7 @@
 <div class="header">
   <div class="header-inner">
     <h1><span class="brand-dot"></span>BreakOut</h1>
-    <span class="badge">PoC · 12 + 12 → 64</span>
+    <span class="badge">12 + 12 &rarr; 64</span>
     <div class="search" id="searchWrap">
       <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
       <input type="text" id="searchInput" placeholder="Search team — jump to latest match" autocomplete="off">
@@ -494,7 +494,7 @@
 
 <div id="tournamentRoot"></div>
 
-<p class="foot">PoC — sample winners are deterministic so the structure is comparable across reloads. Two 12-team brackets feed losers into the 64-team consolation at staggered rounds; the 64-team alternates "integrate losers" / "winners advance" through to the final. Loser destinations and entry sources are annotated on every match.</p>
+<p class="foot">Two 12-team brackets feed losers into the 64-team consolation at staggered rounds; the 64-team alternates "integrate losers" / "winners advance" through to the final. Loser destinations and entry sources are annotated on every match.</p>
 
 <script>
 document.write('<script src="version.js?_=' + Date.now() + '"><\/script>');
@@ -528,8 +528,8 @@ const HEADERS_STAFF = STAFF_KEY
   ? { apikey: STAFF_KEY, Authorization: 'Bearer ' + STAFF_KEY, 'Accept-Profile': 'breakout', 'Content-Profile': 'breakout', 'Content-Type': 'application/json' }
   : null;
 
-/* Tournament-wide configurable text. Will eventually load from
- * breakout.tournaments(text JSONB) — hardcoded for the PoC. */
+/* Tournament-wide configurable text. Hydrated from
+ * breakout.tournaments.config when an active tournament is loaded. */
 const TOURNAMENT_TEXT = {
   bracketChampText: 'Bracket Champ',
   championText: 'Champion'
@@ -780,10 +780,6 @@ function fmtTime(mins) {
   return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ampm;
 }
 function fmtMoney(n) { return n == null ? '' : '$' + n.toLocaleString(); }
-function makePrng(seed) {
-  let s = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
-  return () => { s = (s * 1103515245 + 12345) & 0x7FFFFFFF; return s / 0x7FFFFFFF; };
-}
 
 /* ── Data fetch ───────────────────────────── */
 async function loadTeams() {
@@ -1031,14 +1027,12 @@ function reconstructTournament(matchData, seedAssignments, teamsByNumber) {
 }
 
 function resolveTournament(t) {
-  // Walk matches in match_no order; PRNG resolves a sample winner if both
-  // teams are present. Real results would arrive from the DB instead.
+  // Walk matches in play order. For each match:
+  //   1) Resolve top/bottom from upstream feeders if not already set.
+  //   2) If staff recorded a winner (winner_side), apply it.
+  //   3) Otherwise the match stays TBD until staff records a winner.
   const ordered = t.all.filter(m => !m.bye && m.globalNo != null)
                         .slice().sort((a, b) => a.globalNo - b.globalNo);
-  // Sample mode is ON only while NO match has a staff-recorded winner.
-  // Once any winner_side is set, PRNG turns off for the whole tournament.
-  const sampleMode = !ordered.some(m => m.winner_side === 'top' || m.winner_side === 'bot');
-  const prng = sampleMode ? makePrng(24) : null;
   for (const m of ordered) {
     if (m.top == null) {
       if (m.topFromMatch) m.top = m.topFromMatch.winner;
@@ -1052,14 +1046,6 @@ function resolveTournament(t) {
       m.winner = m.top; m.loser = m.bottom; m.topWins = true;
     } else if (m.winner_side === 'bot' && m.bottom) {
       m.winner = m.bottom; m.loser = m.top; m.topWins = false;
-    } else if (prng && m.top && m.bottom) {
-      const lower  = m.top.seed < m.bottom.seed ? m.top : m.bottom;
-      const higher = m.top.seed < m.bottom.seed ? m.bottom : m.top;
-      const gap    = Math.abs(m.top.seed - m.bottom.seed);
-      const upset  = prng() < (gap > 4 ? 0.15 : 0.30);
-      m.winner = upset ? higher : lower;
-      m.loser  = upset ? lower  : higher;
-      m.topWins = m.winner === m.top;
     }
   }
   for (const m of t.all) {
@@ -1072,8 +1058,8 @@ function resolveTournament(t) {
 
 /* ════════════════════════════════════════════════════════════════════════
    TOURNAMENT LOAD — prefer the active row in breakout.tournaments. Falls
-   back to inline template generation when the DB has no row yet, so the
-   PoC page never goes blank.
+   back to inline template generation when no row exists yet so the bracket
+   structure stays visible (all matches show TBD until results are recorded).
    ════════════════════════════════════════════════════════════════════════ */
 async function loadActiveTournament() {
   try {
