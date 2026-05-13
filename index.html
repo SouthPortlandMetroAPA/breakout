@@ -192,6 +192,17 @@
     text-transform: uppercase;
     font-variant-numeric: tabular-nums;
   }
+  .round-tables {
+    font-size: 0.66rem; font-weight: 800;
+    color: var(--spm-accent);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 2px;
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: rgba(0,49,161,0.10);
+  }
 
   /* Matches column: fixed height = bracket-slots × slot-h, cells absolutely
      positioned at their canonical bracket Y centers. */
@@ -1124,7 +1135,8 @@ function reconstructTournament(matchData, seedAssignments, teamsByNumber) {
       winner_side: md.winner_side || null,
       globalNo: md.match_no || null,
       scheduled_at: md.scheduled_at || null,
-      day: md.day, time: md.time, payout: md.payout, table_no: md.table_no
+      day: md.day, time: md.time, payout: md.payout, table_no: md.table_no,
+      tables_in_parallel: md.tables_in_parallel || 1
     };
     if (m.bye && m.top) { m.winner = m.top; m.topWins = true; }
     matchById[m.id] = m;
@@ -1256,9 +1268,15 @@ function bracketSectionHtml(bracket, kind, rounds, opts) {
 
 function roundHtml(roundMatches, roundIdx, totalRounds, slots) {
   const isFinal = roundIdx === totalRounds - 1;
+  // Tables-in-parallel is a round-level property — read from the first real
+  // match in this round. Shows a small "2 tables" badge under the round name.
+  const real = roundMatches.filter(m => !m.bye);
+  const tip = real[0] && real[0].tables_in_parallel ? real[0].tables_in_parallel : 1;
+  const tipLabel = tip > 1 ? '<div class="round-tables">' + tip + ' tables</div>' : '';
   return '<div class="round' + (isFinal ? ' is-final' : '') + '" style="--bracket-slots:' + slots + '">'
     + '<div class="round-header">'
     +   '<div class="round-name">Round ' + (roundIdx + 1) + '</div>'
+    +   tipLabel
     + '</div>'
     + '<div class="matches" style="--bracket-slots:' + slots + '">'
     +   roundMatches.map(m => matchHtml(m, isFinal)).join('')
