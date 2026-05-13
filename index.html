@@ -27,10 +27,10 @@
        its own --bracket-slots (12-team modified = 4 R1 lanes; 64-team
        = 8 R1 lanes). All match cells live at canonical bracket Y
        centers in slot units. */
-    --slot-h: 156px;
-    --slot-h-mob: 132px;
-    --card-h: 140px;
-    --card-h-mob: 120px;
+    --slot-h: 176px;
+    --slot-h-mob: 152px;
+    --card-h: 160px;
+    --card-h-mob: 138px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -204,6 +204,28 @@
   .match-top .dest-win  { color: #15803d; }
   .match-top .dest-lose { color: #b45309; }
   .match-top .dest-out  { color: var(--muted); }
+
+  /* Per-match schedule strip — day, time, payout. Sits between the top
+     header and the team rows so it's prominent but doesn't crowd the
+     match number or destinations. */
+  .match-schedule {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    background: #f4f5f7;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px;
+    font-size: 0.66rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text);
+    line-height: 1.2;
+  }
+  .match-schedule .when { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .match-schedule .when .day  { color: var(--muted); }
+  .match-schedule .when .time { color: var(--text); font-variant-numeric: tabular-nums; }
+  .match-schedule .payout { color: #15803d; font-weight: 900; font-variant-numeric: tabular-nums; }
 
   .match-rows { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
   .match-row {
@@ -659,7 +681,7 @@ function roundHtml(roundMatches, roundIdx, totalRounds, cfg, bracketLabel, slots
     +   '<div class="round-payout">' + (cfg.payout ? esc(fmtMoney(cfg.payout)) : ' ') + '</div>'
     + '</div>'
     + '<div class="matches" style="--bracket-slots:' + slots + '">'
-    +   roundMatches.map((m, i) => matchHtml(m, assignTable(roundMatches, i, bracketLabel), isFinal)).join('')
+    +   roundMatches.map((m, i) => matchHtml(m, assignTable(roundMatches, i, bracketLabel), isFinal, cfg)).join('')
     + '</div>'
     + '</div>';
 }
@@ -691,12 +713,15 @@ function bracketSlotsFor(bracket) {
   return bracket.label === '64' ? 8 : 4;
 }
 
-function matchHtml(m, table, isFinalOfBracket) {
+function matchHtml(m, table, isFinalOfBracket, cfg) {
   const tnum = m.globalNo ? 'M' + m.globalNo : '—';
   const y = matchYUnits(m);
   const topWin = m.topWins === true;
   const botWin = m.topWins === false;
   const bracketLabel = m.bracket === '64' ? '64-team' : 'Bracket ' + m.bracket;
+  const scheduleDay  = (cfg && cfg.day)  ? cfg.day.slice(0, 3).toUpperCase() : '';
+  const scheduleTime = (cfg && cfg.time) ? cfg.time : '';
+  const schedulePay  = (cfg && cfg.payout) ? fmtMoney(cfg.payout) : '';
 
   // Where the winner of THIS match goes.
   const winnerTo = m.winnerAdvancesTo
@@ -728,11 +753,20 @@ function matchHtml(m, table, isFinalOfBracket) {
     +   '<span class="table">' + (table ? 'Table ' + table : ' ') + '</span>'
     + '</div>';
 
+  const schedule = '<div class="match-schedule">'
+    +   '<span class="when">'
+    +     (scheduleDay  ? '<span class="day">'  + esc(scheduleDay)  + '</span>' : '')
+    +     (scheduleTime ? '<span class="time">' + esc(scheduleTime) + '</span>' : '')
+    +   '</span>'
+    +   (schedulePay ? '<span class="payout">' + esc(schedulePay) + '</span>' : '<span></span>')
+    + '</div>';
+
   return '<div class="match" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '" style="--y:' + y + '">'
     + '<div class="match-top">'
     +   '<span class="mno">' + esc(tnum) + '<span class="mno-bracket">' + esc(bracketLabel) + '</span></span>'
     +   '<span class="destinations">' + destinations + '</span>'
     + '</div>'
+    + schedule
     + rows
     + foot
     + '</div>';
