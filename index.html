@@ -638,6 +638,22 @@ let _staffEditingMatchId = null;
 function openStaffModal(matchId) {
   const m = _tournament && _tournament.all.find(x => x.id === matchId);
   if (!m) return;
+  // Can't record a winner while either entrant is waiting on an upstream
+  // match — there's no game to score yet. Toast the dependency and bail.
+  if (!m.top || !m.bottom) {
+    const waitOn = [];
+    if (!m.top) {
+      const src = m.topFromMatch || m.topFromMatchLoser;
+      if (src && src.globalNo) waitOn.push('M' + src.globalNo);
+    }
+    if (!m.bottom) {
+      const src = m.botFromMatch || m.botFromMatchLoser;
+      if (src && src.globalNo) waitOn.push('M' + src.globalNo);
+    }
+    const tail = waitOn.length ? ' on ' + waitOn.join(' and ') : '';
+    showToast('Waiting' + tail + ' before scoring this match', 'err');
+    return;
+  }
   _staffEditingMatchId = matchId;
   const modal = document.getElementById('staffModal');
   document.getElementById('staffModalMno').textContent =

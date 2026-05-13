@@ -196,6 +196,7 @@
       <span class="hint" id="tournamentStatus"></span>
       <div style="margin-left:auto" class="actions">
         <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate default (Mod-SE 12+12&rarr;64)</button>
+        <button class="btn btn-outline btn-sm" onclick="clearAllMatchResults()" style="color:var(--danger);border-color:var(--danger)">Clear all results</button>
         <button class="btn btn-outline btn-sm" onclick="deactivateTournaments()">Deactivate all</button>
       </div>
     </div>
@@ -738,6 +739,42 @@ function renderMatchesTable(matches, tournamentName) {
     + '</tr></thead>'
     + '<tbody>' + rowsHtml + '</tbody>'
     + '</table>';
+}
+
+async function clearAllMatchResults() {
+  let active;
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?is_active=eq.true&order=id.desc&limit=1&select=id,name,matches', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    if (!list.length) { alert('No active tournament to clear.'); return; }
+    active = list[0];
+  } catch (e) { alert('Load failed: ' + e.message); return; }
+
+  const matches = Array.isArray(active.matches) ? active.matches : [];
+  const withResults = matches.filter(m => m.winner_side === 'top' || m.winner_side === 'bot').length;
+  if (!withResults) { alert('No match results to clear (no winners have been recorded yet).'); return; }
+
+  confirmModal({
+    title: 'Clear ALL match results?',
+    message: 'This will wipe the winner from ' + withResults + ' match' + (withResults === 1 ? '' : 'es')
+           + ' in "' + (active.name || 'active tournament') + '". '
+           + 'The bracket will revert to "no winners recorded" state for everyone viewing it. '
+           + 'This cannot be undone.',
+    okText: 'Clear all results',
+    onOk: () => doClearAllMatchResults(active)
+  });
+}
+
+async function doClearAllMatchResults(active) {
+  try {
+    const cleared = (active.matches || []).map(m => Object.assign({}, m, { winner_side: null }));
+    await sb('PATCH', 'tournaments?id=eq.' + active.id, { matches: cleared });
+    loadTournaments();
+    loadMatchesView();
+  } catch (e) {
+    alert('Clear failed: ' + e.message);
+  }
 }
 
 async function deactivateTournaments() {
