@@ -995,23 +995,54 @@ function drawConnectorsFor(wrap, matches) {
       }
     }
 
-    // Cross-bracket source stubs. When this match ALSO has an intra-bracket
-    // feeder, the feeder's connector could collide with a straight horizontal
-    // stub — route as an L-shape with the label parked OUTSIDE the target
-    // row (above for top targets, below for bot targets) so the label and
-    // dashed line are visually clear of any intra-bracket Z-path.
-    const hasIntraFeeder = !!m.topFromMatch || !!m.botFromMatch;
+    // Cross-bracket source stubs. Only L-bend when the intra-bracket feeder
+    // line ACTUALLY crosses the cross-source row Y — otherwise the straight
+    // horizontal stub is fine and reads cleaner.
+    const intraRanges = intraFeederYRanges(m, getCellGeom);
     if (m.topFromMatchLoser && down.topRowY != null) {
       const label = 'L of M' + m.topFromMatchLoser.globalNo;
-      if (hasIntraFeeder) drawCrossSourceL(svg, down.left, down.topRowY, 'top', label);
-      else                drawCrossSource(svg,  down.left, down.topRowY, label);
+      if (inAnyRange(down.topRowY, intraRanges))
+        drawCrossSourceL(svg, down.left, down.topRowY, 'top', label);
+      else
+        drawCrossSource(svg, down.left, down.topRowY, label);
     }
     if (m.botFromMatchLoser && down.botRowY != null) {
       const label = 'L of M' + m.botFromMatchLoser.globalNo;
-      if (hasIntraFeeder) drawCrossSourceL(svg, down.left, down.botRowY, 'bot', label);
-      else                drawCrossSource(svg,  down.left, down.botRowY, label);
+      if (inAnyRange(down.botRowY, intraRanges))
+        drawCrossSourceL(svg, down.left, down.botRowY, 'bot', label);
+      else
+        drawCrossSource(svg, down.left, down.botRowY, label);
     }
   }
+}
+
+/* For a downstream match, compute the Y range(s) that the intra-bracket
+ * feeder connector(s) occupy at the gap midpoint (xMid). A Z-path takes
+ * the full span between its feeder-Y and target-Y at xMid; a horizontal
+ * line collapses to a zero-width range at that single Y. */
+function intraFeederYRanges(m, getCellGeom) {
+  const ranges = [];
+  const addRange = (feeder, targetY) => {
+    const f = getCellGeom(feeder.id);
+    if (!f || targetY == null) return;
+    let y1 = f.cy;
+    if (feeder.topWins === true)  y1 = f.topRowY != null ? f.topRowY : f.cy;
+    if (feeder.topWins === false) y1 = f.botRowY != null ? f.botRowY : f.cy;
+    ranges.push([Math.min(y1, targetY), Math.max(y1, targetY)]);
+  };
+  const down = getCellGeom(m.id);
+  if (!down) return ranges;
+  if (m.topFromMatch) addRange(m.topFromMatch, down.topRowY);
+  if (m.botFromMatch) addRange(m.botFromMatch, down.botRowY);
+  return ranges;
+}
+
+function inAnyRange(y, ranges) {
+  const PAD = 3;  // generous so labels never visually graze the connector
+  for (const [lo, hi] of ranges) {
+    if (y >= lo - PAD && y <= hi + PAD) return true;
+  }
+  return false;
 }
 
 /* Straight horizontal stub + label at the target row's Y. Used when the

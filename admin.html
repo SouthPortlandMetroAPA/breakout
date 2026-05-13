@@ -153,14 +153,16 @@
 
 <div id="adminMain" class="wrap hidden">
   <div class="card">
-    <h2>Add a team</h2>
-    <div class="row">
-      <div style="flex:1"><label for="newNum">Team number</label><input type="number" id="newNum" min="101" max="9916" placeholder="0101" class="num-input"></div>
-      <div style="flex:3"><label for="newName">Name</label><input type="text" id="newName" placeholder="Average Joes"></div>
-      <div style="flex:0 0 auto"><button class="btn btn-primary" onclick="addTeam()">Add</button></div>
+    <h2>Add teams</h2>
+    <p class="hint" style="margin-top:0">Paste tab-separated rows: <code>number&lt;TAB&gt;name</code>, one team per line. Blank lines are ignored. Last 2 digits of the number must be 01&ndash;16.</p>
+    <textarea id="bulkInput" rows="10" spellcheck="false" placeholder="1503&#9;Avenging Eagles&#10;1504&#9;Greek Villagers&#10;5109&#9;SlopDawg Billard&rsquo;Air"
+              style="width:100%;font-family:'SF Mono',Consolas,Menlo,monospace;font-size:0.85rem;line-height:1.45;padding:8px 10px;border:1px solid var(--border-strong);border-radius:6px;resize:vertical;background:#fafbfc;"></textarea>
+    <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="bulkAddTeams()">Add teams</button>
+      <button class="btn btn-outline btn-sm" onclick="document.getElementById('bulkInput').value=''">Clear</button>
+      <span class="hint" id="bulkPreview"></span>
     </div>
-    <p class="hint" style="margin-top:4px">4-digit team number. Last two digits must be 01–16. (e.g. <code>0103</code>, <code>0216</code>, <code>0416</code>.)</p>
-    <div id="newStatus" class="status-line"></div>
+    <div id="bulkStatus" class="status-line"></div>
   </div>
 
   <div class="card">
@@ -305,40 +307,94 @@ async function loadTeams() {
   _teams = await sb('GET', 'teams?order=number.asc') || [];
 }
 
-/* ── Teams CRUD ───────────────────────────── */
-async function addTeam() {
-  hideStatus('newStatus');
-  const num = parseInt(document.getElementById('newNum').value, 10);
-  const name = document.getElementById('newName').value.trim();
-  if (!validNumber(num)) return setStatus('newStatus', 'Team number must be 4 digits with last 2 digits 01–16.', 'err');
-  if (!name) return setStatus('newStatus', 'Name required.', 'err');
-  if (_teams.some(t => t.number === num)) return setStatus('newStatus', 'A team already has number ' + pad4(num) + '.', 'err');
-  try {
-    const created = await sb('POST', 'teams', { number: num, name });
-    _teams.push(Array.isArray(created) ? created[0] : created);
-    _teams.sort((a, b) => a.number - b.number);
-    document.getElementById('newNum').value = '';
-    document.getElementById('newName').value = '';
-    setStatus('newStatus', 'Added ' + pad4(num) + ' ' + name + '.', 'ok');
-    renderTeams();
-    document.getElementById('newNum').focus();
-  } catch (e) {
-    const msg = String(e.message || '').toLowerCase();
-    if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('23505')) {
-      setStatus('newStatus', 'That team number is already in use.', 'err');
-    } else if (msg.includes('check') || msg.includes('23514')) {
-      setStatus('newStatus', 'Number violates the 4-digit / last-two-01-16 rule.', 'err');
-    } else {
-      setStatus('newStatus', 'Add failed: ' + e.message, 'err');
+/* ── Teams CRUD ─────────────────────────────
+ * Bulk add via tab-separated paste: `number<TAB>name` per line. Blank
+ * lines are skipped. Validates ALL rows before INSERTing any of them
+ * (atomic — either every row inserts or none do). */
+function parseBulkTsv(text) {
+  const lines = text.split(/\r?\n/);
+  const rows = [];
+  const errors = [];
+  const seenNumbers = new Set();
+  lines.forEach((line, idx) => {
+    if (!line.trim()) return;
+    const parts = line.split('\t');
+    const lineNo = idx + 1;
+    if (parts.length < 2) {
+      errors.push('Line ' + lineNo + ': expected <number><TAB><name>');
+      return;
     }
+    const numStr = parts[0].trim();
+    const name = parts.slice(1).join('\t').trim();
+    const num = parseInt(numStr, 10);
+    if (!Number.isInteger(num) || numStr === '' || !/^\d+$/.test(numStr)) {
+      errors.push('Line ' + lineNo + ': "' + numStr + '" is not a number');
+      return;
+    }
+    if (!validNumber(num)) {
+      errors.push('Line ' + lineNo + ': ' + pad4(num) + ' must have last 2 digits 01-16');
+      return;
+    }
+    if (!name) {
+      errors.push('Line ' + lineNo + ': missing team name');
+      return;
+    }
+    if (seenNumbers.has(num)) {
+      errors.push('Line ' + lineNo + ': ' + pad4(num) + ' appears twice in the paste');
+      return;
+    }
+    if (_teams.some(t => t.number === num)) {
+      errors.push('Line ' + lineNo + ': ' + pad4(num) + ' already exists in the database');
+      return;
+    }
+    seenNumbers.add(num);
+    rows.push({ number: num, name });
+  });
+  return { rows, errors };
+}
+
+async function bulkAddTeams() {
+  hideStatus('bulkStatus');
+  const text = document.getElementById('bulkInput').value;
+  const { rows, errors } = parseBulkTsv(text);
+  if (errors.length) {
+    setStatus('bulkStatus', errors.slice(0, 6).join(' · ') + (errors.length > 6 ? ' (+ ' + (errors.length - 6) + ' more)' : ''), 'err');
+    return;
   }
+  if (!rows.length) {
+    setStatus('bulkStatus', 'Nothing to add. Paste at least one row.', 'hint');
+    return;
+  }
+  try {
+    const created = await sb('POST', 'teams', rows);
+    const list = Array.isArray(created) ? created : [created];
+    _teams.push(...list);
+    _teams.sort((a, b) => a.number - b.number);
+    document.getElementById('bulkInput').value = '';
+    setStatus('bulkStatus', 'Added ' + list.length + ' team' + (list.length === 1 ? '' : 's') + '.', 'ok');
+    renderTeams();
+  } catch (e) {
+    setStatus('bulkStatus', 'Add failed: ' + e.message, 'err');
+  }
+}
+
+/* Live preview of paste-parse counts. */
+function refreshBulkPreview() {
+  const text = document.getElementById('bulkInput').value;
+  const preview = document.getElementById('bulkPreview');
+  if (!text.trim()) { preview.textContent = ''; return; }
+  const { rows, errors } = parseBulkTsv(text);
+  let parts = [];
+  if (rows.length)   parts.push(rows.length + ' valid');
+  if (errors.length) parts.push(errors.length + ' error' + (errors.length === 1 ? '' : 's'));
+  preview.textContent = parts.join(' · ');
 }
 
 function renderTeams() {
   const body = document.getElementById('teamsBody');
   document.getElementById('teamsCount').textContent = _teams.length + ' team' + (_teams.length === 1 ? '' : 's');
   if (!_teams.length) {
-    body.innerHTML = '<tr><td colspan="3" class="hint">No teams yet. Add some above, or hit "Reset to sample data".</td></tr>';
+    body.innerHTML = '<tr><td colspan="3" class="hint">No teams yet. Paste tab-separated rows above, or hit "Reset to sample data".</td></tr>';
     return;
   }
   body.innerHTML = _teams.map(t => '<tr>'
@@ -449,8 +505,11 @@ function closeConfirm(ok) {
 }
 
 /* ── Form helpers ─────────────────────────── */
-document.getElementById('newNum').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); document.getElementById('newName').focus(); } });
-document.getElementById('newName').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); addTeam(); } });
+document.getElementById('bulkInput').addEventListener('input', refreshBulkPreview);
+document.getElementById('bulkInput').addEventListener('keydown', (ev) => {
+  // Ctrl/Cmd+Enter submits the bulk add.
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); bulkAddTeams(); }
+});
 
 /* ── Tournament management ────────────────── */
 const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
