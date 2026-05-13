@@ -163,6 +163,31 @@
     font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 5px; cursor: pointer;
   }
   .matches-table .edit-btn:hover { background: rgba(0,49,161,0.06); }
+
+  /* Tournament edit modal */
+  .t-edit-grid { display: flex; flex-direction: column; gap: 10px; }
+  .t-edit-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; }
+  .t-edit-grid label input, .t-edit-grid label select, .t-edit-grid label textarea {
+    padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 6px;
+    font-size: 0.92rem; font-family: inherit;
+  }
+  .t-edit-grid fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .t-edit-grid legend { font-size: 0.72rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 6px; }
+  .t-edit-grid .t-edit-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .t-edit-grid .t-edit-links {
+    padding: 8px 12px; background: #fafbfc; border-radius: 6px;
+    font-size: 0.82rem;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .t-edit-grid .t-edit-links a {
+    color: var(--spm-accent); font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.78rem;
+    word-break: break-all;
+  }
+
+  .tournaments-table tbody tr.editable { cursor: pointer; }
+  .tournaments-table tbody tr.editable:hover { background: rgba(0,49,161,0.04); }
+  .tournaments-table .status-pill { cursor: pointer; transition: opacity 0.15s; }
+  .tournaments-table .status-pill:hover { opacity: 0.8; }
   code { background: #eef1f7; padding: 2px 6px; border-radius: 4px; font-size: 0.86em; color: var(--spm-accent); font-weight: 700; }
 
   .status-line { padding: 9px 13px; border-radius: 10px; font-size: 0.84rem; font-weight: 600; margin: 6px 0; display: none; }
@@ -204,7 +229,8 @@
 </div>
 
 <div class="header">
-  <a class="header-link" href="./" title="Open the public bracket">View site →</a>
+  <a class="header-link" href="./" title="Open the public bracket">View site &rarr;</a>
+  <a class="header-link" id="staffSiteLink" href="#" title="Open the public bracket in staff scoring mode">Staff scoring &rarr;</a>
   <div class="admin-badge">ADMIN</div>
   <h1>BreakOut <span class="subpage">Teams</span></h1>
 </div>
@@ -253,7 +279,6 @@
       <div style="margin-left:auto" class="actions">
         <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate tournament</button>
         <button class="btn btn-outline btn-sm" onclick="clearAllMatchResults()" style="color:var(--danger);border-color:var(--danger)">Clear all results</button>
-        <button class="btn btn-outline btn-sm" onclick="deactivateTournaments()">Deactivate all</button>
       </div>
     </div>
     <p class="hint">Uses the <code>Mod-SE 12+12&rarr;64</code> template and assigns the first 24 teams (by number) to seeds 1&ndash;12 in each 12-team bracket. The viewer auto-loads the active tournament.</p>
@@ -285,6 +310,71 @@
       <button class="btn btn-outline" onclick="closeEdit()">Cancel</button>
       <button class="btn btn-danger" onclick="askDelete()">Delete</button>
       <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="tournamentEditModal">
+  <div class="modal-box" style="max-width:580px;max-height:85vh;overflow-y:auto">
+    <div class="modal-title" id="tournamentEditTitle">Edit tournament</div>
+    <div class="t-edit-grid">
+      <label>Slug <span class="hint" style="font-weight:600">(immutable)</span>
+        <input type="text" id="tEditSlug" readonly style="background:#fafbfc;font-family:'SF Mono',Consolas,Menlo,monospace;color:var(--spm-accent)">
+      </label>
+      <label>Name
+        <input type="text" id="tEditName" placeholder="SPM Spring 2026">
+      </label>
+      <label>Status
+        <select id="tEditStatus">
+          <option value="draft">Draft &mdash; setup, hidden from public</option>
+          <option value="live">Live &mdash; visible, staff can score</option>
+          <option value="completed">Completed &mdash; visible, scoring locked</option>
+          <option value="archived">Archived &mdash; hidden from list, URL works</option>
+        </select>
+      </label>
+
+      <fieldset>
+        <legend>Dates</legend>
+        <div class="t-edit-row2">
+          <label>Start <input type="date" id="tEditStartDate"></label>
+          <label>End   <input type="date" id="tEditEndDate"></label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Venue</legend>
+        <label>Name <input type="text" id="tEditVenueName" placeholder="Spare Time Recreation"></label>
+        <label>Address <input type="text" id="tEditVenueAddress" placeholder="123 Main St, Westbrook ME"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Tournament Director</legend>
+        <label>Name <input type="text" id="tEditDirectorName" placeholder="TD name"></label>
+        <label>Contact <input type="text" id="tEditDirectorContact" placeholder="email@example.com"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Description &amp; branding</legend>
+        <label>Description <textarea id="tEditDescription" rows="4" placeholder="Markdown OK"></textarea></label>
+        <label>Logo URL <input type="text" id="tEditLogoUrl" placeholder="https://..."></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Display text overrides</legend>
+        <label>Bracket Champ label <input type="text" id="tEditBracketChamp" placeholder="Bracket Champ"></label>
+        <label>Champion label <input type="text" id="tEditChampion" placeholder="Champion"></label>
+      </fieldset>
+
+      <div class="t-edit-links">
+        <div><span class="hint">Public:</span> <a id="tEditPublicUrl" href="#" target="_blank" rel="noopener"></a></div>
+        <div><span class="hint">Staff:</span> <a id="tEditStaffUrl" href="#" target="_blank" rel="noopener"></a></div>
+      </div>
+    </div>
+    <div id="tournamentEditStatus" class="status-line"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeTournamentEditModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="deleteEditingTournament()">Delete tournament</button>
+      <button class="btn btn-primary" onclick="saveTournamentEdit()">Save</button>
     </div>
   </div>
 </div>
@@ -639,23 +729,21 @@ async function loadTournaments() {
     }
     const live = list.filter(t => t.status === 'live').length;
     status.textContent = list.length + ' total · ' + live + ' live';
-    body.innerHTML = '<table class="table"><thead><tr>'
-      + '<th>Slug</th><th>Name</th><th>Status</th><th>Dates</th><th>Created</th><th></th>'
+    body.innerHTML = '<table class="table tournaments-table"><thead><tr>'
+      + '<th>Slug</th><th>Name</th><th>Status</th><th>Dates</th><th>Created</th>'
       + '</tr></thead><tbody>'
       + list.map(t => {
-          const slugCell = '<a href="?t=' + encodeURIComponent(t.slug) + '" target="_blank" rel="noopener" style="font-family:\'SF Mono\',Consolas,Menlo,monospace;color:var(--spm-accent);font-weight:700">' + escapeHtml(t.slug) + '</a>';
-          const statusCell = '<span class="status-pill status-' + escapeHtml(t.status) + '">' + escapeHtml(t.status) + '</span>';
+          const slugCell = '<span style="font-family:\'SF Mono\',Consolas,Menlo,monospace;color:var(--spm-accent);font-weight:700">' + escapeHtml(t.slug) + '</span>';
+          const statusCell = '<span class="status-pill status-' + escapeHtml(t.status) + '" data-tournament-id="' + t.id + '" onclick="event.stopPropagation(); openTournamentEditModal(' + t.id + ', true)" title="Click to change status">' + escapeHtml(t.status) + '</span>';
           const dates = (t.start_date || t.end_date)
             ? (escapeHtml(t.start_date || '?') + ' &rarr; ' + escapeHtml(t.end_date || '?'))
             : '<span class="hint">—</span>';
-          const viewerHref = '../index.html?t=' + encodeURIComponent(t.slug);
-          return '<tr>'
+          return '<tr class="editable" data-tournament-id="' + t.id + '" onclick="openTournamentEditModal(' + t.id + ')">'
             + '<td>' + slugCell + '</td>'
             + '<td>' + escapeHtml(t.name) + '</td>'
             + '<td>' + statusCell + '</td>'
             + '<td class="hint">' + dates + '</td>'
             + '<td class="hint">' + new Date(t.created_at).toLocaleString() + '</td>'
-            + '<td><a class="btn btn-outline btn-sm" href="../index.html?t=' + encodeURIComponent(t.slug) + '" target="_blank" rel="noopener">View &rarr;</a></td>'
             + '</tr>';
         }).join('') + '</tbody></table>';
   } catch (e) {
@@ -1179,17 +1267,108 @@ async function doClearAllMatchResults(active) {
   }
 }
 
-async function deactivateTournaments() {
+/* ── Tournament edit modal ──────────────── */
+let _editingTournamentId = null;
+
+async function openTournamentEditModal(tournamentId, focusStatus) {
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?id=eq.' + tournamentId + '&select=*', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    if (!list.length) throw new Error('Tournament not found');
+    const t = list[0];
+    _editingTournamentId = t.id;
+    document.getElementById('tournamentEditTitle').textContent = 'Edit tournament: ' + t.name;
+    document.getElementById('tEditSlug').value           = t.slug || '';
+    document.getElementById('tEditName').value           = t.name || '';
+    document.getElementById('tEditStatus').value         = t.status || 'draft';
+    document.getElementById('tEditStartDate').value      = t.start_date || '';
+    document.getElementById('tEditEndDate').value        = t.end_date || '';
+    document.getElementById('tEditVenueName').value      = t.venue_name || '';
+    document.getElementById('tEditVenueAddress').value   = t.venue_address || '';
+    document.getElementById('tEditDirectorName').value   = t.director_name || '';
+    document.getElementById('tEditDirectorContact').value= t.director_contact || '';
+    document.getElementById('tEditDescription').value    = t.description || '';
+    document.getElementById('tEditLogoUrl').value        = t.logo_url || '';
+    const cfg = t.config || {};
+    document.getElementById('tEditBracketChamp').value   = cfg.bracketChampText || '';
+    document.getElementById('tEditChampion').value       = cfg.championText || '';
+    // Links
+    const publicHref = '../index.html?t=' + encodeURIComponent(t.slug);
+    const staffHref  = '../index.html?t=' + encodeURIComponent(t.slug) + '&role=staff&key=' + encodeURIComponent(SB_KEY || '');
+    const publicLink = document.getElementById('tEditPublicUrl');
+    publicLink.href = publicHref;
+    publicLink.textContent = publicHref;
+    const staffLink = document.getElementById('tEditStaffUrl');
+    staffLink.href = staffHref;
+    staffLink.textContent = '../index.html?t=' + t.slug + '&role=staff&key=…';
+    hideStatus('tournamentEditStatus');
+    document.getElementById('tournamentEditModal').classList.add('shown');
+    if (focusStatus) {
+      setTimeout(() => document.getElementById('tEditStatus').focus(), 60);
+    }
+  } catch (e) {
+    alert('Load failed: ' + e.message);
+  }
+}
+
+function closeTournamentEditModal() {
+  document.getElementById('tournamentEditModal').classList.remove('shown');
+  _editingTournamentId = null;
+}
+
+async function saveTournamentEdit() {
+  if (!_editingTournamentId) return;
+  const status = document.getElementById('tEditStatus').value;
+  const cfg = {
+    bracketChampText: document.getElementById('tEditBracketChamp').value.trim() || 'Bracket Champ',
+    championText:     document.getElementById('tEditChampion').value.trim()     || 'Champion'
+  };
+  const patch = {
+    name:             document.getElementById('tEditName').value.trim(),
+    status:           status,
+    is_active:        status === 'live',
+    start_date:       document.getElementById('tEditStartDate').value || null,
+    end_date:         document.getElementById('tEditEndDate').value || null,
+    venue_name:       document.getElementById('tEditVenueName').value.trim() || null,
+    venue_address:    document.getElementById('tEditVenueAddress').value.trim() || null,
+    director_name:    document.getElementById('tEditDirectorName').value.trim() || null,
+    director_contact: document.getElementById('tEditDirectorContact').value.trim() || null,
+    description:      document.getElementById('tEditDescription').value.trim() || null,
+    logo_url:         document.getElementById('tEditLogoUrl').value.trim() || null,
+    config:           cfg
+  };
+  if (!patch.name) {
+    setStatus('tournamentEditStatus', 'Name is required.', 'err');
+    return;
+  }
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _editingTournamentId, patch);
+    closeTournamentEditModal();
+    loadTournaments();
+    loadMatchesView();
+  } catch (e) {
+    setStatus('tournamentEditStatus', 'Save failed: ' + e.message, 'err');
+  }
+}
+
+function deleteEditingTournament() {
+  if (!_editingTournamentId) return;
+  const slug = document.getElementById('tEditSlug').value;
+  const name = document.getElementById('tEditName').value;
   confirmModal({
-    title: 'Archive all live tournaments?',
-    message: 'Sets status=archived on every live tournament. Public viewers will stop seeing them on the root list. Archived tournaments remain reachable by direct slug URL.',
-    okText: 'Archive all',
+    title: 'Delete tournament?',
+    message: 'Permanently deletes "' + name + '" (' + slug + ') including all match data and staff-recorded results. Cannot be undone.',
+    okText: 'Delete tournament',
     onOk: async () => {
       try {
-        await sb('PATCH', 'tournaments?status=eq.live', { status: 'archived', is_active: false });
+        await sb('DELETE', 'tournaments?id=eq.' + _editingTournamentId);
+        closeTournamentEditModal();
         loadTournaments();
         loadMatchesView();
-      } catch (e) { alert('Archive failed: ' + e.message); }
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      }
     }
   });
 }
@@ -1367,6 +1546,10 @@ async function init() {
     return;
   }
   document.getElementById('adminMain').classList.remove('hidden');
+  // Forward the admin's service_role key to the staff-scoring URL so the
+  // header link drops the user straight into a working staff session.
+  const staffLink = document.getElementById('staffSiteLink');
+  if (staffLink && SB_KEY) staffLink.href = './?role=staff&key=' + encodeURIComponent(SB_KEY);
   try { await loadTeams(); } catch (e) { setStatus('bulkStatus', 'Load failed: ' + e.message, 'err'); return; }
   renderTeams();
   loadTournaments();
