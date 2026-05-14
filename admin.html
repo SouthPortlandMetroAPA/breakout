@@ -416,7 +416,7 @@
         <button class="btn btn-outline btn-sm" onclick="renderCapacityAnalyzer()">Refresh</button>
       </div>
     </div>
-    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. <code>duration_min</code> is the <em>per-match</em> time. Every match in a round starts at the round's <code>scheduled_at</code> and runs for <code>duration_min</code> — so demand at any slot = matches whose <code>[start, start+dur]</code> covers it. <strong>Exception:</strong> if a round's <code>tables_in_parallel</code> is set below the round's match count, the extras wave-stagger (later waves start <code>duration_min</code> after the prior wave) at full per-match length.</p>
+    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. <code>duration_min</code> is the <em>per-match</em> time. Every match in a round starts at the round's <code>scheduled_at</code> and runs for <code>duration_min</code>. Demand at a slot = matches whose <code>[start, start+dur]</code> covers it. If a round needs more tables than the venue has, the capacity card flags overflow — split or reschedule the round to fix it.</p>
     <div id="capacityBody"><p class="hint">Loading&hellip;</p></div>
   </div>
 
@@ -1127,7 +1127,7 @@ function renderScheduleEditor() {
       +   '<input type="date" data-field="date" value="' + escapeHtml(dt.date) + '">'
       +   '<select data-field="time">' + buildTimeOptions(dt.time) + '</select>'
       + '</div>'
-      + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="How many tables this round uses concurrently. Leave at the default unless the venue physically can\'t run every match in this round at once — in that case lowering this wave-staggers the extras at full per-match duration.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
+      + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="Informational badge for the round. Does not affect capacity math — every match in the round still starts at scheduled_at for duration_min.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
       + '<select class="dur-select" data-field="duration_min" title="Total expected duration for this round.">' + buildDurationOptions(durMin) + '</select>'
       + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
       + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
@@ -1234,17 +1234,16 @@ async function renumberAllTables() {
 
 /* ── Schedule math ─────────────────────────
  *  duration_min is the PER-MATCH expected duration. Every match in a round
- *  shares scheduled_at (the round's bulk-applied start) and runs for
- *  duration_min minutes — so by default the round's matches all overlap.
+ *  shares scheduled_at and runs for duration_min minutes — full stop.
+ *  No wave staggering, ever. tables_in_parallel is informational only and
+ *  does NOT enter the timing math.
  *
- *  Wave-staggering ONLY kicks in when tables_in_parallel is set below the
- *  round's match count (venue physically can't run them all at once). In
- *  that case the matches split into ceil(N / tip) waves of size `tip`,
- *  each wave starts duration_min after the prior wave, and per-match length
- *  stays at duration_min.
- *
- *  Match's _slotIdx is its sort order within (bracket, round). */
+ *  If a round has more matches than the venue has tables, the capacity card
+ *  will flag the overflow — the operator's job is to split or reschedule
+ *  the round, not the math's job to fabricate sequential slots. */
 function indexMatchSlots(matches) {
+  // Retained for any callers that still want per-round counts; the timing
+  // math itself no longer depends on slot indexing.
   const groups = {};
   for (const m of matches) {
     if (m.is_bye) continue;
@@ -1260,20 +1259,12 @@ function indexMatchSlots(matches) {
   return counts;
 }
 
-function computeMatchInterval(m, roundCounts) {
+function computeMatchInterval(m /* , roundCounts (unused) */) {
   if (!m.scheduled_at) return null;
-  const baseStart = new Date(m.scheduled_at);
-  if (isNaN(baseStart.getTime())) return null;
-  const perMatchDur = m.duration_min != null ? m.duration_min : 240;
-  const roundKey = m.bracket + '/' + m.round;
-  const numMatches = (roundCounts && roundCounts[roundKey]) || 1;
-  // tip default = numMatches → 1 wave, everyone simultaneous (v0.45 behavior).
-  // tip < numMatches → wave-stagger with FIXED per-match duration.
-  const tipRaw = m.tables_in_parallel;
-  const tip = (tipRaw && tipRaw > 0) ? tipRaw : numMatches;
-  const wave = Math.floor((m._slotIdx || 0) / tip);
-  const start = new Date(baseStart.getTime() + wave * perMatchDur * 60 * 1000);
-  const end   = new Date(start.getTime() + perMatchDur * 60 * 1000);
+  const start = new Date(m.scheduled_at);
+  if (isNaN(start.getTime())) return null;
+  const dur = m.duration_min != null ? m.duration_min : 240;
+  const end = new Date(start.getTime() + dur * 60 * 1000);
   return { start, end, m };
 }
 
