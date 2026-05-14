@@ -340,7 +340,26 @@
     overflow: hidden;
     display: flex; flex-direction: column;
     transition: box-shadow 0.18s ease, border-color 0.18s ease;
+    /* Each card is its own container so the collision-driven hide rules
+       below trigger based on the CARD'S own width — independent of zoom,
+       window size, or mobile vs desktop. */
+    container-type: inline-size;
+    container-name: card;
   }
+  /* Seed numbers are intentionally hidden from the bracket viewer; admin
+     and staff UIs still show them where useful. */
+  .match .match-row .seed { display: none !important; }
+  /* Team name scales continuously with the card width using cqi (1 cqi = 1%
+     of the card's inline size). clamp() pins min/max so it stays readable. */
+  .match .match-row .name { font-size: clamp(0.55rem, 6.5cqi, 0.92rem); }
+  /* Progressive hide as the card shrinks — order matches the operator's
+     priority: match number → day → team number → time → dest chips. The
+     team name scales (above) and never disappears. */
+  @container card (max-width: 220px) { .match .match-top .mno { display: none; } }
+  @container card (max-width: 200px) { .match .match-foot .when .day { display: none; } }
+  @container card (max-width: 180px) { .match .match-row .team-num { display: none; } }
+  @container card (max-width: 150px) { .match .match-foot .when .time { display: none; } }
+  @container card (max-width: 130px) { .match .match-top .destinations { display: none; } }
   .match:hover { box-shadow: 0 6px 18px rgba(0,0,0,0.10); }
   @media (max-width: 767px) {
     .match {
