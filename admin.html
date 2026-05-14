@@ -1138,14 +1138,26 @@ function renderScheduleEditor() {
 }
 
 function toggleTablesInParallel(btn) {
-  // duration_min in the dropdown is the wall-clock the operator sets for
-  // whatever toggle state is active — capacity uses it as-is. This handler
-  // just flips the badge; the operator updates the dropdown manually if they
-  // want a different wall-clock for the new table count.
+  // Flipping 1→2 halves the duration; 2→1 doubles it. duration_min is the
+  // wall-clock the operator wants for the CURRENT toggle state — capacity
+  // math reads it as-is. Auto-scaling here keeps wall-clock realistic so the
+  // operator doesn't have to retype it on every toggle.
   const cur = parseInt(btn.dataset.tables, 10) || 1;
   const next = cur === 1 ? 2 : 1;
   btn.dataset.tables = next;
   btn.textContent = next + ' table' + (next === 1 ? '' : 's');
+
+  const row = btn.parentElement;
+  const durSel = row && row.querySelector('select[data-field="duration_min"]');
+  if (durSel && durSel.value !== '') {
+    const curDur = parseInt(durSel.value, 10);
+    if (Number.isInteger(curDur) && curDur > 0) {
+      const newDur = next === 2 ? Math.round(curDur / 2) : curDur * 2;
+      const opt = Array.from(durSel.options).find(o => parseInt(o.value, 10) === newDur);
+      if (opt) durSel.value = String(newDur);
+      else durSel.innerHTML = buildDurationOptions(newDur);
+    }
+  }
 }
 
 async function applyRoundSchedule(bracket, round) {
