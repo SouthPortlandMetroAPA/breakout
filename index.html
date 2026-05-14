@@ -18,19 +18,31 @@
     --drop: #f59e0b;
     --radius: 10px;
     --pill: 999px;
-    --cell-w: 240px;
-    --cell-w-mob: 200px;
-    --round-gap: 110px;
-    --round-gap-mob: 72px;
+    /* Layout sizes are computed from a base × zoom. --zoom is set on body
+       by the on-screen zoom widget (0.4 to 1.5). All bracket dimensions
+       scale with it so reflow stays clean — no transform-scale tricks. */
+    --zoom: 1;
+    --cell-w-base: 240px;
+    --cell-w-mob-base: 200px;
+    --round-gap-base: 110px;
+    --round-gap-mob-base: 72px;
+    --slot-h-base: 152px;
+    --slot-h-mob-base: 132px;
+    --card-h-base: 136px;
+    --card-h-mob-base: 118px;
+    --cell-w:        calc(var(--cell-w-base)        * var(--zoom));
+    --cell-w-mob:    calc(var(--cell-w-mob-base)    * var(--zoom));
+    --round-gap:     calc(var(--round-gap-base)     * var(--zoom));
+    --round-gap-mob: calc(var(--round-gap-mob-base) * var(--zoom));
     /* One shared vertical slot unit across every bracket so cards are
        spaced identically regardless of bracket size. Each bracket sets
        its own --bracket-slots (12-team modified = 4 R1 lanes; 64-team
        = 8 R1 lanes). All match cells live at canonical bracket Y
        centers in slot units. */
-    --slot-h: 152px;
-    --slot-h-mob: 132px;
-    --card-h: 136px;
-    --card-h-mob: 118px;
+    --slot-h:        calc(var(--slot-h-base)        * var(--zoom));
+    --slot-h-mob:    calc(var(--slot-h-mob-base)    * var(--zoom));
+    --card-h:        calc(var(--card-h-base)        * var(--zoom));
+    --card-h-mob:    calc(var(--card-h-mob-base)    * var(--zoom));
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -64,6 +76,74 @@
   .search.has-value button.search-x { display: inline-flex; }
   .search button.search-x:hover { background: rgba(255,255,255,0.18); color: #fff; }
   .search-result { font-size: 0.72rem; color: rgba(255,255,255,0.88); padding: 0 4px; }
+
+  /* Zoom + print toolbar (lives in the sticky header). Buttons are sized
+     for thumb taps on touch. Disabled state when zoom is at extreme. */
+  .view-tools {
+    display: flex; align-items: center; gap: 4px;
+    background: rgba(255,255,255,0.10);
+    border: 1.5px solid rgba(255,255,255,0.35);
+    border-radius: var(--pill);
+    padding: 2px 4px;
+  }
+  .view-tools button {
+    background: transparent; border: 0; color: #fff;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    font: inherit; font-weight: 800; font-size: 1rem;
+    cursor: pointer; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 0.12s;
+  }
+  .view-tools button:hover:not(:disabled) { background: rgba(255,255,255,0.22); }
+  .view-tools button:disabled { opacity: 0.4; cursor: default; }
+  .view-tools .zoom-label {
+    color: #fff; font-size: 0.74rem; font-weight: 700;
+    min-width: 38px; text-align: center;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+  }
+  .view-tools .divider { width: 1px; height: 18px; background: rgba(255,255,255,0.35); margin: 0 2px; }
+  .view-tools .print-btn {
+    width: auto; padding: 0 10px;
+    font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase;
+    border-radius: 14px; font-weight: 700;
+  }
+  @media (max-width: 600px) {
+    .view-tools .print-btn span.full { display: none; }
+  }
+
+  /* Print: one bracket per page. Hide chrome (header, hero, overlays);
+     scale each bracket-section to fit the page via a per-section --print-scale
+     computed in JS just before print, then reset on afterprint. */
+  @media print {
+    .header, .hero, .save-toast, .update-overlay,
+    .view-tools, .search, #searchResult, .header-spacer { display: none !important; }
+    body { background: #fff; }
+    .bracket-section { page-break-after: always; break-after: page; padding: 0; margin: 0; }
+    .bracket-section:last-child { page-break-after: auto; break-after: auto; }
+    .bracket-section .viewport {
+      overflow: visible !important;
+      padding: 8px !important;
+      cursor: default !important;
+    }
+    .bracket-section .bracket-wrap {
+      transform: scale(var(--print-scale, 1));
+      transform-origin: top left;
+      width: max-content !important;
+    }
+    .section-title { padding: 6px 8px; }
+    /* Re-enable visible borders for paper output */
+    .match { box-shadow: none !important; }
+  }
+  body.print-landscape { /* used briefly to set @page orientation */ }
+  body.print-portrait  { /* used briefly to set @page orientation */ }
+  @media print {
+    body.print-landscape { /* via @page below */ }
+  }
+  @page { size: auto; margin: 0.35in; }
+  /* Two body classes give the JS a hook to pick orientation per print run. */
+
 
   /* Tournament hero — large title + supporting metadata below the
      org banner. Non-sticky on purpose: scrolls away so the bracket gets
@@ -155,13 +235,18 @@
     scroll-snap-type: x proximity;
     cursor: grab;
     outline: none;
+    /* Hide native scrollbars on the bracket viewport: panning UX is the
+       primary interaction and the visible scrollbar competed with it. The
+       content still scrolls via drag, wheel, keys, touch. */
+    scrollbar-width: none;          /* Firefox */
+    -ms-overflow-style: none;       /* legacy Edge/IE */
+    /* Tell the browser this surface handles its own horizontal panning so
+       it doesn't fight us with native gesture interpretation on touch. */
+    touch-action: pan-x;
   }
+  .viewport::-webkit-scrollbar { display: none; height: 0; }
   .viewport.panning { cursor: grabbing; user-select: none; }
   .viewport:focus-visible { box-shadow: inset 0 0 0 2px rgba(0,49,161,0.45); border-radius: 4px; }
-  .viewport::-webkit-scrollbar { height: 10px; }
-  .viewport::-webkit-scrollbar-track { background: #e5e7eb; }
-  .viewport::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 5px; }
-  .viewport::-webkit-scrollbar-thumb:hover { background: #6b7280; }
   /* Cards keep default cursor so users can read text without the grab hint. */
   .viewport .match { cursor: default; }
 
@@ -697,6 +782,14 @@
     </div>
     <span class="search-result" id="searchResult"></span>
     <div class="header-spacer"></div>
+    <div class="view-tools" role="toolbar" aria-label="Bracket view tools">
+      <button id="zoomOut"   title="Zoom out (Ctrl+−)"  aria-label="Zoom out">−</button>
+      <button class="zoom-label" id="zoomLabel" title="Click to reset to 100%" aria-label="Reset zoom">100%</button>
+      <button id="zoomIn"    title="Zoom in (Ctrl++)"   aria-label="Zoom in">+</button>
+      <div class="divider" aria-hidden="true"></div>
+      <button class="print-btn" id="printLand" title="Print each bracket on its own page, landscape orientation"><span class="full">Print&nbsp;</span>⇲</button>
+      <button class="print-btn" id="printPort" title="Print each bracket on its own page, portrait orientation"><span class="full">Portrait&nbsp;</span>⇱</button>
+    </div>
   </div>
 </div>
 
@@ -2126,16 +2219,152 @@ function setupPanScroll() {
     });
 
     // Shift+wheel → horizontal scroll. (Trackpads already do horizontal natively.)
+    // Ctrl+wheel → zoom (handled globally below, but we preventDefault here too
+    // so the bracket viewport doesn't double-fire browser-level zoom.)
     vp.addEventListener('wheel', (e) => {
+      if (e.ctrlKey) { e.preventDefault(); applyZoomDelta(e.deltaY < 0 ? +0.1 : -0.1, true); return; }
       if (!e.shiftKey) return;
       e.preventDefault();
       vp.scrollLeft += e.deltaY;
     }, { passive: false });
+
+    // Two-finger pinch-to-zoom on touch. Distinct from the browser's native
+    // pinch (which zooms the whole page) — we want bracket-only zoom so the
+    // header/search stay readable.
+    let pinchStartDist = 0, pinchStartZoom = 1;
+    vp.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 2) return;
+      const dx = e.touches[0].pageX - e.touches[1].pageX;
+      const dy = e.touches[0].pageY - e.touches[1].pageY;
+      pinchStartDist = Math.hypot(dx, dy);
+      pinchStartZoom = getZoom();
+    }, { passive: true });
+    vp.addEventListener('touchmove', (e) => {
+      if (e.touches.length !== 2 || !pinchStartDist) return;
+      e.preventDefault();
+      const dx = e.touches[0].pageX - e.touches[1].pageX;
+      const dy = e.touches[0].pageY - e.touches[1].pageY;
+      const dist = Math.hypot(dx, dy);
+      const ratio = dist / pinchStartDist;
+      setZoom(pinchStartZoom * ratio);
+    }, { passive: false });
+    vp.addEventListener('touchend', () => { pinchStartDist = 0; }, { passive: true });
   });
+}
+
+/* ── Zoom (CSS variable on body) ─────────────
+ *  Range 0.4–1.5. Persists in sessionStorage so a refresh doesn't reset.
+ *  --zoom on :root scales every bracket size variable; redraws connectors
+ *  via the existing resize listener so SVG paths stay aligned. */
+const ZOOM_MIN = 0.4, ZOOM_MAX = 1.5;
+function clampZoom(z) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)); }
+function getZoom() {
+  const z = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zoom'));
+  return Number.isFinite(z) && z > 0 ? z : 1;
+}
+function setZoom(z) {
+  const next = clampZoom(Math.round(z * 100) / 100);
+  document.documentElement.style.setProperty('--zoom', String(next));
+  try { sessionStorage.setItem('breakoutZoom', String(next)); } catch (_e) {}
+  const lbl = document.getElementById('zoomLabel');
+  if (lbl) lbl.textContent = Math.round(next * 100) + '%';
+  const zi = document.getElementById('zoomIn'),  zo = document.getElementById('zoomOut');
+  if (zi) zi.disabled = next >= ZOOM_MAX - 0.001;
+  if (zo) zo.disabled = next <= ZOOM_MIN + 0.001;
+  // Redraw connectors so SVG paths follow the new card positions.
+  if (window._tournament) {
+    requestAnimationFrame(() => {
+      document.querySelectorAll('[data-wrap]').forEach(wrap => {
+        const label = wrap.dataset.wrap;
+        const matches = label === 'A' ? _tournament.A.matches : label === 'B' ? _tournament.B.matches : _tournament.T64.matches;
+        drawConnectorsFor(wrap, matches);
+      });
+    });
+  }
+}
+function applyZoomDelta(delta, smooth) {
+  setZoom(getZoom() + delta);
+}
+function initZoomToolbar() {
+  // Restore prior zoom if any. Default: 0.7 on small screens so the whole
+  // bracket fits without a frustrated zoom-out hunt.
+  let initial = null;
+  try { initial = parseFloat(sessionStorage.getItem('breakoutZoom')); } catch (_e) {}
+  if (!Number.isFinite(initial)) initial = window.innerWidth < 700 ? 0.6 : 1;
+  setZoom(initial);
+  const zi = document.getElementById('zoomIn');
+  const zo = document.getElementById('zoomOut');
+  const zl = document.getElementById('zoomLabel');
+  if (zi) zi.addEventListener('click', () => applyZoomDelta(+0.1));
+  if (zo) zo.addEventListener('click', () => applyZoomDelta(-0.1));
+  if (zl) zl.addEventListener('click', () => setZoom(1));
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === '+' || e.key === '=') { e.preventDefault(); applyZoomDelta(+0.1); }
+    else if (e.key === '-' || e.key === '_') { e.preventDefault(); applyZoomDelta(-0.1); }
+    else if (e.key === '0') { e.preventDefault(); setZoom(1); }
+  });
+}
+
+/* ── Print one bracket per page ──────────────
+ *  Two buttons: landscape and portrait. Before window.print():
+ *    1. Inject a temp <style> with @page { size: <orient> } so the browser
+ *       paginates the correct way.
+ *    2. For each .bracket-section, measure its content vs the page box and
+ *       set --print-scale so the bracket fits cleanly on one page.
+ *    3. Restore everything on afterprint. */
+function preparePrint(orientation) {
+  // Page geometry (rough, with 0.35in margins matching the @page rule).
+  // Letter dimensions in CSS pixels at 96dpi: 8.5×11in → 816×1056 px.
+  // Net page area after margins: subtract 2*0.35in = 67.2 px.
+  const PAGE_PX_W_PORT = 816 - 67.2;  const PAGE_PX_H_PORT = 1056 - 67.2;
+  const PAGE_W = orientation === 'landscape' ? PAGE_PX_H_PORT : PAGE_PX_W_PORT;
+  const PAGE_H = orientation === 'landscape' ? PAGE_PX_W_PORT : PAGE_PX_H_PORT;
+
+  // Inject orientation override
+  const sty = document.createElement('style');
+  sty.id = 'breakoutPrintStyle';
+  sty.textContent = '@page { size: letter ' + orientation + '; margin: 0.35in; }';
+  document.head.appendChild(sty);
+
+  // Per-section fit scale. Measure with current --zoom; we don't reset zoom
+  // because the rendered SVG connectors are computed against that geometry.
+  document.querySelectorAll('.bracket-section').forEach(sec => {
+    const wrap = sec.querySelector('.bracket-wrap');
+    if (!wrap) return;
+    // Account for the section title's height too — small but real.
+    const titleH = (sec.querySelector('.section-title') || {}).offsetHeight || 28;
+    const naturalW = wrap.scrollWidth;
+    const naturalH = wrap.scrollHeight;
+    const scaleW = PAGE_W / naturalW;
+    const scaleH = (PAGE_H - titleH - 16) / naturalH;
+    const scale = Math.min(scaleW, scaleH, 1);
+    sec.style.setProperty('--print-scale', String(scale));
+  });
+}
+function teardownPrint() {
+  const sty = document.getElementById('breakoutPrintStyle');
+  if (sty) sty.remove();
+  document.querySelectorAll('.bracket-section').forEach(sec => sec.style.removeProperty('--print-scale'));
+}
+function initPrintButtons() {
+  const land = document.getElementById('printLand');
+  const port = document.getElementById('printPort');
+  const fire = (orient) => {
+    preparePrint(orient);
+    const cleanup = () => { teardownPrint(); window.removeEventListener('afterprint', cleanup); };
+    window.addEventListener('afterprint', cleanup);
+    // Small delay so layout reflows with the @page rule applied.
+    setTimeout(() => window.print(), 60);
+  };
+  if (land) land.addEventListener('click', () => fire('landscape'));
+  if (port) port.addEventListener('click', () => fire('portrait'));
 }
 
 /* ── Boot ──────────────────────────────────── */
 (async () => {
+  initZoomToolbar();
+  initPrintButtons();
   try { await loadTeams(); }
   catch (e) {
     document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">Could not load teams: ' + esc(e.message) + '</p>';

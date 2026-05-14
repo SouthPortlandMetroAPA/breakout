@@ -28,24 +28,25 @@
     background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
     color: #fff; padding: 16px 20px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    position: relative;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   }
   .header h1 { font-size: 1.3rem; font-weight: 900; }
   .header h1 .subpage { font-size: 0.95rem; font-weight: 500; font-style: italic; opacity: 0.85; margin-left: 10px; }
+  .header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .admin-badge {
-    position: absolute; top: 12px; right: 16px;
     padding: 4px 12px; border-radius: var(--pill);
     font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
     background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.5); color: #fff;
+    white-space: nowrap;
   }
   .header-link {
-    position: absolute; top: 12px; right: 88px;
     color: #fff; text-decoration: none;
     background: rgba(255,255,255,0.15);
     border: 1.5px solid rgba(255,255,255,0.45);
     padding: 4px 12px; border-radius: var(--pill);
     font-size: 0.78rem; font-weight: 700;
     transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
   }
   .header-link:hover { background: rgba(255,255,255,0.28); border-color: rgba(255,255,255,0.7); }
 
@@ -340,10 +341,12 @@
 </div>
 
 <div class="header">
-  <a class="header-link" href="./" title="Open the public bracket">View site &rarr;</a>
-  <a class="header-link" id="staffSiteLink" href="#" title="Open the public bracket in staff scoring mode">Staff scoring &rarr;</a>
-  <div class="admin-badge">ADMIN</div>
   <h1>BreakOut <span class="subpage">Teams</span></h1>
+  <div class="header-actions">
+    <a class="header-link" href="./" title="Open the public bracket">View site &rarr;</a>
+    <a class="header-link" id="staffSiteLink" href="#" title="Open the public bracket in staff scoring mode">Staff scoring &rarr;</a>
+    <div class="admin-badge">ADMIN</div>
+  </div>
 </div>
 
 <div id="keyGate" class="key-gate hidden">
