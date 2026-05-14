@@ -209,19 +209,19 @@
     margin-bottom: 4px;
     background: #fff;
   }
-  .tables-toggle {
-    padding: 5px 10px;
+  .tables-input {
+    padding: 5px 6px;
     border: 1px solid var(--border-strong);
     background: #fff;
     border-radius: 5px;
-    font-size: 0.78rem;
+    font-size: 0.86rem;
     font-weight: 700;
-    cursor: pointer;
     color: var(--text);
     font-family: inherit;
     text-align: center;
-    transition: background 0.15s, color 0.15s;
+    width: 100%;
   }
+  .tables-input:focus { outline: 2px solid var(--spm-accent); outline-offset: -1px; }
   .capacity-table .demand-bar {
     display: inline-block;
     height: 10px;
@@ -278,12 +278,6 @@
     width: 100%;
   }
 
-  .tables-toggle[data-tables="2"] {
-    background: rgba(0,49,161,0.12);
-    border-color: var(--spm-accent);
-    color: var(--spm-accent);
-    font-weight: 800;
-  }
   .sched-row + .sched-row { margin-top: 0; }
   .sched-row .rlabel { font-weight: 800; color: var(--muted); font-size: 0.82rem; }
   .sched-row input {
@@ -416,7 +410,7 @@
         <button class="btn btn-outline btn-sm" onclick="renderCapacityAnalyzer()">Refresh</button>
       </div>
     </div>
-    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. <code>duration_min</code> is the round's <em>total</em> time. With <code>tables_in_parallel</code> tables and N matches in a round, matches play in <code>ceil(N/tables)</code> waves of duration <code>total ÷ waves</code> each. Demand at a given slot = sum of matches active in that slot across every round.</p>
+    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. <code>duration_min</code> is the round's <em>total</em> time. With <code>tables_in_parallel</code> tables and N matches in a round, matches play in <code>ceil(N/tables)</code> waves of duration <code>total ÷ waves</code> each. <strong>Tables defaults to the round's match count (all simultaneous);</strong> lower it only if the venue can't actually run them all at once. Demand at a given slot = sum of matches active in that slot across every round. Per-load diagnostics print to the browser console.</p>
     <div id="capacityBody"><p class="hint">Loading&hellip;</p></div>
   </div>
 
@@ -1102,6 +1096,15 @@ function renderScheduleEditor() {
   const rounds = listRounds(_activeMatchTournament.matches);
   if (!rounds.length) { body.innerHTML = '<p class="hint">No matches to schedule.</p>'; return; }
 
+  // Count non-bye matches per (bracket, round) so the tables_in_parallel input
+  // can default to "all matches simultaneous" — the most common venue setup.
+  const matchCount = {};
+  for (const m of _activeMatchTournament.matches) {
+    if (m.is_bye) continue;
+    const k = m.bracket + '/' + m.round;
+    matchCount[k] = (matchCount[k] || 0) + 1;
+  }
+
   let html = '';
   let currentBracket = null;
   for (const r of rounds) {
@@ -1118,7 +1121,10 @@ function renderScheduleEditor() {
       dt.date = _activeMatchTournament.start_date;
     }
     const payout = sample && sample.payout != null ? sample.payout : '';
-    const tip = sample && sample.tables_in_parallel ? sample.tables_in_parallel : 1;
+    const numMatches = matchCount[r.bracket + '/' + r.round] || 1;
+    // Default tip = numMatches (all simultaneous). User can lower it manually
+    // if the venue can't actually run them all at once.
+    const tip = sample && sample.tables_in_parallel ? sample.tables_in_parallel : numMatches;
     const durMin = sample && sample.duration_min != null ? sample.duration_min : 240;
     const id = 'sched-' + r.bracket + '-' + r.round;
     html += '<div class="sched-row" id="' + id + '">'
@@ -1127,7 +1133,7 @@ function renderScheduleEditor() {
       +   '<input type="date" data-field="date" value="' + escapeHtml(dt.date) + '">'
       +   '<select data-field="time">' + buildTimeOptions(dt.time) + '</select>'
       + '</div>'
-      + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="How many tables this round uses concurrently. With 2 tables, matches play in parallel pairs — round duration halves automatically.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
+      + '<input type="number" class="tables-input" data-field="tables_in_parallel" data-num-matches="' + numMatches + '" data-prev-tip="' + tip + '" value="' + tip + '" min="1" max="' + numMatches + '" step="1" onchange="onTablesChange(this)" title="How many tables play this round simultaneously. Round has ' + numMatches + ' match' + (numMatches === 1 ? '' : 'es') + ' — default is all at once. Lowering this stretches the round proportionally (waves = ceil(matches ÷ tables)).">'
       + '<select class="dur-select" data-field="duration_min" title="Total expected duration for this round.">' + buildDurationOptions(durMin) + '</select>'
       + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
       + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
@@ -1137,22 +1143,32 @@ function renderScheduleEditor() {
   body.innerHTML = html;
 }
 
-function toggleTablesInParallel(btn) {
-  const cur = parseInt(btn.dataset.tables, 10) || 1;
-  const next = cur === 1 ? 2 : 1;
-  btn.dataset.tables = next;
-  btn.textContent = next + ' table' + (next === 1 ? '' : 's');
-  // Duration is the round's TOTAL time. Doubling tables halves the round
-  // because matches play in parallel waves; halving tables doubles it.
-  const row = btn.parentElement;
+function onTablesChange(input) {
+  const numMatches = Math.max(1, parseInt(input.dataset.numMatches, 10) || 1);
+  let next = parseInt(input.value, 10);
+  if (!Number.isInteger(next) || next < 1) next = 1;
+  if (next > numMatches) next = numMatches;
+  input.value = String(next);
+  const prev = Math.max(1, parseInt(input.dataset.prevTip, 10) || next);
+  input.dataset.prevTip = String(next);
+
+  // Duration is the round's TOTAL time. Changing tables scales waves up/down,
+  // so to keep PER-MATCH duration constant we scale total duration by the
+  // ratio (newWaves / oldWaves), snapping to the nearest 30-min option.
+  const row = input.parentElement;
   const durSel = row && row.querySelector('select[data-field="duration_min"]');
-  if (durSel && durSel.value !== '') {
-    const curDur = parseInt(durSel.value, 10);
-    if (Number.isInteger(curDur) && curDur > 0) {
-      const newDur = next === 2 ? Math.round(curDur / 2) : curDur * 2;
-      const opt = Array.from(durSel.options).find(o => parseInt(o.value, 10) === newDur);
-      if (opt) durSel.value = String(newDur);
-      else durSel.innerHTML = buildDurationOptions(newDur);
+  if (durSel && durSel.value !== '' && prev !== next) {
+    const oldWaves = Math.max(1, Math.ceil(numMatches / prev));
+    const newWaves = Math.max(1, Math.ceil(numMatches / next));
+    if (oldWaves !== newWaves) {
+      const curDur = parseInt(durSel.value, 10);
+      if (Number.isInteger(curDur) && curDur > 0) {
+        const scaled = curDur * newWaves / oldWaves;
+        const newDur = Math.max(30, Math.round(scaled / 30) * 30);
+        const opt = Array.from(durSel.options).find(o => parseInt(o.value, 10) === newDur);
+        if (opt) durSel.value = String(newDur);
+        else durSel.innerHTML = buildDurationOptions(newDur);
+      }
     }
   }
 }
@@ -1166,7 +1182,7 @@ async function applyRoundSchedule(bracket, round) {
   const dtV     = combineDateTime(dateV, timeV);
   const payoutV = rowEl.querySelector('input[data-field="payout"]').value.trim();
   const payout  = payoutV === '' ? null : parseInt(payoutV, 10);
-  const tipV    = parseInt(rowEl.querySelector('.tables-toggle').dataset.tables, 10) || 1;
+  const tipV    = parseInt(rowEl.querySelector('.tables-input').value, 10) || 1;
   const durV    = rowEl.querySelector('select[data-field="duration_min"]').value;
   const dur     = durV === '' ? 240 : parseInt(durV, 10);
 
@@ -1305,6 +1321,36 @@ async function renderCapacityAnalyzer() {
     const matches = (Array.isArray(t.matches) ? t.matches : []).filter(m => !m.is_bye);
     const roundCounts = indexMatchSlots(matches);
     const intervals = matches.map(m => computeMatchInterval(m, roundCounts)).filter(Boolean);
+
+    // Per-load diagnostic — prints to console every time the analyzer renders so
+    // we can spot undercount/overcount bugs without instrumenting in dev tools.
+    try {
+      console.groupCollapsed('🎱 BreakOut capacity diagnostic — ' + new Date().toLocaleTimeString());
+      console.log('Tournament:', t.name, '| slug:', t.slug, '| venue:', t.venue_name || '(none)', '| capacity:', cap);
+      console.log('Non-bye matches:', matches.length, '| scheduled intervals:', intervals.length);
+      const rkeys = Object.keys(roundCounts).sort();
+      console.log('Rounds (' + rkeys.length + '):');
+      for (const rk of rkeys) {
+        const [brk, rdStr] = rk.split('/');
+        const rd = parseInt(rdStr, 10);
+        const ms = matches.filter(mm => mm.bracket === brk && mm.round === rd);
+        const s = ms[0] || {};
+        const N = roundCounts[rk];
+        const tip = s.tables_in_parallel || 1;
+        const dur = s.duration_min != null ? s.duration_min : 240;
+        const waves = Math.max(1, Math.ceil(N / tip));
+        const perMatch = dur / waves;
+        console.log('  ' + rk
+          + ' → ' + N + ' match' + (N === 1 ? '' : 'es')
+          + ', tables=' + tip
+          + ', round_dur=' + dur + 'min'
+          + ', waves=' + waves
+          + ', per_match=' + perMatch + 'min'
+          + ', start=' + (s.scheduled_at || 'unset'));
+      }
+      console.groupEnd();
+    } catch (diagErr) { console.warn('capacity diag failed:', diagErr); }
+
     if (!intervals.length) {
       body.innerHTML = '<p class="hint">No matches have a scheduled start yet. Set times in the <strong>Schedule by round</strong> card above.</p>';
       status.textContent = '';
@@ -1347,6 +1393,12 @@ async function renderCapacityAnalyzer() {
       }
       return { date, rows: dayRows };
     });
+
+    // Tail diagnostic: peak demand after the sweep.
+    try {
+      console.log('🎱 capacity peak: ' + maxDemand + ' table' + (maxDemand === 1 ? '' : 's') + ' simultaneously'
+        + (cap != null ? ' (venue capacity ' + cap + (maxDemand > cap ? ' — OVER by ' + (maxDemand - cap) : '') + ')' : ' (no venue capacity set)'));
+    } catch (_e) {}
 
     const venueLine = (t.venue_name || '(no venue set)') + ' &middot; '
       + (cap != null ? cap + ' tables' : '<span style="color:var(--danger)">capacity not set</span>');
