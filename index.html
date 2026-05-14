@@ -876,7 +876,10 @@ const HEADERS_STAFF = STAFF_KEY
  * breakout.tournaments.config when an active tournament is loaded. */
 const TOURNAMENT_TEXT = {
   bracketChampText: 'Bracket Champ',
-  championText: 'Champion'
+  championText: 'Champion',
+  bracketNameA: 'Bracket A',
+  bracketNameB: 'Bracket B',
+  bracketNameT64: '64-Team'
 };
 
 /* ── Auto-update ──────────────────────────── */
@@ -1569,6 +1572,12 @@ async function buildTournament() {
   }
   if (config.bracketChampText) TOURNAMENT_TEXT.bracketChampText = config.bracketChampText;
   if (config.championText)     TOURNAMENT_TEXT.championText     = config.championText;
+  // Per-bracket display name override. Keys: A, B, T64. Falls back to the
+  // hardcoded defaults if a key is absent or blank.
+  const bn = config.bracketNames || {};
+  TOURNAMENT_TEXT.bracketNameA   = (bn.A   || '').trim() || 'Bracket A';
+  TOURNAMENT_TEXT.bracketNameB   = (bn.B   || '').trim() || 'Bracket B';
+  TOURNAMENT_TEXT.bracketNameT64 = (bn.T64 || '').trim() || '64-Team';
   const teamsByNumber = Object.fromEntries(_teams.map(t => [t.number, t]));
   const tData = reconstructTournament(matchData, seedAssignments, teamsByNumber);
   tData.matchData = matchData;            // raw template/DB data — staff writes mutate this
@@ -1581,12 +1590,10 @@ async function buildTournament() {
    ════════════════════════════════════════════════════════════════════════ */
 function bracketSectionHtml(bracket, kind, rounds, opts) {
   const sectionLabel = opts.label;
-  const subLabel = opts.subLabel;
   const pillClass = opts.pillClass;
   const slots = bracketSlotsFor(bracket);
   return '<div class="bracket-section" data-bracket="' + bracket.label + '">'
-    + '<div class="section-title"><span class="pill ' + pillClass + '">' + esc(sectionLabel) + '</span>'
-    + '<span class="desc">' + esc(subLabel) + '</span></div>'
+    + '<div class="section-title"><span class="pill ' + pillClass + '">' + esc(sectionLabel) + '</span></div>'
     + '<div class="viewport"><div class="bracket-wrap" data-wrap="' + bracket.label + '" style="--bracket-slots:' + slots + '">'
     +   '<svg class="connectors" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>'
     +   '<div class="bracket">'
@@ -2021,19 +2028,19 @@ function renderHero() {
 
 function renderTournament() {
   const t = _tournament;
-  const ab = (label, bracket, kind, sub, cls) => bracketSectionHtml(
+  const ab = (label, bracket, kind, cls) => bracketSectionHtml(
     bracket, kind,
     Array.from({ length: 4 }, (_, i) => bracket.matches.filter(m => m.round === i + 1)),
-    { label, subLabel: sub, pillClass: cls }
+    { label, pillClass: cls }
   );
   const root = document.getElementById('tournamentRoot');
   let html = '';
-  html += ab('Bracket A', t.A, 'twelve', 'Modified single elim · 12 teams · top 4 seeds bye round 1', '');
-  html += ab('Bracket B', t.B, 'twelve', 'Modified single elim · 12 teams · top 4 seeds bye round 1', 'alt');
+  html += ab(TOURNAMENT_TEXT.bracketNameA, t.A, 'twelve', '');
+  html += ab(TOURNAMENT_TEXT.bracketNameB, t.B, 'twelve', 'alt');
   html += bracketSectionHtml(
     t.T64, 'sixtyfour',
     Array.from({ length: 6 }, (_, i) => t.T64.matches.filter(m => m.round === i + 1)),
-    { label: '64-Team', subLabel: 'Consolation · alternates "integrate losers" / "winners advance" through 6 rounds', pillClass: 'consolation' }
+    { label: TOURNAMENT_TEXT.bracketNameT64, pillClass: 'consolation' }
   );
   root.innerHTML = html;
   renderHero();

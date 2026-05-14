@@ -513,6 +513,14 @@
         <label>Champion label <input type="text" id="tEditChampion" placeholder="Champion"></label>
       </fieldset>
 
+      <fieldset>
+        <legend>Bracket names</legend>
+        <p class="hint" style="margin:0 0 6px;font-size:0.74rem">Override the section label pill at the top of each bracket. Leave blank to keep the default.</p>
+        <label>Bracket A name <input type="text" id="tEditBracketNameA" placeholder="Bracket A"></label>
+        <label>Bracket B name <input type="text" id="tEditBracketNameB" placeholder="Bracket B"></label>
+        <label>64-Team name <input type="text" id="tEditBracketNameT64" placeholder="64-Team"></label>
+      </fieldset>
+
       <div class="t-edit-links">
         <div><span class="hint">Public:</span> <a id="tEditPublicUrl" href="#" target="_blank" rel="noopener"></a></div>
         <div><span class="hint">Staff:</span> <a id="tEditStaffUrl" href="#" target="_blank" rel="noopener"></a></div>
@@ -2139,6 +2147,10 @@ async function openTournamentEditModal(tournamentId, focusStatus) {
     document.getElementById('tEditChampion').value       = cfg.championText || '';
     document.getElementById('tEditAvailableTables').value = cfg.availableTablesSpec || '';
     updateAvailableTablesPreview();
+    const bn = cfg.bracketNames || {};
+    document.getElementById('tEditBracketNameA').value   = bn.A   || '';
+    document.getElementById('tEditBracketNameB').value   = bn.B   || '';
+    document.getElementById('tEditBracketNameT64').value = bn.T64 || '';
     // Links
     // Viewer is in the same directory as admin — './' (not '../') so the
     // GitHub Pages repo prefix is preserved.
@@ -2171,7 +2183,12 @@ async function saveTournamentEdit() {
   const cfg = {
     bracketChampText: document.getElementById('tEditBracketChamp').value.trim() || 'Bracket Champ',
     championText:     document.getElementById('tEditChampion').value.trim()     || 'Champion',
-    availableTablesSpec: document.getElementById('tEditAvailableTables').value.trim() || ''
+    availableTablesSpec: document.getElementById('tEditAvailableTables').value.trim() || '',
+    bracketNames: {
+      A:   document.getElementById('tEditBracketNameA').value.trim()   || '',
+      B:   document.getElementById('tEditBracketNameB').value.trim()   || '',
+      T64: document.getElementById('tEditBracketNameT64').value.trim() || ''
+    }
   };
   const venueName = document.getElementById('tEditVenueName').value.trim();
   const venueAddr = document.getElementById('tEditVenueAddress').value.trim();
