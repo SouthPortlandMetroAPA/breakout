@@ -1286,14 +1286,15 @@ function updateAvailableTablesPreview() {
 }
 
 /* Auto-assign tables. Rules:
- *  • Use the parsed available-tables list (falls back to 1..total_tables).
- *  • For each match (in scheduled order), prefer tables that no team in this
- *    match's ancestry has played on. If impossible, relax to "no back-to-back"
- *    (forbid only the IMMEDIATE feeder's tables). If still impossible,
- *    fall back to "anything not in use this time slot."
- *  • 2-table matches consume 2 tables; tracker forbids both for descendants.
- *  • Tie-break: pick the least-used table globally so wear levels out.
- *  • Concurrency: matches sharing scheduled_at can't share tables. */
+ *  • HARD: no back-to-back — a match never lands on its immediate feeder's
+ *    table. (T4 → T1 → T4 is fine because T4 is two matches back.)
+ *  • SOFT: among candidates, prefer tables not in this match's ancestry, so
+ *    we still avoid same-table-twice when possible.
+ *  • Tie-break: least-used globally so wear levels out.
+ *  • Concurrency: matches sharing scheduled_at can't share tables.
+ *  • 2-table matches consume two tables; both forbid for descendants.
+ *  • Fallback: if even the no-back-to-back rule has no candidate, pick any
+ *    table that isn't already taken in this same time slot. */
 async function autoAssignTables() {
   if (!_activeMatchTournament) { alert('No live tournament loaded.'); return; }
   const t = _activeMatchTournament;
@@ -1312,7 +1313,7 @@ async function autoAssignTables() {
   }
   confirmModal({
     title: 'Auto-assign tables?',
-    message: 'Assigns tables using these ' + avail.length + ' table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '. Tries to avoid putting a team on the same table twice; falls back to "no back-to-back" when impossible. Overwrites every current assignment.',
+    message: 'Assigns tables using these ' + avail.length + ' table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '. Hard rule: no back-to-back (a match never lands on its immediate feeder\'s table). Soft preference: avoid putting a team on a table they\'ve played before — accepts an earlier-round repeat (e.g. T4 → T1 → T4) when nothing else is free. Overwrites every current assignment.',
     okText: 'Auto-assign',
     onOk: async () => {
       const snapshot = JSON.stringify(t.matches);
@@ -1324,8 +1325,8 @@ async function autoAssignTables() {
         const status = document.getElementById('scheduleStatus');
         if (status) {
           const bits = [result.assigned + ' assigned'];
-          if (result.relaxed)   bits.push(result.relaxed   + ' relaxed (no back-to-back)');
-          if (result.fallback)  bits.push(result.fallback  + ' fallback (any free)');
+          if (result.relaxed)   bits.push(result.relaxed   + ' ancestry repeat (back-to-back avoided)');
+          if (result.fallback)  bits.push(result.fallback  + ' BACK-TO-BACK forced (no other table free)');
           if (result.failed)    bits.push(result.failed    + ' failed');
           status.textContent = bits.join(' · ');
           setTimeout(() => { status.textContent = ''; }, 5000);
@@ -1398,19 +1399,20 @@ function runAutoAssign(matches, availableTables) {
     const slotKey = m.scheduled_at || '__unscheduled__';
     const inUse = usedAtSlot[slotKey] = usedAtSlot[slotKey] || new Set();
 
-    const strictForbid = ancestorTables(m);
-    tableHistory[m.id] = strictForbid;
+    // HARD rule: no back-to-back. Never pick a table that's already on this
+    // match's IMMEDIATE feeders (one round back). T4 → T1 → T4 is fine.
+    const immediateForbid = immediateFeederTables(m);
+    // SOFT rule: prefer tables this match's ancestry hasn't touched. Avoid
+    // if able, but allowed when we run out of choices.
+    const ancestry = ancestorTables(m);
+    tableHistory[m.id] = ancestry;
 
-    let candidates = availableTables.filter(t => !strictForbid.has(t) && !inUse.has(t));
-    let mode = 'strict';
+    let candidates = availableTables.filter(t => !immediateForbid.has(t) && !inUse.has(t));
+    let mode = 'no-back-to-back';
     if (candidates.length < need) {
-      const relaxedForbid = immediateFeederTables(m);
-      candidates = availableTables.filter(t => !relaxedForbid.has(t) && !inUse.has(t));
-      mode = 'relaxed';
-    }
-    if (candidates.length < need) {
+      // Even back-to-back is unavoidable. Take any free table this slot.
       candidates = availableTables.filter(t => !inUse.has(t));
-      mode = 'fallback';
+      mode = 'b2b-fallback';
     }
     if (candidates.length < need) {
       // Truly nothing left at this time slot.
@@ -1418,17 +1420,29 @@ function runAutoAssign(matches, availableTables) {
       continue;
     }
 
-    candidates.sort((a, b) => (globalCount[a] - globalCount[b]) || (a - b));
+    // Sort:
+    //  1. Tables NOT in ancestry come first (soft constraint — avoid earlier
+    //     repeats when possible).
+    //  2. Then least-used globally (wear leveling).
+    //  3. Then table number (deterministic).
+    candidates.sort((a, b) => {
+      const aInAnc = ancestry.has(a) ? 1 : 0;
+      const bInAnc = ancestry.has(b) ? 1 : 0;
+      if (aInAnc !== bInAnc) return aInAnc - bInAnc;
+      if (globalCount[a] !== globalCount[b]) return globalCount[a] - globalCount[b];
+      return a - b;
+    });
     const picked = candidates.slice(0, need);
+    const ancestryRepeat = picked.some(t => ancestry.has(t));
     for (const t of picked) {
       inUse.add(t);
       globalCount[t] = (globalCount[t] || 0) + 1;
       tableHistory[m.id].add(t);
     }
     m.table_no = tableNoFromArray(picked);
-    if (mode === 'strict')         counters.assigned++;
-    else if (mode === 'relaxed')   { counters.assigned++; counters.relaxed++; }
-    else                            { counters.assigned++; counters.fallback++; }
+    counters.assigned++;
+    if (mode === 'b2b-fallback')   counters.fallback++;
+    else if (ancestryRepeat)        counters.relaxed++;
   }
   return counters;
 }

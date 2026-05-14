@@ -113,28 +113,50 @@
     .view-tools .print-btn span.full { display: none; }
   }
 
-  /* Print: one bracket per page. Hide chrome (header, hero, overlays).
-     Each .bracket-section gets its own --zoom set by JS just before print,
-     which actually reflows the bracket smaller (calc(--slot-h-base * --zoom)
-     etc. inherit from the section's CSS variable). Layout-real, not just
-     transform-scale, so pagination doesn't break the bracket across pages. */
+  /* Print: one bracket per page, fitted to the page dimensions WITHOUT
+     touching the on-screen UI. Approach:
+       • Each .bracket-section becomes a fixed page-size flex column box
+         (title row + viewport that fills the rest). overflow:hidden so
+         pagination doesn't split the bracket across pages.
+       • .bracket-wrap is taken out of flow (position:absolute inside the
+         viewport) and scaled visually via transform:scale(--print-scale).
+       • --print-scale is set by JS per section right before window.print()
+         and removed afterprint. It ONLY affects print rendering because
+         these rules live inside @media print.
+       • The SVG connectors live inside .bracket-wrap and scale with it, so
+         no redraw is needed — geometry stays aligned. */
   @media print {
     .header, .hero, .save-toast, .update-overlay,
     .view-tools, .search, #searchResult, .header-spacer { display: none !important; }
-    body { background: #fff; }
+    body { background: #fff; margin: 0; }
     .bracket-section {
       page-break-after: always; break-after: page;
       padding: 0; margin: 0;
       overflow: hidden;
+      box-sizing: border-box;
+      width: 100%;
+      height: 100vh;     /* in print, vh = page content area height */
+      display: flex;
+      flex-direction: column;
     }
     .bracket-section:last-child { page-break-after: auto; break-after: auto; }
-    .bracket-section .viewport {
-      overflow: visible !important;
-      padding: 8px !important;
-      cursor: default !important;
+    .bracket-section .section-title {
+      flex: 0 0 auto;
+      padding: 6px 8px;
     }
-    .bracket-section .bracket-wrap { display: block !important; }
-    .section-title { padding: 6px 8px; }
+    .bracket-section .viewport {
+      flex: 1 1 auto;
+      overflow: hidden !important;
+      padding: 0 !important;
+      cursor: default !important;
+      position: relative;
+    }
+    .bracket-section .bracket-wrap {
+      position: absolute !important;
+      top: 0; left: 0;
+      transform: scale(var(--print-scale, 1));
+      transform-origin: top left;
+    }
     /* Re-enable visible borders for paper output */
     .match { box-shadow: none !important; }
   }
@@ -2351,18 +2373,24 @@ function initZoomToolbar() {
  *    2. For each .bracket-section, measure its content vs the page box and
  *       set --print-scale so the bracket fits cleanly on one page.
  *    3. Restore everything on afterprint. */
-/* Print one bracket per page.
+/* Print one bracket per page, fit-to-page, WITHOUT touching the on-screen UI.
  *
- * Approach: temporarily set --zoom on each .bracket-section so the
- * descendants' calc(--slot-h-base * --zoom) etc. resolve smaller — the
- * bracket actually reflows to fit the page. Then we redraw connectors at
- * the new geometry, give the browser a couple frames to settle, and call
- * window.print(). afterprint restores everything.
+ * Approach: compute a per-section --print-scale and write it as an inline
+ * style on each .bracket-section. The CSS rule that USES that variable lives
+ * inside @media print only — so the on-screen view is completely unchanged
+ * while the print output gets transform:scale on the bracket-wrap.
  *
- * Why not transform: scale? Because that shrinks visually but the layout
- * box stays huge. Browsers paginate by layout box, so the bracket gets
- * split across multiple blank pages and the visible content lands in the
- * top-left of one of them — exactly the bug the previous version had. */
+ * Why not modify --zoom? Because --zoom affects the on-screen layout, even
+ * if only briefly — the UI flashes a smaller bracket during the print
+ * dialog and back when it closes. We don't want that. transform:scale
+ * inside @media print is invisible until the browser is actually rendering
+ * the page for printing.
+ *
+ * Why does transform:scale work this time when v0.53 had pagination bugs?
+ * Because @media print also sets each .bracket-section to a FIXED page
+ * height (100vh) with overflow:hidden, and absolutely-positions the wrap
+ * inside the viewport. The wrap's huge layout box no longer drives
+ * pagination — the section is exactly one page tall, full stop. */
 function preparePrint(orientation) {
   // Letter page dimensions in CSS pixels at 96dpi, minus 0.35" margins.
   const PAGE_PX_W_PORT = 816 - 67.2;
@@ -2376,53 +2404,40 @@ function preparePrint(orientation) {
   sty.textContent = '@page { size: letter ' + orientation + '; margin: 0.35in; }';
   document.head.appendChild(sty);
 
-  // For each section: measure natural size at current zoom, compute the
-  // multiplier needed to fit the page, then write it into the section's
-  // --zoom. Save the previous --zoom on a data attribute for restoration.
+  // For each section: measure natural size AT THE CURRENT ON-SCREEN ZOOM,
+  // compute the multiplier needed to fit the page. No clamp at <=1 — if the
+  // bracket is smaller than the page, enlarge it to fill.
   document.querySelectorAll('.bracket-section').forEach(sec => {
     const wrap = sec.querySelector('.bracket-wrap');
     if (!wrap) return;
     const titleH = (sec.querySelector('.section-title') || {}).offsetHeight || 28;
     const naturalW = wrap.scrollWidth;
     const naturalH = wrap.scrollHeight;
-    const curZoom = parseFloat(getComputedStyle(sec).getPropertyValue('--zoom')) || 1;
-    // Available content area; reserve ~32px for the title row + viewport pad.
+    // Reserve a little headroom under the title for breathing room.
     const scaleW = PAGE_W / naturalW;
-    const scaleH = (PAGE_H - titleH - 32) / naturalH;
-    const fit = Math.min(scaleW, scaleH, 1);
-    const target = curZoom * fit;
-    sec.dataset.prevZoom = sec.style.getPropertyValue('--zoom') || '';
-    sec.style.setProperty('--zoom', String(target));
+    const scaleH = (PAGE_H - titleH - 16) / naturalH;
+    const scale = Math.min(scaleW, scaleH);
+    sec.style.setProperty('--print-scale', String(scale));
   });
 }
 function teardownPrint() {
   const sty = document.getElementById('breakoutPrintStyle');
   if (sty) sty.remove();
   document.querySelectorAll('.bracket-section').forEach(sec => {
-    if (typeof sec.dataset.prevZoom === 'string') {
-      if (sec.dataset.prevZoom) sec.style.setProperty('--zoom', sec.dataset.prevZoom);
-      else sec.style.removeProperty('--zoom');
-      delete sec.dataset.prevZoom;
-    }
+    sec.style.removeProperty('--print-scale');
   });
-  // Connectors were redrawn at the print zoom — restore them to the current
-  // on-screen zoom so the page looks right when the dialog closes.
-  requestAnimationFrame(() => redrawAllConnectors());
 }
 function initPrintButtons() {
   const land = document.getElementById('printLand');
   const port = document.getElementById('printPort');
   const fire = (orient) => {
     preparePrint(orient);
-    // Give layout one frame to reflow at the new --zoom, redraw connectors
-    // against the now-reflowed cards, then a tiny extra delay so the browser
-    // paints before window.print() snapshots.
-    requestAnimationFrame(() => {
-      redrawAllConnectors();
-      const cleanup = () => { teardownPrint(); window.removeEventListener('afterprint', cleanup); };
-      window.addEventListener('afterprint', cleanup);
-      setTimeout(() => window.print(), 120);
-    });
+    const cleanup = () => { teardownPrint(); window.removeEventListener('afterprint', cleanup); };
+    window.addEventListener('afterprint', cleanup);
+    // No layout reflow needed — the @media print rules apply during print
+    // rendering only, so a single tick is enough for the browser to pick up
+    // the freshly-set --print-scale.
+    setTimeout(() => window.print(), 30);
   };
   if (land) land.addEventListener('click', () => fire('landscape'));
   if (port) port.addEventListener('click', () => fire('portrait'));
