@@ -432,7 +432,11 @@
   .match-rows { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
   .match-row {
     display: grid;
-    grid-template-columns: 22px 44px 1fr 18px;
+    /* 3 tracks: team-num badge | team name | trophy. Seed column dropped
+       in v0.59 — seed was hidden via display:none but its 22px track was
+       still reserved, shifting every child one column to the left and
+       squishing the badge + truncating the name. */
+    grid-template-columns: 44px 1fr 18px;
     gap: 8px;
     align-items: center;
     padding: 0 10px 0 13px;
