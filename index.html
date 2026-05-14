@@ -24,7 +24,26 @@
     --zoom: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+  /* Move the page's scroll into a fixed-positioned inner container so the
+     mobile URL bar isn't yanked back into view every time the user pans up
+     a tiny bit inside the bracket. The browser tracks "body scrolled past
+     top" to decide URL-bar visibility — if scroll happens inside an
+     internal container, the body stays at top and the URL bar stays in
+     whatever state the user last put it in. Pull-to-refresh is also
+     disabled by this, which is fine because the bracket auto-refreshes via
+     the 15s updated_at poll. */
+  html, body { height: 100%; margin: 0; }
+  body { position: fixed; inset: 0; overflow: hidden; }
+  .page-scroll {
+    position: absolute; inset: 0;
+    overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    /* contain prevents overscroll from chaining up to the body (which would
+       defeat the whole point on Chrome Mobile) and disables pull-to-refresh
+       on Android. */
+    overscroll-behavior: contain;
+  }
 
   .header {
     background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
@@ -129,6 +148,10 @@
     .header, .hero, .save-toast, .update-overlay, .foot,
     .view-tools, .search, #searchResult, .header-spacer { display: none !important; }
     body { background: #fff; margin: 0; }
+    /* Print needs normal flow across pages — undo the fixed-body /
+       inner-scroll wrapper used on screen for the URL-bar fix. */
+    html, body { position: static !important; overflow: visible !important; height: auto !important; inset: auto !important; }
+    .page-scroll { position: static !important; overflow: visible !important; }
     .bracket-section {
       page-break-after: always; break-after: page;
       padding: 0; margin: 0;
@@ -803,6 +826,7 @@
 
 <div class="save-toast" id="saveToast"></div>
 
+<div class="page-scroll" id="pageScroll">
 <div class="header">
   <div class="header-inner">
     <h1><span class="brand-dot"></span>South Portland Metro APA</h1>
@@ -843,6 +867,7 @@
 </div>
 
 <div id="tournamentRoot"></div>
+</div><!-- /.page-scroll -->
 
 <script>
 document.write('<script src="version.js?_=' + Date.now() + '"><\/script>');
