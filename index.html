@@ -113,36 +113,32 @@
     .view-tools .print-btn span.full { display: none; }
   }
 
-  /* Print: one bracket per page. Hide chrome (header, hero, overlays);
-     scale each bracket-section to fit the page via a per-section --print-scale
-     computed in JS just before print, then reset on afterprint. */
+  /* Print: one bracket per page. Hide chrome (header, hero, overlays).
+     Each .bracket-section gets its own --zoom set by JS just before print,
+     which actually reflows the bracket smaller (calc(--slot-h-base * --zoom)
+     etc. inherit from the section's CSS variable). Layout-real, not just
+     transform-scale, so pagination doesn't break the bracket across pages. */
   @media print {
     .header, .hero, .save-toast, .update-overlay,
     .view-tools, .search, #searchResult, .header-spacer { display: none !important; }
     body { background: #fff; }
-    .bracket-section { page-break-after: always; break-after: page; padding: 0; margin: 0; }
+    .bracket-section {
+      page-break-after: always; break-after: page;
+      padding: 0; margin: 0;
+      overflow: hidden;
+    }
     .bracket-section:last-child { page-break-after: auto; break-after: auto; }
     .bracket-section .viewport {
       overflow: visible !important;
       padding: 8px !important;
       cursor: default !important;
     }
-    .bracket-section .bracket-wrap {
-      transform: scale(var(--print-scale, 1));
-      transform-origin: top left;
-      width: max-content !important;
-    }
+    .bracket-section .bracket-wrap { display: block !important; }
     .section-title { padding: 6px 8px; }
     /* Re-enable visible borders for paper output */
     .match { box-shadow: none !important; }
   }
-  body.print-landscape { /* used briefly to set @page orientation */ }
-  body.print-portrait  { /* used briefly to set @page orientation */ }
-  @media print {
-    body.print-landscape { /* via @page below */ }
-  }
   @page { size: auto; margin: 0.35in; }
-  /* Two body classes give the JS a hook to pick orientation per print run. */
 
 
   /* Tournament hero — large title + supporting metadata below the
@@ -2286,16 +2282,20 @@ function setZoom(z) {
   const zi = document.getElementById('zoomIn'),  zo = document.getElementById('zoomOut');
   if (zi) zi.disabled = next >= ZOOM_MAX - 0.001;
   if (zo) zo.disabled = next <= ZOOM_MIN + 0.001;
-  // Redraw connectors so SVG paths follow the new card positions.
-  if (window._tournament) {
-    requestAnimationFrame(() => {
-      document.querySelectorAll('[data-wrap]').forEach(wrap => {
-        const label = wrap.dataset.wrap;
-        const matches = label === 'A' ? _tournament.A.matches : label === 'B' ? _tournament.B.matches : _tournament.T64.matches;
-        drawConnectorsFor(wrap, matches);
-      });
-    });
+  // Redraw connectors so SVG paths follow the new card positions. _tournament
+  // is a script-scope let, not on window — the earlier window._tournament
+  // check silently no-op'd and connectors never refreshed on zoom.
+  if (_tournament) {
+    requestAnimationFrame(() => redrawAllConnectors());
   }
+}
+function redrawAllConnectors() {
+  if (!_tournament) return;
+  document.querySelectorAll('[data-wrap]').forEach(wrap => {
+    const label = wrap.dataset.wrap;
+    const matches = label === 'A' ? _tournament.A.matches : label === 'B' ? _tournament.B.matches : _tournament.T64.matches;
+    drawConnectorsFor(wrap, matches);
+  });
 }
 function applyZoomDelta(delta, smooth) {
   setZoom(getZoom() + delta);
@@ -2328,49 +2328,78 @@ function initZoomToolbar() {
  *    2. For each .bracket-section, measure its content vs the page box and
  *       set --print-scale so the bracket fits cleanly on one page.
  *    3. Restore everything on afterprint. */
+/* Print one bracket per page.
+ *
+ * Approach: temporarily set --zoom on each .bracket-section so the
+ * descendants' calc(--slot-h-base * --zoom) etc. resolve smaller — the
+ * bracket actually reflows to fit the page. Then we redraw connectors at
+ * the new geometry, give the browser a couple frames to settle, and call
+ * window.print(). afterprint restores everything.
+ *
+ * Why not transform: scale? Because that shrinks visually but the layout
+ * box stays huge. Browsers paginate by layout box, so the bracket gets
+ * split across multiple blank pages and the visible content lands in the
+ * top-left of one of them — exactly the bug the previous version had. */
 function preparePrint(orientation) {
-  // Page geometry (rough, with 0.35in margins matching the @page rule).
-  // Letter dimensions in CSS pixels at 96dpi: 8.5×11in → 816×1056 px.
-  // Net page area after margins: subtract 2*0.35in = 67.2 px.
-  const PAGE_PX_W_PORT = 816 - 67.2;  const PAGE_PX_H_PORT = 1056 - 67.2;
+  // Letter page dimensions in CSS pixels at 96dpi, minus 0.35" margins.
+  const PAGE_PX_W_PORT = 816 - 67.2;
+  const PAGE_PX_H_PORT = 1056 - 67.2;
   const PAGE_W = orientation === 'landscape' ? PAGE_PX_H_PORT : PAGE_PX_W_PORT;
   const PAGE_H = orientation === 'landscape' ? PAGE_PX_W_PORT : PAGE_PX_H_PORT;
 
-  // Inject orientation override
+  // Orientation injection
   const sty = document.createElement('style');
   sty.id = 'breakoutPrintStyle';
   sty.textContent = '@page { size: letter ' + orientation + '; margin: 0.35in; }';
   document.head.appendChild(sty);
 
-  // Per-section fit scale. Measure with current --zoom; we don't reset zoom
-  // because the rendered SVG connectors are computed against that geometry.
+  // For each section: measure natural size at current zoom, compute the
+  // multiplier needed to fit the page, then write it into the section's
+  // --zoom. Save the previous --zoom on a data attribute for restoration.
   document.querySelectorAll('.bracket-section').forEach(sec => {
     const wrap = sec.querySelector('.bracket-wrap');
     if (!wrap) return;
-    // Account for the section title's height too — small but real.
     const titleH = (sec.querySelector('.section-title') || {}).offsetHeight || 28;
     const naturalW = wrap.scrollWidth;
     const naturalH = wrap.scrollHeight;
+    const curZoom = parseFloat(getComputedStyle(sec).getPropertyValue('--zoom')) || 1;
+    // Available content area; reserve ~32px for the title row + viewport pad.
     const scaleW = PAGE_W / naturalW;
-    const scaleH = (PAGE_H - titleH - 16) / naturalH;
-    const scale = Math.min(scaleW, scaleH, 1);
-    sec.style.setProperty('--print-scale', String(scale));
+    const scaleH = (PAGE_H - titleH - 32) / naturalH;
+    const fit = Math.min(scaleW, scaleH, 1);
+    const target = curZoom * fit;
+    sec.dataset.prevZoom = sec.style.getPropertyValue('--zoom') || '';
+    sec.style.setProperty('--zoom', String(target));
   });
 }
 function teardownPrint() {
   const sty = document.getElementById('breakoutPrintStyle');
   if (sty) sty.remove();
-  document.querySelectorAll('.bracket-section').forEach(sec => sec.style.removeProperty('--print-scale'));
+  document.querySelectorAll('.bracket-section').forEach(sec => {
+    if (typeof sec.dataset.prevZoom === 'string') {
+      if (sec.dataset.prevZoom) sec.style.setProperty('--zoom', sec.dataset.prevZoom);
+      else sec.style.removeProperty('--zoom');
+      delete sec.dataset.prevZoom;
+    }
+  });
+  // Connectors were redrawn at the print zoom — restore them to the current
+  // on-screen zoom so the page looks right when the dialog closes.
+  requestAnimationFrame(() => redrawAllConnectors());
 }
 function initPrintButtons() {
   const land = document.getElementById('printLand');
   const port = document.getElementById('printPort');
   const fire = (orient) => {
     preparePrint(orient);
-    const cleanup = () => { teardownPrint(); window.removeEventListener('afterprint', cleanup); };
-    window.addEventListener('afterprint', cleanup);
-    // Small delay so layout reflows with the @page rule applied.
-    setTimeout(() => window.print(), 60);
+    // Give layout one frame to reflow at the new --zoom, redraw connectors
+    // against the now-reflowed cards, then a tiny extra delay so the browser
+    // paints before window.print() snapshots.
+    requestAnimationFrame(() => {
+      redrawAllConnectors();
+      const cleanup = () => { teardownPrint(); window.removeEventListener('afterprint', cleanup); };
+      window.addEventListener('afterprint', cleanup);
+      setTimeout(() => window.print(), 120);
+    });
   };
   if (land) land.addEventListener('click', () => fire('landscape'));
   if (port) port.addEventListener('click', () => fire('portrait'));
