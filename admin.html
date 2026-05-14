@@ -432,7 +432,7 @@
         <button class="btn btn-outline btn-sm" onclick="loadMatchesView()">Refresh</button>
       </div>
     </div>
-    <p class="hint" style="margin-top:0">Every match in the active tournament with live validation. Click any row to edit its wiring, schedule, or table assignment. Use <strong>+ Add match</strong> for custom matches.</p>
+    <p class="hint" style="margin-top:0">Every match in the active tournament with live validation. Click any row to edit its wiring, schedule, or table assignment. Structural changes (adding rounds, byes, brackets) belong in the bracket template, not here.</p>
     <div id="matchesBody" class="table-wrap"><p class="hint">Loading&hellip;</p></div>
   </div>
 </div>
@@ -1644,7 +1644,7 @@ function renderMatchesEditor() {
     ? '<div class="validation-banner"><strong>' + issues.length + ' wiring issue' + (issues.length === 1 ? '' : 's') + '</strong><ul>' + issues.slice(0, 12).map(i => '<li>' + escapeHtml(i) + '</li>').join('') + (issues.length > 12 ? '<li>(&plus; ' + (issues.length - 12) + ' more)</li>' : '') + '</ul></div>'
     : (matches.length ? '<div class="validation-banner ok"><strong>Wiring OK</strong> &mdash; ' + matches.length + ' matches, every reference resolves, no cycles.</div>' : '');
   const tableHtml = matches.length ? renderMatchesTable(matches) : '<p class="hint">No matches yet.</p>';
-  body.innerHTML = bannerHtml + tableHtml + '<div style="margin-top:10px"><button class="btn btn-outline btn-sm" onclick="addMatchToEditor()">+ Add match</button></div>';
+  body.innerHTML = bannerHtml + tableHtml;
 }
 
 function renderMatchesTable(matches) {
