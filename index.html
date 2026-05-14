@@ -113,18 +113,17 @@
     .view-tools .print-btn span.full { display: none; }
   }
 
-  /* Print: one bracket per page, fitted to the page dimensions WITHOUT
-     touching the on-screen UI. Approach:
-       • Each .bracket-section becomes a fixed page-size flex column box
-         (title row + viewport that fills the rest). overflow:hidden so
-         pagination doesn't split the bracket across pages.
-       • .bracket-wrap is taken out of flow (position:absolute inside the
-         viewport) and scaled visually via transform:scale(--print-scale).
-       • --print-scale is set by JS per section right before window.print()
-         and removed afterprint. It ONLY affects print rendering because
-         these rules live inside @media print.
-       • The SVG connectors live inside .bracket-wrap and scale with it, so
-         no redraw is needed — geometry stays aligned. */
+  /* Print: one bracket per page, fitted to page dimensions WITHOUT touching
+     the on-screen UI. Approach:
+       • Use CSS `zoom` (not transform: scale) on each .bracket-wrap. zoom
+         scales actual LAYOUT dimensions, so pagination is based on the
+         shrunk content — the wrap fits in one page natively, no fixed
+         heights or absolute positioning needed.
+       • --print-scale is set by JS per .bracket-section right before
+         window.print() and cleared afterprint. The CSS rule that uses it
+         lives inside @media print only, so on-screen view is untouched.
+       • SVG connectors live inside .bracket-wrap and zoom with it — no
+         redraw needed; geometry stays aligned. */
   @media print {
     .header, .hero, .save-toast, .update-overlay,
     .view-tools, .search, #searchResult, .header-spacer { display: none !important; }
@@ -133,29 +132,18 @@
       page-break-after: always; break-after: page;
       padding: 0; margin: 0;
       overflow: hidden;
-      box-sizing: border-box;
-      width: 100%;
-      height: 100vh;     /* in print, vh = page content area height */
-      display: flex;
-      flex-direction: column;
     }
     .bracket-section:last-child { page-break-after: auto; break-after: auto; }
-    .bracket-section .section-title {
-      flex: 0 0 auto;
-      padding: 6px 8px;
-    }
+    .bracket-section .section-title { padding: 6px 8px; }
     .bracket-section .viewport {
-      flex: 1 1 auto;
       overflow: hidden !important;
       padding: 0 !important;
       cursor: default !important;
-      position: relative;
     }
     .bracket-section .bracket-wrap {
-      position: absolute !important;
-      top: 0; left: 0;
-      transform: scale(var(--print-scale, 1));
-      transform-origin: top left;
+      zoom: var(--print-scale, 1);
+      /* Override on-screen min-width so zoom can actually shrink the box. */
+      min-width: 0 !important;
     }
     /* Re-enable visible borders for paper output */
     .match { box-shadow: none !important; }
