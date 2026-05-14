@@ -754,7 +754,7 @@
             <select id="staffStartTime"></select>
           </div>
         </label>
-        <label>Table <input type="number" id="staffTableInput" min="1" placeholder="—"></label>
+        <label>Table(s) <input type="text" id="staffTableInput" placeholder="1 or 5,6" pattern="^\s*\d+(\s*,\s*\d+)*\s*$"></label>
         <button type="button" class="staff-btn save" id="staffSaveOverridesBtn">Save</button>
       </div>
       <div class="q">Who won?</div>
@@ -961,7 +961,10 @@ function openStaffModal(matchId) {
   ctx.push('Round ' + m.round);
   if (m.day) ctx.push(m.day);
   if (m.time) ctx.push(m.time);
-  if (m.table_no) ctx.push('Table ' + m.table_no);
+  if (m.table_no != null && m.table_no !== '') {
+    const arr = String(m.table_no).split(',').map(s => s.trim()).filter(Boolean);
+    ctx.push((arr.length > 1 ? 'Tables ' : 'Table ') + arr.join('+'));
+  }
   document.getElementById('staffModalCtx').textContent = ctx.join(' · ');
 
   // Override fields: Start datetime + Table number.
@@ -977,7 +980,7 @@ function openStaffModal(matchId) {
   const dtParts = splitDateTime(initialDt || '');
   document.getElementById('staffStartDate').value = dtParts.date;
   document.getElementById('staffStartTime').innerHTML = buildTimeOptions(dtParts.time);
-  document.getElementById('staffTableInput').value = m.table_no != null ? m.table_no : '';
+  document.getElementById('staffTableInput').value = m.table_no != null && m.table_no !== '' ? String(m.table_no) : '';
   const saveBtn = document.getElementById('staffSaveOverridesBtn');
   saveBtn.classList.remove('success');
   saveBtn.textContent = 'Save';
@@ -1032,7 +1035,13 @@ function readStaffOverrides(md, idx) {
   const tblV  = document.getElementById('staffTableInput').value.trim();
   const prev  = { scheduled_at: md[idx].scheduled_at || null, table_no: md[idx].table_no != null ? md[idx].table_no : null };
   md[idx].scheduled_at = dtV || null;
-  md[idx].table_no = tblV === '' ? null : parseInt(tblV, 10);
+  // Accept either "5" or "5,6" so 2-table matches can be entered directly.
+  if (tblV === '') {
+    md[idx].table_no = null;
+  } else {
+    const arr = tblV.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0);
+    md[idx].table_no = arr.length === 0 ? null : (arr.length === 1 ? arr[0] : arr.join(','));
+  }
   if (dtV) { md[idx].day = null; md[idx].time = null; }
   return prev;
 }
@@ -1621,7 +1630,13 @@ function matchHtml(m, isFinalOfBracket) {
   const y = matchYUnits(m);
   const topWin = m.topWins === true;
   const botWin = m.topWins === false;
-  const table  = m.table_no || null;
+  // table_no may be a number, "5", or "5,6" (2-table matches). Render
+  // as "Tables 5+6" when multi-, "Table 5" when single.
+  let tableLabel = '';
+  if (m.table_no != null && m.table_no !== '') {
+    const tArr = String(m.table_no).split(',').map(s => s.trim()).filter(Boolean);
+    tableLabel = (tArr.length > 1 ? 'Tables ' : 'Table ') + tArr.join('+');
+  }
   // Prefer the canonical scheduled_at (ISO datetime from the picker). Fall
   // back to legacy m.day / m.time strings so older rows still display.
   let scheduleDay  = '';
@@ -1674,7 +1689,7 @@ function matchHtml(m, isFinalOfBracket) {
     : '<span class="when"></span>';
   const foot = '<div class="match-foot">'
     +   when
-    +   '<span class="table">' + (table ? 'Table ' + table : '') + '</span>'
+    +   '<span class="table">' + esc(tableLabel) + '</span>'
     + '</div>';
 
   const idAttr = m.globalNo ? ' id="m' + m.globalNo + '"' : '';

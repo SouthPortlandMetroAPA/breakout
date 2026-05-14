@@ -404,10 +404,11 @@
       <h2 style="margin-bottom:0">Schedule by round</h2>
       <span class="hint" id="scheduleStatus"></span>
       <div style="margin-left:auto" class="actions">
-        <button class="btn btn-outline btn-sm" onclick="renumberAllTables()">Renumber tables</button>
+        <button class="btn btn-primary btn-sm" onclick="autoAssignTables()" title="Assigns tables from the tournament's available-tables list so no team plays on the same table twice when possible.">Auto-assign tables</button>
+        <button class="btn btn-outline btn-sm" onclick="renumberAllTables()">Renumber 1,2,3…</button>
       </div>
     </div>
-    <p class="hint" style="margin-top:0">Bulk-set Day, Time, and Payout for every match in a round. <strong>Apply</strong> stamps the values onto each match. Individual matches can still be overridden via the per-match edit modal in the table below.</p>
+    <p class="hint" style="margin-top:0">Bulk-set Day, Time, and Payout for every match in a round. <strong>Apply</strong> stamps the values onto each match. Individual matches can still be overridden via the per-match edit modal in the table below. <strong>Auto-assign tables</strong> uses the per-tournament available-tables list (set in the tournament edit modal) to assign tables avoiding same-table repeats per team.</p>
     <div id="scheduleEditorBody"><p class="hint">Loading&hellip;</p></div>
   </div>
 
@@ -489,6 +490,9 @@
         <datalist id="venueList"></datalist>
         <label>Address <input type="text" id="tEditVenueAddress" placeholder="123 Main St, Westbrook ME"></label>
         <label>Total tables at this venue <input type="number" id="tEditTotalTables" min="1" max="80" placeholder="8"></label>
+        <label>Available tables (numbers / ranges) <input type="text" id="tEditAvailableTables" placeholder="1,2,4-6,8-9,11"></label>
+        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">Use <code>-</code> for ranges and <code>,</code> to separate, e.g. <code>1,2,4-6,8-9,11</code>. The <strong>Auto-assign tables</strong> button uses this list and tries to never put a team on the same table twice (falls back to no back-to-back when impossible).</p>
+        <p id="tEditAvailableTablesPreview" class="hint" style="margin:2px 0 0;font-size:0.74rem;color:var(--spm-accent)"></p>
       </fieldset>
 
       <fieldset>
@@ -561,7 +565,7 @@
             </div>
           </label>
           <label>Payout <input type="number" id="matchEditPayout" min="0" step="1" placeholder="0"></label>
-          <label>Table <input type="number" id="matchEditTable" min="1" step="1" placeholder="1"></label>
+          <label>Table(s) <input type="text" id="matchEditTable" placeholder="1 or 5,6" pattern="^\s*\d+(\s*,\s*\d+)*\s*$"></label>
         </div>
       </fieldset>
     </div>
@@ -1216,6 +1220,219 @@ async function applyRoundSchedule(bracket, round) {
   }
 }
 
+/* ── Table assignment ─────────────────────────
+ *  parseTableSpec("1,2,4-6,8-9,11") → [1,2,4,5,6,8,9,11]
+ *  Returns null when the spec is empty so callers can fall back to
+ *  defaults (e.g. 1..total_tables). Throws on syntax errors. */
+function parseTableSpec(spec) {
+  if (spec == null) return null;
+  const s = String(spec).trim();
+  if (!s) return null;
+  const out = new Set();
+  for (const part of s.split(',')) {
+    const p = part.trim();
+    if (!p) continue;
+    const range = p.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      const a = parseInt(range[1], 10), b = parseInt(range[2], 10);
+      if (!Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b < a) {
+        throw new Error('bad range "' + p + '" — expected low-high with low ≤ high');
+      }
+      for (let i = a; i <= b; i++) out.add(i);
+    } else {
+      if (!/^\d+$/.test(p)) throw new Error('bad token "' + p + '" — expected a number or low-high range');
+      const n = parseInt(p, 10);
+      if (n < 1) throw new Error('bad number "' + p + '" — must be ≥ 1');
+      out.add(n);
+    }
+  }
+  return Array.from(out).sort((a, b) => a - b);
+}
+
+/* table_no may be a number, a string "5", or a comma-separated string "5,6"
+ * (for matches that occupy 2 tables). These helpers normalize. */
+function tableNoToArray(v) {
+  if (v == null || v === '') return [];
+  if (typeof v === 'number') return [v];
+  return String(v).split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0);
+}
+function tableNoFromArray(arr) {
+  if (!arr || !arr.length) return null;
+  if (arr.length === 1) return arr[0];
+  return arr.join(',');
+}
+function fmtTableNoForDisplay(v) {
+  const arr = tableNoToArray(v);
+  if (!arr.length) return '';
+  return arr.join('+');
+}
+
+/* Updates the live preview under the available-tables input. Shows the
+ * parsed list (or a red error) so the operator gets feedback as they type. */
+function updateAvailableTablesPreview() {
+  const inp = document.getElementById('tEditAvailableTables');
+  const out = document.getElementById('tEditAvailableTablesPreview');
+  if (!inp || !out) return;
+  const raw = inp.value;
+  if (!raw.trim()) { out.textContent = ''; out.style.color = ''; return; }
+  try {
+    const list = parseTableSpec(raw);
+    out.style.color = 'var(--spm-accent)';
+    out.textContent = (list && list.length ? list.length + ' tables: ' + list.join(', ') : '(empty)');
+  } catch (e) {
+    out.style.color = 'var(--danger)';
+    out.textContent = '⚠ ' + e.message;
+  }
+}
+
+/* Auto-assign tables. Rules:
+ *  • Use the parsed available-tables list (falls back to 1..total_tables).
+ *  • For each match (in scheduled order), prefer tables that no team in this
+ *    match's ancestry has played on. If impossible, relax to "no back-to-back"
+ *    (forbid only the IMMEDIATE feeder's tables). If still impossible,
+ *    fall back to "anything not in use this time slot."
+ *  • 2-table matches consume 2 tables; tracker forbids both for descendants.
+ *  • Tie-break: pick the least-used table globally so wear levels out.
+ *  • Concurrency: matches sharing scheduled_at can't share tables. */
+async function autoAssignTables() {
+  if (!_activeMatchTournament) { alert('No live tournament loaded.'); return; }
+  const t = _activeMatchTournament;
+  const cfg = t.config || {};
+  let avail;
+  try { avail = parseTableSpec(cfg.availableTablesSpec); }
+  catch (e) { alert('Available-tables spec invalid: ' + e.message); return; }
+  if (!avail || !avail.length) {
+    const cap = t.total_tables;
+    if (!Number.isInteger(cap) || cap < 1) {
+      alert('No available-tables list set, and venue has no total_tables. Set one in the tournament edit modal first.');
+      return;
+    }
+    avail = [];
+    for (let i = 1; i <= cap; i++) avail.push(i);
+  }
+  confirmModal({
+    title: 'Auto-assign tables?',
+    message: 'Assigns tables using these ' + avail.length + ' table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '. Tries to avoid putting a team on the same table twice; falls back to "no back-to-back" when impossible. Overwrites every current assignment.',
+    okText: 'Auto-assign',
+    onOk: async () => {
+      const snapshot = JSON.stringify(t.matches);
+      const result = runAutoAssign(t.matches, avail);
+      try {
+        await sb('PATCH', 'tournaments?id=eq.' + t.id, { matches: t.matches });
+        renderMatchesEditor();
+        renderScheduleEditor();
+        const status = document.getElementById('scheduleStatus');
+        if (status) {
+          const bits = [result.assigned + ' assigned'];
+          if (result.relaxed)   bits.push(result.relaxed   + ' relaxed (no back-to-back)');
+          if (result.fallback)  bits.push(result.fallback  + ' fallback (any free)');
+          if (result.failed)    bits.push(result.failed    + ' failed');
+          status.textContent = bits.join(' · ');
+          setTimeout(() => { status.textContent = ''; }, 5000);
+        }
+      } catch (e) {
+        t.matches = JSON.parse(snapshot);
+        alert('Auto-assign failed: ' + e.message);
+      }
+    }
+  });
+}
+
+function runAutoAssign(matches, availableTables) {
+  const byId = {};
+  for (const m of matches) byId[m.id] = m;
+
+  // Iteration order: by scheduled_at then bracket/round/slot. Matches without
+  // a scheduled_at get processed LAST so their feeders are already assigned.
+  const order = matches.filter(m => !m.is_bye).slice().sort((a, b) => {
+    const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : Infinity;
+    const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : Infinity;
+    if (ta !== tb) return ta - tb;
+    if (a.bracket !== b.bracket) return String(a.bracket).localeCompare(String(b.bracket));
+    if (a.round !== b.round) return a.round - b.round;
+    return a.slot - b.slot;
+  });
+
+  // tableHistory[matchId] = Set of tables every potential entrant has touched
+  // by the time they reach this match. Includes feeders' tables + their own
+  // tables propagated forward.
+  const tableHistory = {};
+  // usedAtSlot[scheduled_at] = Set of tables already taken at that wall-clock.
+  const usedAtSlot = {};
+  // Global count for tie-breaking. Initialized only for available tables.
+  const globalCount = {};
+  for (const t of availableTables) globalCount[t] = 0;
+
+  function ancestorTables(m, visited) {
+    visited = visited || new Set();
+    if (visited.has(m.id)) return new Set();
+    visited.add(m.id);
+    const out = new Set();
+    for (const ref of [m.top_from, m.bot_from]) {
+      if (!ref || !ref.match_id) continue;
+      const feeder = byId[ref.match_id];
+      if (!feeder) continue;
+      // Feeder's own tables (now assigned)
+      for (const t of tableNoToArray(feeder.table_no)) out.add(t);
+      // Feeder's ancestors (recursive)
+      const fHist = tableHistory[feeder.id];
+      if (fHist) for (const t of fHist) out.add(t);
+    }
+    return out;
+  }
+  function immediateFeederTables(m) {
+    const out = new Set();
+    for (const ref of [m.top_from, m.bot_from]) {
+      if (!ref || !ref.match_id) continue;
+      const feeder = byId[ref.match_id];
+      if (!feeder) continue;
+      for (const t of tableNoToArray(feeder.table_no)) out.add(t);
+    }
+    return out;
+  }
+
+  const counters = { assigned: 0, relaxed: 0, fallback: 0, failed: 0 };
+
+  for (const m of order) {
+    const need = (m.tables_in_parallel && m.tables_in_parallel >= 2) ? 2 : 1;
+    const slotKey = m.scheduled_at || '__unscheduled__';
+    const inUse = usedAtSlot[slotKey] = usedAtSlot[slotKey] || new Set();
+
+    const strictForbid = ancestorTables(m);
+    tableHistory[m.id] = strictForbid;
+
+    let candidates = availableTables.filter(t => !strictForbid.has(t) && !inUse.has(t));
+    let mode = 'strict';
+    if (candidates.length < need) {
+      const relaxedForbid = immediateFeederTables(m);
+      candidates = availableTables.filter(t => !relaxedForbid.has(t) && !inUse.has(t));
+      mode = 'relaxed';
+    }
+    if (candidates.length < need) {
+      candidates = availableTables.filter(t => !inUse.has(t));
+      mode = 'fallback';
+    }
+    if (candidates.length < need) {
+      // Truly nothing left at this time slot.
+      counters.failed++;
+      continue;
+    }
+
+    candidates.sort((a, b) => (globalCount[a] - globalCount[b]) || (a - b));
+    const picked = candidates.slice(0, need);
+    for (const t of picked) {
+      inUse.add(t);
+      globalCount[t] = (globalCount[t] || 0) + 1;
+      tableHistory[m.id].add(t);
+    }
+    m.table_no = tableNoFromArray(picked);
+    if (mode === 'strict')         counters.assigned++;
+    else if (mode === 'relaxed')   { counters.assigned++; counters.relaxed++; }
+    else                            { counters.assigned++; counters.fallback++; }
+  }
+  return counters;
+}
+
 async function renumberAllTables() {
   if (!_activeMatchTournament) { alert('No live tournament loaded.'); return; }
   confirmModal({
@@ -1478,7 +1695,7 @@ function renderMatchesTable(matches) {
       + '<td>' + escapeHtml(dayCell) + '</td>'
       + '<td>' + escapeHtml(timeCell) + '</td>'
       + '<td class="num-cell">' + (m.payout != null && m.payout !== '' ? '$' + m.payout : '') + '</td>'
-      + '<td class="num-cell">' + (m.table_no != null ? m.table_no : '') + '</td>'
+      + '<td class="num-cell">' + escapeHtml(fmtTableNoForDisplay(m.table_no)) + '</td>'
       + '<td class="hint" style="font-family:\'SF Mono\',Consolas,Menlo,monospace;font-size:0.72rem">' + escapeHtml(m.id) + '</td>'
       + '<td><button class="edit-btn" onclick="event.stopPropagation(); openMatchEditModal(\'' + escapeHtml(m.id).replace(/'/g, "\\'") + '\')">Edit</button></td>'
       + '</tr>';
@@ -1647,7 +1864,7 @@ function openMatchEditModal(matchId) {
   document.getElementById('matchEditScheduledDate').value = dtParts.date;
   document.getElementById('matchEditScheduledTime').innerHTML = buildTimeOptions(dtParts.time);
   document.getElementById('matchEditPayout').value  = m.payout != null ? m.payout : '';
-  document.getElementById('matchEditTable').value   = m.table_no != null ? m.table_no : '';
+  document.getElementById('matchEditTable').value   = fmtTableNoForDisplay(m.table_no).replace(/\+/g, ',');
 
   applyByeToggle();
   hideStatus('matchEditStatus');
@@ -1725,7 +1942,7 @@ async function saveMatchEdit() {
   m.scheduled_at = dtV || null;
   if (dtV) { m.day = null; m.time = null; }
   m.payout   = payV  !== '' ? parseInt(payV, 10) : null;
-  m.table_no = tblV  !== '' ? parseInt(tblV, 10) : null;
+  m.table_no = tableNoFromArray(tableNoToArray(tblV));
 
   try {
     await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
@@ -1906,6 +2123,8 @@ async function openTournamentEditModal(tournamentId, focusStatus) {
     const cfg = t.config || {};
     document.getElementById('tEditBracketChamp').value   = cfg.bracketChampText || '';
     document.getElementById('tEditChampion').value       = cfg.championText || '';
+    document.getElementById('tEditAvailableTables').value = cfg.availableTablesSpec || '';
+    updateAvailableTablesPreview();
     // Links
     // Viewer is in the same directory as admin — './' (not '../') so the
     // GitHub Pages repo prefix is preserved.
@@ -1937,7 +2156,8 @@ async function saveTournamentEdit() {
   const status = document.getElementById('tEditStatus').value;
   const cfg = {
     bracketChampText: document.getElementById('tEditBracketChamp').value.trim() || 'Bracket Champ',
-    championText:     document.getElementById('tEditChampion').value.trim()     || 'Champion'
+    championText:     document.getElementById('tEditChampion').value.trim()     || 'Champion',
+    availableTablesSpec: document.getElementById('tEditAvailableTables').value.trim() || ''
   };
   const venueName = document.getElementById('tEditVenueName').value.trim();
   const venueAddr = document.getElementById('tEditVenueAddress').value.trim();
@@ -2233,6 +2453,7 @@ async function init() {
   renderCapacityAnalyzer();
   document.getElementById('tEditVenueName').addEventListener('change', maybeAutofillVenue);
   document.getElementById('tEditVenueName').addEventListener('blur', maybeAutofillVenue);
+  document.getElementById('tEditAvailableTables').addEventListener('input', updateAvailableTablesPreview);
 }
 document.addEventListener('DOMContentLoaded', init);
 </script>
