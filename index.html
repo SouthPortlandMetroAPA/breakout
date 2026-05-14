@@ -106,8 +106,12 @@
       page-break-after: always; break-after: page;
       padding: 0; margin: 0;
       overflow: hidden;
-      /* One section = one page. Force page-height container so SVG fits. */
-      height: 100vh;
+      /* One section = one page. Use the orientation-specific page content
+         dimensions injected by preparePrint() in JS (see #breakoutPrintStyle
+         in <head>). Falls back to 100vh which is unreliable in mobile print
+         engines but acceptable on desktop. */
+      width:  var(--print-page-w, 100vw);
+      height: var(--print-page-h, 100vh);
       display: flex; flex-direction: column;
     }
     .bracket-section:last-child { page-break-after: auto; break-after: auto; }
@@ -258,7 +262,13 @@
     overflow: visible;
   }
   .bracket-svg text.cross-source-link {
-    pointer-events: auto;
+    /* bounding-box (not auto) so the whole text bbox catches the pointer —
+       not just the painted glyph pixels. Otherwise hovering "between"
+       letters or near the underline falls through to the viewport's grab
+       cursor and clicks start a pan instead of firing the jump handler.
+       Mobile taps were forgiving enough to land on a glyph; desktop mice
+       are precise and missed. */
+    pointer-events: bounding-box;
     cursor: pointer;
     text-decoration: underline;
     text-decoration-thickness: 1px;
@@ -2429,15 +2439,25 @@ function initZoomToolbar() {
  *  Two buttons: landscape and portrait. Before window.print():
  *    1. Inject a temp <style> with @page { size: <orient> } so the browser
  *       paginates the correct way.
- *    2. The on-screen-→ print transformation is handled entirely by the
- *       @media print CSS rules at the top of this file: each section is
- *       sized to 100vh, the bracket-wrap fills it, and the inner <svg>
- *       (with its viewBox) auto-scales to fit. No measurement needed.
- *    3. Restore @page on afterprint. */
+ *    2. Set --print-page-w and --print-page-h on :root in explicit inches
+ *       matching the chosen orientation. The @media print rules use those
+ *       variables to size each .bracket-section. 100vh fallback is
+ *       unreliable in mobile print engines (the iOS/Android Chromium print
+ *       paths sometimes resolve vh against the device screen height rather
+ *       than the page content area), which made the mobile print render
+ *       split each bracket across multiple pages.
+ *    3. Letter content area (after 0.35in margins): 7.8in × 10.3in.
+ *       Landscape: width = 10.3in, height = 7.8in.
+ *    4. Restore @page + vars on afterprint. */
 function preparePrint(orientation) {
+  // Letter (8.5×11in) minus 0.35in margins on each side.
+  const W = orientation === 'landscape' ? '10.3in' : '7.8in';
+  const H = orientation === 'landscape' ? '7.8in'  : '10.3in';
   const sty = document.createElement('style');
   sty.id = 'breakoutPrintStyle';
-  sty.textContent = '@page { size: letter ' + orientation + '; margin: 0.35in; }';
+  sty.textContent =
+      '@page { size: letter ' + orientation + '; margin: 0.35in; }\n'
+    + '@media print { :root { --print-page-w: ' + W + '; --print-page-h: ' + H + '; } }';
   document.head.appendChild(sty);
 }
 function teardownPrint() {
