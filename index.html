@@ -115,20 +115,22 @@
 
   /* Print: one bracket per page, fitted to page dimensions WITHOUT touching
      the on-screen UI. Approach:
-       • Use CSS `zoom` (not transform: scale) on each .bracket-wrap. zoom
-         scales actual LAYOUT dimensions, so pagination is based on the
-         shrunk content — the wrap fits in one page natively, no fixed
-         heights or absolute positioning needed.
-       • --print-scale is set by JS per .bracket-section right before
-         window.print() and cleared afterprint. The CSS rule that uses it
-         lives inside @media print only, so on-screen view is untouched.
-       • SVG connectors live inside .bracket-wrap and zoom with it — no
-         redraw needed; geometry stays aligned. */
+       • Use CSS `zoom` on the WHOLE .bracket-section (not just the wrap).
+         Zoom on the section scales the title + viewport + wrap + connectors
+         together as one unit. Pagination uses the zoomed layout, so each
+         section fits one page natively.
+       • Zoom on the section (block element) is more reliable than zoom on
+         the inline-block wrap — Chrome's print engine had quirks scaling
+         enlarged inline-block boxes; block-on-block zoom doesn't.
+       • --print-scale is set by JS per section right before window.print()
+         and cleared afterprint. The rule lives inside @media print only,
+         so on-screen view is untouched. */
   @media print {
     .header, .hero, .save-toast, .update-overlay,
     .view-tools, .search, #searchResult, .header-spacer { display: none !important; }
     body { background: #fff; margin: 0; }
     .bracket-section {
+      zoom: var(--print-scale, 1);
       page-break-after: always; break-after: page;
       padding: 0; margin: 0;
       overflow: hidden;
@@ -136,13 +138,13 @@
     .bracket-section:last-child { page-break-after: auto; break-after: auto; }
     .bracket-section .section-title { padding: 6px 8px; }
     .bracket-section .viewport {
-      overflow: hidden !important;
+      overflow: visible !important;
       padding: 0 !important;
       cursor: default !important;
     }
     .bracket-section .bracket-wrap {
-      zoom: var(--print-scale, 1);
-      /* Override on-screen min-width so zoom can actually shrink the box. */
+      /* Override on-screen min-width so the wrap is free to size to its
+         natural content; the section-level zoom handles the page fit. */
       min-width: 0 !important;
     }
     /* Re-enable visible borders for paper output */
@@ -2393,17 +2395,21 @@ function preparePrint(orientation) {
   document.head.appendChild(sty);
 
   // For each section: measure natural size AT THE CURRENT ON-SCREEN ZOOM,
-  // compute the multiplier needed to fit the page. No clamp at <=1 — if the
-  // bracket is smaller than the page, enlarge it to fill.
+  // compute the zoom multiplier needed to fit the page. No clamp — enlarges
+  // a small bracket to fill the page, shrinks a big one. Identical output
+  // at any on-screen zoom because both naturalW and the eventual scale move
+  // inversely with --zoom.
   document.querySelectorAll('.bracket-section').forEach(sec => {
     const wrap = sec.querySelector('.bracket-wrap');
     if (!wrap) return;
     const titleH = (sec.querySelector('.section-title') || {}).offsetHeight || 28;
+    // Section-level zoom scales title + viewport + wrap together, so the
+    // natural section size includes the title.
     const naturalW = wrap.scrollWidth;
-    const naturalH = wrap.scrollHeight;
-    // Reserve a little headroom under the title for breathing room.
-    const scaleW = PAGE_W / naturalW;
-    const scaleH = (PAGE_H - titleH - 16) / naturalH;
+    const naturalH = wrap.scrollHeight + titleH;
+    // Tiny safety margin so we don't kiss the page edge.
+    const scaleW = (PAGE_W - 4) / naturalW;
+    const scaleH = (PAGE_H - 4) / naturalH;
     const scale = Math.min(scaleW, scaleH);
     sec.style.setProperty('--print-scale', String(scale));
   });
@@ -2415,20 +2421,28 @@ function teardownPrint() {
     sec.style.removeProperty('--print-scale');
   });
 }
+function firePrint(orient) {
+  preparePrint(orient);
+  const cleanup = () => { teardownPrint(); window.removeEventListener('afterprint', cleanup); };
+  window.addEventListener('afterprint', cleanup);
+  // One tick lets the browser pick up the freshly-set --print-scale before
+  // window.print() snapshots.
+  setTimeout(() => window.print(), 30);
+}
 function initPrintButtons() {
   const land = document.getElementById('printLand');
   const port = document.getElementById('printPort');
-  const fire = (orient) => {
-    preparePrint(orient);
-    const cleanup = () => { teardownPrint(); window.removeEventListener('afterprint', cleanup); };
-    window.addEventListener('afterprint', cleanup);
-    // No layout reflow needed — the @media print rules apply during print
-    // rendering only, so a single tick is enough for the browser to pick up
-    // the freshly-set --print-scale.
-    setTimeout(() => window.print(), 30);
-  };
-  if (land) land.addEventListener('click', () => fire('landscape'));
-  if (port) port.addEventListener('click', () => fire('portrait'));
+  if (land) land.addEventListener('click', () => firePrint('landscape'));
+  if (port) port.addEventListener('click', () => firePrint('portrait'));
+  // Intercept Ctrl+P / Cmd+P → run our fit-to-page logic (landscape default).
+  // Capture phase so we beat the browser's native print binding.
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key !== 'p' && e.key !== 'P') return;
+    e.preventDefault();
+    e.stopPropagation();
+    firePrint('landscape');
+  }, true);
 }
 
 /* ── Boot ──────────────────────────────────── */
