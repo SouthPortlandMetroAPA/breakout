@@ -1,0 +1,4 @@
+tools/svg-render-test/node_modules/
+tools/svg-render-test/screenshots/
+tools/svg-render-test/out-*.pdf
+tools/svg-render-test/*.log

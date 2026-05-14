@@ -18,31 +18,10 @@
     --drop: #f59e0b;
     --radius: 10px;
     --pill: 999px;
-    /* Layout sizes are computed from a base × zoom. --zoom is set on body
-       by the on-screen zoom widget (0.4 to 1.5). All bracket dimensions
-       scale with it so reflow stays clean — no transform-scale tricks. */
+    /* On-screen zoom factor (0.4–1.5). Applied by JS to each bracket SVG's
+       CSS width/height — the SVG's viewBox handles internal scaling, so
+       this single multiplier is all that's needed for zoom. */
     --zoom: 1;
-    --cell-w-base: 240px;
-    --cell-w-mob-base: 200px;
-    --round-gap-base: 110px;
-    --round-gap-mob-base: 72px;
-    --slot-h-base: 152px;
-    --slot-h-mob-base: 132px;
-    --card-h-base: 136px;
-    --card-h-mob-base: 118px;
-    --cell-w:        calc(var(--cell-w-base)        * var(--zoom));
-    --cell-w-mob:    calc(var(--cell-w-mob-base)    * var(--zoom));
-    --round-gap:     calc(var(--round-gap-base)     * var(--zoom));
-    --round-gap-mob: calc(var(--round-gap-mob-base) * var(--zoom));
-    /* One shared vertical slot unit across every bracket so cards are
-       spaced identically regardless of bracket size. Each bracket sets
-       its own --bracket-slots (12-team modified = 4 R1 lanes; 64-team
-       = 8 R1 lanes). All match cells live at canonical bracket Y
-       centers in slot units. */
-    --slot-h:        calc(var(--slot-h-base)        * var(--zoom));
-    --slot-h-mob:    calc(var(--slot-h-mob-base)    * var(--zoom));
-    --card-h:        calc(var(--card-h-base)        * var(--zoom));
-    --card-h-mob:    calc(var(--card-h-mob-base)    * var(--zoom));
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -114,39 +93,41 @@
   }
 
   /* Print: one bracket per page, fitted to page dimensions WITHOUT touching
-     the on-screen UI. Approach:
-       • CSS `zoom` is applied to the .bracket-wrap (inline-block). Inline-
-         block + zoom scales both layout and visual together, so the wrap
-         occupies exactly (content × zoom) in the parent. The wrap's
-         min-width: 100% from the screen rules is dropped here so it can
-         actually shrink AND enlarge.
-       • The wrap's natural content size is measured with min-width
-         temporarily overridden (see preparePrint in JS) — on a wide screen
-         the on-screen scrollWidth is inflated past the real bracket size
-         by the min-width: 100% rule, which is what was making the print
-         leave empty space instead of fitting/enlarging properly.
-       • --print-scale is set by JS per .bracket-section right before
-         window.print() and cleared afterprint. Lives inside @media print
-         only so on-screen view is untouched. */
+     the on-screen UI.
+     SVG viewBox makes this trivial: each .bracket-svg has width/height = 100%
+     and a fixed viewBox in design units. In @media print we make the wrap
+     and svg fill the page, and the browser fits viewBox content to that box.
+     No zoom hacks, no transform scaling, no per-section measurement. */
   @media print {
-    .header, .hero, .save-toast, .update-overlay,
+    .header, .hero, .save-toast, .update-overlay, .foot,
     .view-tools, .search, #searchResult, .header-spacer { display: none !important; }
     body { background: #fff; margin: 0; }
     .bracket-section {
       page-break-after: always; break-after: page;
       padding: 0; margin: 0;
       overflow: hidden;
+      /* One section = one page. Force page-height container so SVG fits. */
+      height: 100vh;
+      display: flex; flex-direction: column;
     }
     .bracket-section:last-child { page-break-after: auto; break-after: auto; }
-    .bracket-section .section-title { padding: 6px 8px; }
+    .bracket-section .section-title { padding: 6px 8px; flex: 0 0 auto; }
     .bracket-section .viewport {
-      overflow: visible !important;
+      overflow: hidden !important;
       padding: 0 !important;
       cursor: default !important;
+      flex: 1 1 auto;
+      min-height: 0;
     }
     .bracket-section .bracket-wrap {
-      zoom: var(--print-scale, 1);
+      display: block !important;
+      width: 100% !important;
+      height: 100% !important;
       min-width: 0 !important;
+    }
+    .bracket-section .bracket-svg {
+      width: 100% !important;
+      height: 100% !important;
     }
     /* Re-enable visible borders for paper output */
     .match { box-shadow: none !important; }
@@ -259,78 +240,52 @@
   /* Cards keep default cursor so users can read text without the grab hint. */
   .viewport .match { cursor: default; }
 
-  .bracket-wrap { position: relative; display: inline-block; min-width: 100%; }
-  .connectors { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
-  .connectors text.cross-source-link {
+  /* Bracket wrap holds one big SVG per section. The SVG has a fixed viewBox
+     so it scales identically at any container size — print fit-to-page is
+     automatic via the @media print rule above. Cards live inside the SVG as
+     <foreignObject> so they keep their HTML/CSS rendering (ellipsis, hover,
+     container queries) while inheriting SVG's coordinate-system scaling. */
+  .bracket-wrap {
+    position: relative;
+    display: block;
+    /* Width follows --zoom × natural-content-width set inline by JS. */
+  }
+  .bracket-svg {
+    display: block;
+    overflow: visible;
+  }
+  .bracket-svg text.cross-source-link {
     pointer-events: auto;
     cursor: pointer;
     text-decoration: underline;
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
   }
-  .connectors text.cross-source-link:hover { fill: #7c3a04; }
-  /* padding-left = round-gap gives the first round's cross-bracket source
-     labels somewhere to live (specifically the 64-team R1, where every row
-     comes from another bracket). */
-  .bracket { position: relative; display: flex; align-items: stretch; gap: var(--round-gap); padding-left: var(--round-gap); padding-right: 8px; }
-  @media (max-width: 767px) { .bracket { gap: var(--round-gap-mob); padding-left: var(--round-gap-mob); } }
-
-  .round {
-    display: flex; flex-direction: column;
-    flex: 0 0 auto;
-    width: var(--cell-w);
-    scroll-snap-align: start;
-  }
-  @media (max-width: 767px) { .round { width: var(--cell-w-mob); } }
-
-  .round-header {
-    text-align: center; padding: 6px 0 10px;
-    border-bottom: 1px solid var(--border); margin-bottom: 8px;
-  }
-  .round-name {
-    font-size: 0.92rem; font-weight: 900;
-    color: var(--spm-accent);
-    letter-spacing: 0.06em;
+  .bracket-svg text.cross-source-link:hover { fill: #7c3a04; }
+  .bracket-svg text.round-name {
+    font-size: 13.5px; font-weight: 900;
+    fill: var(--spm-accent);
+    letter-spacing: 1.4px;
     text-transform: uppercase;
-    font-variant-numeric: tabular-nums;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
-  .round-tables {
-    font-size: 0.66rem; font-weight: 800;
-    color: var(--spm-accent);
-    letter-spacing: 0.1em;
+  .bracket-svg .round-tables-bg { fill: rgba(0,49,161,0.10); }
+  .bracket-svg text.round-tables {
+    font-size: 9.5px; font-weight: 800;
+    fill: var(--spm-accent);
+    letter-spacing: 0.95px;
     text-transform: uppercase;
-    margin-top: 2px;
-    display: inline-block;
-    padding: 1px 8px;
-    border-radius: 999px;
-    background: rgba(0,49,161,0.10);
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
-
-  /* Matches column: fixed height = bracket-slots × slot-h, cells absolutely
-     positioned at their canonical bracket Y centers. */
-  .matches {
-    flex: 0 0 auto;
-    position: relative;
-    height: calc(var(--slot-h) * var(--bracket-slots, 8));
+  .bracket-svg .round-divider {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+    fill: none;
   }
-  @media (max-width: 767px) {
-    .matches { height: calc(var(--slot-h-mob) * var(--bracket-slots, 8)); }
-  }
-
-  /* Dashed column divider between rounds — centered in the flex gap via
-     a ::before pseudo so it doesn't push round columns around. */
-  .round + .round { position: relative; }
-  .round + .round::before {
-    content: '';
-    position: absolute;
-    left: calc(var(--round-gap) * -0.5);
-    top: 0; bottom: 0;
-    width: 0;
-    border-left: 1px dashed var(--border-strong);
-    pointer-events: none;
-  }
-  @media (max-width: 767px) {
-    .round + .round::before { left: calc(var(--round-gap-mob) * -0.5); }
+  .bracket-svg .round-header-underline {
+    stroke: var(--border);
+    stroke-width: 1;
   }
 
   /* ── Match cell ─────────────────────────────
@@ -339,13 +294,11 @@
        • Match # + destination chips share ONE compact top row (secondary).
        • Schedule + table share ONE compact footer line (tertiary).
        • Left edge has a 3px bracket-color stripe for instant identification.
-     Fixed card size — never varies. */
+     Fixed card size — driven by the foreignObject's width/height in SVG. */
   .match {
-    position: absolute;
-    left: 0; right: 0;
-    top: calc(var(--slot-h) * var(--y, 0.5));
-    transform: translateY(-50%);
-    height: var(--card-h);
+    position: relative;
+    width: 100%;
+    height: 100%;
     background: var(--card);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
@@ -362,36 +315,30 @@
   /* Seed numbers are intentionally hidden from the bracket viewer; admin
      and staff UIs still show them where useful. */
   .match .match-row .seed { display: none !important; }
-  /* Team name scales continuously with the card width using cqi (1 cqi = 1%
-     of the card's inline size). clamp() pins min/max so it stays readable. */
-  .match .match-row .name { font-size: clamp(0.55rem, 6.5cqi, 0.92rem); }
-  /* Progressive hide as the card shrinks — order matches the operator's
-     priority: match number → day → team number → time → dest chips. The
-     team name scales (above) and never disappears. */
-  @container card (max-width: 220px) { .match .match-top .mno { display: none; } }
-  @container card (max-width: 200px) { .match .match-foot .when .day { display: none; } }
-  @container card (max-width: 180px) { .match .match-row .team-num { display: none; } }
-  @container card (max-width: 150px) { .match .match-foot .when .time { display: none; } }
-  @container card (max-width: 130px) { .match .match-top .destinations { display: none; } }
+  /* Team-name font size scales with the visually-rendered card width. The
+     SVG/foreignObject sandwich means the @container approach doesn't see
+     the effective rendered width — so we toggle hide classes (and bump the
+     CSS var --name-size) per zoom band from JS in updateCardDensity(). */
+  .match .match-row .name { font-size: var(--name-size, 0.92rem); }
+  /* Progressive hide bands set by JS on the .match element. Order matches
+     the operator's priority: match # → day → team-num → time → chips. */
+  .match.cw-le-220 .match-top .mno { display: none; }
+  .match.cw-le-200 .match-foot .when .day { display: none; }
+  .match.cw-le-180 .match-row .team-num { display: none; }
+  .match.cw-le-150 .match-foot .when .time { display: none; }
+  .match.cw-le-130 .match-top .destinations { display: none; }
   .match:hover { box-shadow: 0 6px 18px rgba(0,0,0,0.10); }
-  @media (max-width: 767px) {
-    .match {
-      top: calc(var(--slot-h-mob) * var(--y, 0.5));
-      height: var(--card-h-mob);
-    }
-  }
 
-  /* Bracket-color stripe down the left edge — quick visual id per bracket. */
-  .match::before {
-    content: '';
+  /* Bracket-color stripe down the left edge — quick visual id per bracket.
+     Rendered as an inline div so it works through foreignObject reliably. */
+  .match .match-stripe {
     position: absolute;
     left: 0; top: 0; bottom: 0;
     width: 3px;
-    background: var(--border-strong);
+    background: var(--stripe, var(--border-strong));
+    z-index: 1;
+    pointer-events: none;
   }
-  .bracket-section[data-bracket="A"]  .match::before { background: var(--spm-primary); }
-  .bracket-section[data-bracket="B"]  .match::before { background: var(--spm-accent); }
-  .bracket-section[data-bracket="64"] .match::before { background: #6b7280; }
 
   /* Top: M# left, destination chips right. Single row, compact. */
   .match-top {
@@ -657,19 +604,17 @@
   /* Bracket Champ — promoted OUT of the card so it can be loud. Sits in
      the final round's column, centered under the final match. Pulses
      gently to draw the eye. Same SPM gradient as the in-card pill version
-     used to be, but ~2× the size and with a soft red halo. */
+     used to be, but ~2× the size and with a soft red halo.
+     Positioned by the foreignObject wrapping it in SVG coordinates. */
   .bracket-champ-big {
-    position: absolute;
-    left: 50%;
-    top: calc(var(--slot-h) * var(--y, 4) + var(--card-h) / 2 + 22px);
-    transform: translateX(-50%);
+    display: inline-block;
     padding: 11px 22px;
     border-radius: 999px;
     background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
     color: #fff;
-    font-size: 1rem;
+    font-size: 14px;
     font-weight: 900;
-    letter-spacing: 0.14em;
+    letter-spacing: 1.96px;
     text-transform: uppercase;
     text-shadow: 0 1px 1px rgba(0,0,0,0.18);
     white-space: nowrap;
@@ -679,19 +624,11 @@
       0 0 0 8px rgba(0,49,161,0.06);
     animation: champBounce 2.4s ease-in-out infinite;
     pointer-events: none;
-    z-index: 5;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
   @keyframes champBounce {
-    0%, 100% { transform: translateX(-50%) translateY(0) scale(1); }
-    50%      { transform: translateX(-50%) translateY(-4px) scale(1.05); }
-  }
-  @media (max-width: 767px) {
-    .bracket-champ-big {
-      top: calc(var(--slot-h-mob) * var(--y, 4) + var(--card-h-mob) / 2 + 16px);
-      padding: 8px 16px;
-      font-size: 0.82rem;
-      letter-spacing: 0.1em;
-    }
+    0%, 100% { transform: translateY(0) scale(1); }
+    50%      { transform: translateY(-4px) scale(1.05); }
   }
 
   /* Final-of-each-bracket emphasis: gradient top-strip on the card,
@@ -699,7 +636,7 @@
      The bracket-champ chip in the top-right already carries the gold
      treatment — this gives the whole card a "this is the final" feel
      without competing with non-final winner cells. */
-  .round.is-final .match::after {
+  .match.is-final-of-bracket::after {
     content: '';
     position: absolute;
     left: 0; right: 0; top: 0;
@@ -708,14 +645,14 @@
     z-index: 2;
     pointer-events: none;
   }
-  .round.is-final .match-row.winner {
+  .match.is-final-of-bracket .match-row.winner {
     background: linear-gradient(90deg, rgba(234,0,42,0.10), rgba(0,49,161,0.10));
   }
-  .round.is-final .match-row.winner .name {
+  .match.is-final-of-bracket .match-row.winner .name {
     color: var(--spm-accent);
     font-weight: 900;
   }
-  .round.is-final .match-row.winner .trophy {
+  .match.is-final-of-bracket .match-row.winner .trophy {
     font-size: 1.05rem;
   }
 
@@ -745,11 +682,11 @@
   .match.highlight-win  .match-row.highlight-team { background: rgba(22,163,74,0.14) !important; }
   .match.highlight-loss .match-row.highlight-team { background: rgba(234,0,42,0.12) !important; }
   /* Keep final-card top-strip visible above highlight shadows */
-  .round.is-final .match.highlight-win,
-  .round.is-final .match.highlight-loss,
-  .round.is-final .match.highlight-pending { box-shadow: 0 0 0 3px rgba(0,0,0,0.05), 0 2px 10px rgba(0,0,0,0.08); }
-  .round.is-final .match.highlight-win  { box-shadow: 0 0 0 3px rgba(22,163,74,0.50), 0 2px 10px rgba(0,0,0,0.08); }
-  .round.is-final .match.highlight-loss { box-shadow: 0 0 0 3px rgba(234,0,42,0.50),  0 2px 10px rgba(0,0,0,0.08); }
+  .match.is-final-of-bracket.highlight-win,
+  .match.is-final-of-bracket.highlight-loss,
+  .match.is-final-of-bracket.highlight-pending { box-shadow: 0 0 0 3px rgba(0,0,0,0.05), 0 2px 10px rgba(0,0,0,0.08); }
+  .match.is-final-of-bracket.highlight-win  { box-shadow: 0 0 0 3px rgba(22,163,74,0.50), 0 2px 10px rgba(0,0,0,0.08); }
+  .match.is-final-of-bracket.highlight-loss { box-shadow: 0 0 0 3px rgba(234,0,42,0.50),  0 2px 10px rgba(0,0,0,0.08); }
 
   /* Auto-update */
   .update-overlay { position: fixed; inset: 0; background: rgba(10,20,40,0.72); z-index: 9999; display: none; align-items: center; justify-content: center; padding: 24px; }
@@ -1586,51 +1523,151 @@ async function buildTournament() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   RENDER
+   RENDER — SVG-based
+   Every bracket is one inline <svg> with a fixed viewBox in design units.
+   The viewBox is the secret to print-fit: the browser scales it to whatever
+   container size we give the svg, so @media print needs no zoom tricks.
+
+   Design units inside the viewBox:
+     • Card:   240w × 136h
+     • Slot:   152 vertical units, 8 slots per bracket
+     • Round:  card-w + 110 gap between columns
+     • Cards as <foreignObject> so HTML/CSS still drives card visuals.
+     • Connectors / cross-source labels / round headers / dividers as
+       native SVG, sharing the card coordinate system.
    ════════════════════════════════════════════════════════════════════════ */
+
+/* Design constants — single source of truth for every render-side number.
+ * If the on-screen rendering ever needs to change card dimensions, update
+ * these and everything (positioning, connectors, viewBox) follows. */
+const SVG = {
+  CARD_W: 240,
+  CARD_H: 136,
+  ROUND_GAP: 110,
+  SLOT_H: 152,
+  SLOTS: 8,
+  HEADER_H: 36,           // round-header band
+  HEADER_TEXT_Y: 18,      // baseline for round-name text
+  HEADER_PILL_Y: 30,      // baseline for "N tables" pill text
+  LEFT_PAD: 110,          // left gutter — gives cross-source labels room
+  RIGHT_PAD: 8,
+  TOP_PAD: 12,            // small gap above header band
+  CHAMP_BAND_H: 60,       // vertical room below cards for the champ pill
+  BRACKET_COLORS: {
+    A:  '#ea002a',
+    B:  '#0031a1',
+    '64': '#6b7280'
+  }
+};
+
+function bracketLayout(rounds) {
+  const NR = rounds.length;
+  const w = SVG.LEFT_PAD + NR * SVG.CARD_W + (NR - 1) * SVG.ROUND_GAP + SVG.RIGHT_PAD;
+  const h = SVG.TOP_PAD + SVG.HEADER_H + SVG.SLOTS * SVG.SLOT_H + SVG.CHAMP_BAND_H;
+  return { w, h, rounds: NR };
+}
+
+function roundXLeft(roundIdx) {
+  return SVG.LEFT_PAD + roundIdx * (SVG.CARD_W + SVG.ROUND_GAP);
+}
+function roundXCenter(roundIdx) {
+  return roundXLeft(roundIdx) + SVG.CARD_W / 2;
+}
+function matchYCenter(m) {
+  return SVG.TOP_PAD + SVG.HEADER_H + matchYUnits(m) * SVG.SLOT_H;
+}
+function matchTopY(m) {
+  return matchYCenter(m) - SVG.CARD_H / 2;
+}
+
 function bracketSectionHtml(bracket, kind, rounds, opts) {
   const sectionLabel = opts.label;
   const pillClass = opts.pillClass;
-  const slots = bracketSlotsFor(bracket);
-  return '<div class="bracket-section" data-bracket="' + bracket.label + '">'
-    + '<div class="section-title"><span class="pill ' + pillClass + '">' + esc(sectionLabel) + '</span></div>'
-    + '<div class="viewport"><div class="bracket-wrap" data-wrap="' + bracket.label + '" style="--bracket-slots:' + slots + '">'
-    +   '<svg class="connectors" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>'
-    +   '<div class="bracket">'
-    +     rounds.map((roundMatches, idx) => roundHtml(roundMatches, idx, rounds.length, slots)).join('')
-    +   '</div>'
-    + '</div></div>'
-    + '</div>';
-}
+  const layout = bracketLayout(rounds);
+  const stripeColor = SVG.BRACKET_COLORS[bracket.label] || '#94a3b8';
 
-function roundHtml(roundMatches, roundIdx, totalRounds, slots) {
-  const isFinal = roundIdx === totalRounds - 1;
-  // Tables-in-parallel is a round-level property — read from the first real
-  // match in this round. Shows a small "2 tables" badge under the round name.
-  const real = roundMatches.filter(m => !m.bye);
-  const tip = real[0] && real[0].tables_in_parallel ? real[0].tables_in_parallel : 1;
-  const tipLabel = tip > 1 ? '<div class="round-tables">' + tip + ' tables</div>' : '';
-  // For each match in this round, render the card. If this round is the
-  // bracket's final, also drop a big "Bracket Champ" chip OUTSIDE and below
-  // the match card — bigger, brighter, animated.
-  const matchesContent = roundMatches.map(m => {
-    let h = matchHtml(m, isFinal);
-    if (isFinal && !m.bye) {
-      const y = matchYUnits(m);
-      h += '<div class="bracket-champ-big" style="--y:' + y + '">'
-         + '&#x1F3C6; ' + esc(TOURNAMENT_TEXT.bracketChampText)
-         + '</div>';
+  // 1) Background scaffolding: round headers + dividers
+  let svgInner = '';
+
+  // Round headers + per-round underline + round divider lines
+  for (let i = 0; i < rounds.length; i++) {
+    const cx = roundXCenter(i);
+    const xL = roundXLeft(i);
+    const xR = xL + SVG.CARD_W;
+    const real = rounds[i].filter(m => !m.bye);
+    const tip = real[0] && real[0].tables_in_parallel ? real[0].tables_in_parallel : 1;
+    svgInner += '<text class="round-name" x="' + cx + '" y="' + (SVG.TOP_PAD + SVG.HEADER_TEXT_Y)
+      + '" text-anchor="middle" dominant-baseline="alphabetic">Round ' + (i + 1) + '</text>';
+    if (tip > 1) {
+      const text = tip + ' TABLES';
+      const tw = text.length * 6 + 14;
+      svgInner += '<rect class="round-tables-bg" x="' + (cx - tw / 2) + '" y="' + (SVG.TOP_PAD + SVG.HEADER_PILL_Y - 9)
+        + '" width="' + tw + '" height="13" rx="6.5"/>'
+        + '<text class="round-tables" x="' + cx + '" y="' + (SVG.TOP_PAD + SVG.HEADER_PILL_Y)
+        + '" text-anchor="middle" dominant-baseline="alphabetic">' + esc(text) + '</text>';
     }
-    return h;
-  }).join('');
-  return '<div class="round' + (isFinal ? ' is-final' : '') + '" style="--bracket-slots:' + slots + '">'
-    + '<div class="round-header">'
-    +   '<div class="round-name">Round ' + (roundIdx + 1) + '</div>'
-    +   tipLabel
-    + '</div>'
-    + '<div class="matches" style="--bracket-slots:' + slots + '">'
-    +   matchesContent
-    + '</div>'
+    // Header underline beneath each round's title
+    svgInner += '<line class="round-header-underline" x1="' + xL + '" y1="' + (SVG.TOP_PAD + SVG.HEADER_H - 6)
+      + '" x2="' + xR + '" y2="' + (SVG.TOP_PAD + SVG.HEADER_H - 6) + '"/>';
+    // Dashed divider in the gap to the next round
+    if (i > 0) {
+      const dividerX = xL - SVG.ROUND_GAP / 2;
+      const topY = SVG.TOP_PAD + SVG.HEADER_H;
+      const botY = SVG.TOP_PAD + SVG.HEADER_H + SVG.SLOTS * SVG.SLOT_H;
+      svgInner += '<line class="round-divider" x1="' + dividerX + '" y1="' + topY
+        + '" x2="' + dividerX + '" y2="' + botY + '"/>';
+    }
+  }
+
+  // 2) Connectors layer placeholder — we'll inject paths after first render
+  //    so each path can attach correct attributes.
+  svgInner += '<g class="connectors-layer"></g>';
+  svgInner += '<g class="cross-source-layer"></g>';
+
+  // 3) Card foreignObjects + bracket-champ foreignObjects per match
+  for (let i = 0; i < rounds.length; i++) {
+    const isFinal = i === rounds.length - 1;
+    const xL = roundXLeft(i);
+    for (const m of rounds[i]) {
+      const y = matchTopY(m);
+      const cardHtml = m.bye ? byeMatchHtml(m, stripeColor) : matchHtml(m, isFinal, stripeColor);
+      svgInner += '<foreignObject class="card-fo" data-match-fo="' + esc(m.id)
+        + '" x="' + xL + '" y="' + y
+        + '" width="' + SVG.CARD_W + '" height="' + SVG.CARD_H + '">'
+        + '<div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%">'
+        + cardHtml
+        + '</div></foreignObject>';
+      if (isFinal && !m.bye) {
+        const yCenter = matchYCenter(m);
+        const champY = yCenter + SVG.CARD_H / 2 + 6;
+        const champCx = roundXCenter(i);
+        // Inner foreignObject for the champ pill — fixed-size enclosure
+        // sized to the longest reasonable text so the pill is centered.
+        const PILL_W = 230, PILL_H = 50;
+        svgInner += '<foreignObject class="champ-fo" data-match-fo="' + esc(m.id) + '-champ"'
+          + ' x="' + (champCx - PILL_W / 2) + '" y="' + champY
+          + '" width="' + PILL_W + '" height="' + PILL_H
+          + '"><div xmlns="http://www.w3.org/1999/xhtml" '
+          + 'style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:visible">'
+          + '<div class="bracket-champ-big">&#x1F3C6; ' + esc(TOURNAMENT_TEXT.bracketChampText) + '</div>'
+          + '</div></foreignObject>';
+      }
+    }
+  }
+
+  // Outer svg + container
+  const svg = '<svg class="bracket-svg" xmlns="http://www.w3.org/2000/svg" '
+    + 'data-wrap="' + bracket.label + '" '
+    + 'viewBox="0 0 ' + layout.w + ' ' + layout.h + '" '
+    + 'preserveAspectRatio="xMinYMin meet" '
+    + 'style="width:' + layout.w + 'px;height:' + layout.h + 'px">'
+    + svgInner + '</svg>';
+
+  return '<div class="bracket-section" data-bracket="' + bracket.label + '" data-design-w="' + layout.w + '" data-design-h="' + layout.h + '">'
+    + '<div class="section-title"><span class="pill ' + pillClass + '">' + esc(sectionLabel) + '</span></div>'
+    + '<div class="viewport"><div class="bracket-wrap" data-wrap="' + bracket.label + '">'
+    +   svg
+    + '</div></div>'
     + '</div>';
 }
 
@@ -1663,10 +1700,9 @@ function bracketSlotsFor(_bracket) {
   return 8;
 }
 
-function matchHtml(m, isFinalOfBracket) {
-  if (m.bye) return byeMatchHtml(m);
+function matchHtml(m, isFinalOfBracket, stripeColor) {
+  if (m.bye) return byeMatchHtml(m, stripeColor);
   const tnum = m.globalNo ? 'M' + m.globalNo : '—';
-  const y = matchYUnits(m);
   const topWin = m.topWins === true;
   const botWin = m.topWins === false;
   // table_no may be a number, "5", or "5,6" (2-table matches). Render
@@ -1732,7 +1768,10 @@ function matchHtml(m, isFinalOfBracket) {
     + '</div>';
 
   const idAttr = m.globalNo ? ' id="m' + m.globalNo + '"' : '';
-  return '<div class="match" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '"' + idAttr + ' style="--y:' + y + '">'
+  const stripeStyle = stripeColor ? ' style="--stripe:' + stripeColor + '"' : '';
+  const finalCls = isFinalOfBracket ? ' is-final-of-bracket' : '';
+  return '<div class="match' + finalCls + '" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '"' + idAttr + stripeStyle + '>'
+    + '<div class="match-stripe"></div>'
     + '<div class="match-top">'
     +   '<span class="mno">' + esc(tnum) + '</span>'
     +   '<span class="destinations">' + destinations + '</span>'
@@ -1742,8 +1781,7 @@ function matchHtml(m, isFinalOfBracket) {
     + '</div>';
 }
 
-function byeMatchHtml(m) {
-  const y = matchYUnits(m);
+function byeMatchHtml(m, stripeColor) {
   const team = m.top;
   const mnoLabel = m.globalNo ? 'M' + m.globalNo : '—';
   let advanceChip = '';
@@ -1754,7 +1792,9 @@ function byeMatchHtml(m) {
       + m.winnerAdvancesTo.globalNo + '</a>';
   }
   const idAttr = m.globalNo ? ' id="m' + m.globalNo + '"' : '';
-  return '<div class="match bye" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '"' + idAttr + ' style="--y:' + y + '">'
+  const stripeStyle = stripeColor ? ' style="--stripe:' + stripeColor + '"' : '';
+  return '<div class="match bye" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '"' + idAttr + stripeStyle + '>'
+    + '<div class="match-stripe"></div>'
     + '<div class="match-top">'
     +   '<span class="mno">' + esc(mnoLabel) + '<span class="bye-tag">BYE</span></span>'
     +   '<span class="destinations">' + advanceChip + '</span>'
@@ -1793,21 +1833,44 @@ function renderRow(team, isWinner) {
     + '</div>';
 }
 
-/* Connectors: per-bracket SVG overlay.
+/* Connectors: drawn inside the bracket-svg in design-unit coordinates.
  *  Each connector traces one TEAM's advancement path. For every match m
  *  and every intra-bracket feeder f, draw a line from:
  *    • feeder's WINNER ROW (right edge)       — where the team comes from
  *    • to downstream's SPECIFIC ROW (left)    — where that team appears
  *  Two-feeder downstream → two independent lines, top feeder → top row,
  *  bot feeder → bot row. Right-angle Z routing; flat horizontal when Ys
- *  match. Cross-bracket loser drops are text annotations only. */
+ *  match. Cross-bracket loser drops are text annotations only.
+ *
+ *  Coordinates are computed from match metadata, NOT from DOM measurement.
+ *  This is the SVG win: paths and cards share the SAME coordinate space, so
+ *  there's no measure-then-draw race. */
+const ROW_TOP_OFFSET_FROM_CARD = 56;   // ~ top row's Y inside card (header band + half rowH)
+const ROW_BOT_OFFSET_FROM_CARD = 96;   // ~ bottom row's Y inside card
+
+function cellGeomFor(m) {
+  // Pull rounds from match metadata. For each bracket the match's
+  // round index is m.round (1-based). Convert to design coordinates.
+  const roundIdx = m.round - 1;
+  const xL = roundXLeft(roundIdx);
+  const top = matchTopY(m);
+  return {
+    left:  xL,
+    right: xL + SVG.CARD_W,
+    cy:    top + SVG.CARD_H / 2,
+    topRowY: top + ROW_TOP_OFFSET_FROM_CARD,
+    botRowY: top + ROW_BOT_OFFSET_FROM_CARD
+  };
+}
+
 function drawConnectorsFor(wrap, matches) {
-  const svg = wrap.querySelector('svg.connectors');
-  const w = wrap.offsetWidth, h = wrap.offsetHeight;
-  svg.setAttribute('width', w); svg.setAttribute('height', h);
-  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-  svg.innerHTML = '';
-  const wrapRect = wrap.getBoundingClientRect();
+  const svgEl = wrap.querySelector('svg.bracket-svg');
+  if (!svgEl) return;
+  const connLayer = svgEl.querySelector('g.connectors-layer');
+  const crossLayer = svgEl.querySelector('g.cross-source-layer');
+  if (!connLayer || !crossLayer) return;
+  connLayer.innerHTML = '';
+  crossLayer.innerHTML = '';
   const STROKE = '#94a3b8';
   const STROKE_W = '2';
 
@@ -1819,51 +1882,22 @@ function drawConnectorsFor(wrap, matches) {
     p.setAttribute('stroke-width', STROKE_W);
     p.setAttribute('stroke-linejoin', 'round');
     p.setAttribute('stroke-linecap', 'round');
-    svg.appendChild(p);
-  };
-
-  const getCellGeom = (id) => {
-    const el = wrap.querySelector('[data-match-id="' + cssEscape(id) + '"]');
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    const rows = el.querySelectorAll('.match-row');
-    const rowCy = (i) => {
-      if (!rows[i]) return null;
-      const rr = rows[i].getBoundingClientRect();
-      return (rr.top - wrapRect.top) + rr.height / 2;
-    };
-    return {
-      left:  r.left  - wrapRect.left,
-      right: r.right - wrapRect.left,
-      cy:    (r.top  - wrapRect.top) + r.height / 2,
-      topRowY: rowCy(0),
-      botRowY: rowCy(1)
-    };
+    connLayer.appendChild(p);
   };
 
   for (const m of matches) {
+    const down = cellGeomFor(m);
     const feeders = [];
     if (m.topFromMatch) feeders.push({ feeder: m.topFromMatch, side: 'top' });
     if (m.botFromMatch) feeders.push({ feeder: m.botFromMatch, side: 'bot' });
 
-    const down = getCellGeom(m.id);
-    if (!down) continue;
-
     // Intra-bracket connectors (drawn solid).
     for (const { feeder, side } of feeders) {
-      const f = getCellGeom(feeder.id);
-      if (!f) continue;
-
-      // Source Y = winner-row of feeder (line traces the team that
-      // actually advanced). Falls back to cell center when no winner yet.
+      const f = cellGeomFor(feeder);
       let y1 = f.cy;
-      if (feeder.topWins === true)  y1 = f.topRowY != null ? f.topRowY : f.cy;
-      if (feeder.topWins === false) y1 = f.botRowY != null ? f.botRowY : f.cy;
-
-      const y2 = side === 'top'
-        ? (down.topRowY != null ? down.topRowY : down.cy)
-        : (down.botRowY != null ? down.botRowY : down.cy);
-
+      if (feeder.topWins === true)  y1 = f.topRowY;
+      if (feeder.topWins === false) y1 = f.botRowY;
+      const y2 = side === 'top' ? down.topRowY : down.botRowY;
       const x1 = f.right, x2 = down.left;
       const xMid = (x1 + x2) / 2;
       if (Math.abs(y1 - y2) < 0.5) {
@@ -1874,45 +1908,37 @@ function drawConnectorsFor(wrap, matches) {
       }
     }
 
-    // Cross-bracket source stubs. Only L-bend when the intra-bracket feeder
-    // line ACTUALLY crosses the cross-source row Y — otherwise the straight
-    // horizontal stub is fine and reads cleaner.
-    const intraRanges = intraFeederYRanges(m, getCellGeom);
-    if (m.topFromMatchLoser && down.topRowY != null) {
+    // Cross-bracket source stubs.
+    const intraRanges = intraFeederYRanges(m);
+    if (m.topFromMatchLoser) {
       const targetNo = m.topFromMatchLoser.globalNo;
       const label = 'L of M' + targetNo;
       if (inAnyRange(down.topRowY, intraRanges))
-        drawCrossSourceL(svg, down.left, down.topRowY, 'top', label, targetNo);
+        drawCrossSourceL(crossLayer, down.left, down.topRowY, 'top', label, targetNo);
       else
-        drawCrossSource(svg, down.left, down.topRowY, label, targetNo);
+        drawCrossSource(crossLayer, down.left, down.topRowY, label, targetNo);
     }
-    if (m.botFromMatchLoser && down.botRowY != null) {
+    if (m.botFromMatchLoser) {
       const targetNo = m.botFromMatchLoser.globalNo;
       const label = 'L of M' + targetNo;
       if (inAnyRange(down.botRowY, intraRanges))
-        drawCrossSourceL(svg, down.left, down.botRowY, 'bot', label, targetNo);
+        drawCrossSourceL(crossLayer, down.left, down.botRowY, 'bot', label, targetNo);
       else
-        drawCrossSource(svg, down.left, down.botRowY, label, targetNo);
+        drawCrossSource(crossLayer, down.left, down.botRowY, label, targetNo);
     }
   }
 }
 
-/* For a downstream match, compute the Y range(s) that the intra-bracket
- * feeder connector(s) occupy at the gap midpoint (xMid). A Z-path takes
- * the full span between its feeder-Y and target-Y at xMid; a horizontal
- * line collapses to a zero-width range at that single Y. */
-function intraFeederYRanges(m, getCellGeom) {
+function intraFeederYRanges(m) {
   const ranges = [];
+  const down = cellGeomFor(m);
   const addRange = (feeder, targetY) => {
-    const f = getCellGeom(feeder.id);
-    if (!f || targetY == null) return;
+    const f = cellGeomFor(feeder);
     let y1 = f.cy;
-    if (feeder.topWins === true)  y1 = f.topRowY != null ? f.topRowY : f.cy;
-    if (feeder.topWins === false) y1 = f.botRowY != null ? f.botRowY : f.cy;
+    if (feeder.topWins === true)  y1 = f.topRowY;
+    if (feeder.topWins === false) y1 = f.botRowY;
     ranges.push([Math.min(y1, targetY), Math.max(y1, targetY)]);
   };
-  const down = getCellGeom(m.id);
-  if (!down) return ranges;
   if (m.topFromMatch) addRange(m.topFromMatch, down.topRowY);
   if (m.botFromMatch) addRange(m.botFromMatch, down.botRowY);
   return ranges;
@@ -2045,13 +2071,14 @@ function renderTournament() {
   root.innerHTML = html;
   renderHero();
 
-  // Draw connectors for each bracket
+  // Draw connectors for each bracket and apply current zoom to SVGs.
   requestAnimationFrame(() => {
-    document.querySelectorAll('[data-wrap]').forEach(wrap => {
+    document.querySelectorAll('.bracket-wrap[data-wrap]').forEach(wrap => {
       const label = wrap.dataset.wrap;
       const matches = label === 'A' ? t.A.matches : label === 'B' ? t.B.matches : t.T64.matches;
       drawConnectorsFor(wrap, matches);
     });
+    applyZoomToSvgs();
     setupPanScroll();
     applySearch();
     // Re-apply team highlight if active (bracket was just re-rendered).
@@ -2176,18 +2203,16 @@ _searchInput.addEventListener('keydown', (ev) => {
 });
 _searchClear.addEventListener('click', () => { _searchInput.value = ''; _searchInput.dispatchEvent(new Event('input')); _searchInput.focus(); });
 
-/* ── Resize: redraw connectors ─────────────── */
+/* ── Resize ─────────────────────────────────
+ *  No connector redraw needed (SVG scales together with cards), but if the
+ *  viewport reflows we may want to re-apply the density classes since the
+ *  effective card width changes only with --zoom (not viewport width).
+ *  The density depends only on zoom, so a no-op is fine here. Leaving the
+ *  handler in place as a hook for future layout changes. */
 let _resizeRaf = null;
 window.addEventListener('resize', () => {
   if (_resizeRaf) return;
-  _resizeRaf = requestAnimationFrame(() => {
-    _resizeRaf = null;
-    document.querySelectorAll('[data-wrap]').forEach(wrap => {
-      const label = wrap.dataset.wrap;
-      const matches = label === 'A' ? _tournament.A.matches : label === 'B' ? _tournament.B.matches : _tournament.T64.matches;
-      drawConnectorsFor(wrap, matches);
-    });
-  });
+  _resizeRaf = requestAnimationFrame(() => { _resizeRaf = null; });
 });
 
 /* ── Jump-to-match on dest chips ──────────────
@@ -2236,8 +2261,13 @@ function setupPanScroll() {
     let isDown = false, startX = 0, startLeft = 0, moved = false;
 
     vp.addEventListener('mousedown', (e) => {
-      // Don't hijack clicks on form controls; cards are fine to drag from.
-      if (e.target.closest('button, a, input, select, textarea')) return;
+      // Don't hijack clicks on form controls or anything that opts into its
+      // own click handler via [data-jump] (SVG cross-source "L of M#" labels
+      // and the in-card dest chips). Without the [data-jump] bail the
+      // viewport's mousedown starts a drag, micro-drift scrolls the wrap,
+      // the label moves out from under the cursor, the synthesized click
+      // lands on empty space, and the jump handler never sees the target.
+      if (e.target.closest('button, a, input, select, textarea, [data-jump]')) return;
       isDown = true;
       moved = false;
       startX = e.pageX;
@@ -2306,10 +2336,15 @@ function setupPanScroll() {
   });
 }
 
-/* ── Zoom (CSS variable on body) ─────────────
+/* ── Zoom (resizes each SVG's CSS width/height) ─────
  *  Range 0.4–1.5. Persists in sessionStorage so a refresh doesn't reset.
- *  --zoom on :root scales every bracket size variable; redraws connectors
- *  via the existing resize listener so SVG paths stay aligned. */
+ *  Each .bracket-svg has a fixed viewBox; on-screen size = design × zoom.
+ *  No connector redraw needed — SVG and cards live in the same coordinate
+ *  space, so scaling the SVG element scales everything together.
+ *  The container query on cards continues to work because the foreignObject's
+ *  CSS width DOES scale with the SVG's CSS size (foreignObject's px width
+ *  is in viewBox units → on-screen pixels = (viewBox-w / svg-css-w) inverse,
+ *  and container queries inside the FO observe the rendered CSS width). */
 const ZOOM_MIN = 0.4, ZOOM_MAX = 1.5;
 function clampZoom(z) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)); }
 function getZoom() {
@@ -2325,19 +2360,42 @@ function setZoom(z) {
   const zi = document.getElementById('zoomIn'),  zo = document.getElementById('zoomOut');
   if (zi) zi.disabled = next >= ZOOM_MAX - 0.001;
   if (zo) zo.disabled = next <= ZOOM_MIN + 0.001;
-  // Redraw connectors so SVG paths follow the new card positions. _tournament
-  // is a script-scope let, not on window — the earlier window._tournament
-  // check silently no-op'd and connectors never refreshed on zoom.
-  if (_tournament) {
-    requestAnimationFrame(() => redrawAllConnectors());
-  }
+  applyZoomToSvgs();
 }
-function redrawAllConnectors() {
-  if (!_tournament) return;
-  document.querySelectorAll('[data-wrap]').forEach(wrap => {
-    const label = wrap.dataset.wrap;
-    const matches = label === 'A' ? _tournament.A.matches : label === 'B' ? _tournament.B.matches : _tournament.T64.matches;
-    drawConnectorsFor(wrap, matches);
+function applyZoomToSvgs() {
+  const z = getZoom();
+  document.querySelectorAll('.bracket-svg').forEach(svg => {
+    const sec = svg.closest('.bracket-section');
+    if (!sec) return;
+    const dw = parseFloat(sec.dataset.designW);
+    const dh = parseFloat(sec.dataset.designH);
+    if (!isFinite(dw) || !isFinite(dh)) return;
+    svg.style.width  = (dw * z) + 'px';
+    svg.style.height = (dh * z) + 'px';
+  });
+  updateCardDensity(z);
+}
+
+/* Card "density" classes: which content tier hides at this zoom level.
+ * Same thresholds the old @container query used (220, 200, 180, 150, 130
+ * effective px wide). Card design width is SVG.CARD_W. Effective render
+ * width = CARD_W × on-screen-zoom. */
+function updateCardDensity(zoom) {
+  const z = zoom != null ? zoom : getZoom();
+  const eff = SVG.CARD_W * z;
+  const cls = [];
+  if (eff <= 220) cls.push('cw-le-220');
+  if (eff <= 200) cls.push('cw-le-200');
+  if (eff <= 180) cls.push('cw-le-180');
+  if (eff <= 150) cls.push('cw-le-150');
+  if (eff <= 130) cls.push('cw-le-130');
+  // Continuous font scale for team names: target ~ 6.5% of effective width,
+  // clamp at the same min/max as the old clamp() rule.
+  const namePx = Math.max(0.55 * 16, Math.min(0.92 * 16, 0.065 * eff));
+  document.querySelectorAll('.match').forEach(el => {
+    el.classList.remove('cw-le-220','cw-le-200','cw-le-180','cw-le-150','cw-le-130');
+    if (cls.length) el.classList.add(...cls);
+    el.style.setProperty('--name-size', namePx.toFixed(2) + 'px');
   });
 }
 function applyZoomDelta(delta, smooth) {
@@ -2368,74 +2426,20 @@ function initZoomToolbar() {
  *  Two buttons: landscape and portrait. Before window.print():
  *    1. Inject a temp <style> with @page { size: <orient> } so the browser
  *       paginates the correct way.
- *    2. For each .bracket-section, measure its content vs the page box and
- *       set --print-scale so the bracket fits cleanly on one page.
- *    3. Restore everything on afterprint. */
-/* Print one bracket per page, fit-to-page, WITHOUT touching the on-screen UI.
- *
- * Approach: compute a per-section --print-scale and write it as an inline
- * style on each .bracket-section. The CSS rule that USES that variable lives
- * inside @media print only — so the on-screen view is completely unchanged
- * while the print output gets transform:scale on the bracket-wrap.
- *
- * Why not modify --zoom? Because --zoom affects the on-screen layout, even
- * if only briefly — the UI flashes a smaller bracket during the print
- * dialog and back when it closes. We don't want that. transform:scale
- * inside @media print is invisible until the browser is actually rendering
- * the page for printing.
- *
- * Why does transform:scale work this time when v0.53 had pagination bugs?
- * Because @media print also sets each .bracket-section to a FIXED page
- * height (100vh) with overflow:hidden, and absolutely-positions the wrap
- * inside the viewport. The wrap's huge layout box no longer drives
- * pagination — the section is exactly one page tall, full stop. */
+ *    2. The on-screen-→ print transformation is handled entirely by the
+ *       @media print CSS rules at the top of this file: each section is
+ *       sized to 100vh, the bracket-wrap fills it, and the inner <svg>
+ *       (with its viewBox) auto-scales to fit. No measurement needed.
+ *    3. Restore @page on afterprint. */
 function preparePrint(orientation) {
-  // Letter page dimensions in CSS pixels at 96dpi, minus 0.35" margins.
-  const PAGE_PX_W_PORT = 816 - 67.2;
-  const PAGE_PX_H_PORT = 1056 - 67.2;
-  const PAGE_W = orientation === 'landscape' ? PAGE_PX_H_PORT : PAGE_PX_W_PORT;
-  const PAGE_H = orientation === 'landscape' ? PAGE_PX_W_PORT : PAGE_PX_H_PORT;
-
-  // Orientation injection
   const sty = document.createElement('style');
   sty.id = 'breakoutPrintStyle';
   sty.textContent = '@page { size: letter ' + orientation + '; margin: 0.35in; }';
   document.head.appendChild(sty);
-
-  // For each section: measure the wrap's TRUE content size, compute the
-  // zoom multiplier needed to fit the page. No clamp — enlarges a small
-  // bracket to fill the page, shrinks a big one. Identical output at any
-  // on-screen zoom because the measured size moves with --zoom and the
-  // resulting scale moves inversely.
-  //
-  // The min-width: 100% from the on-screen .bracket-wrap rule inflates
-  // scrollWidth on wide monitors (e.g. measures 1900px when the actual
-  // bracket content is 1408px). We temporarily override it inline,
-  // measure, then restore — synchronous so the browser never repaints
-  // between override and restore.
-  document.querySelectorAll('.bracket-section').forEach(sec => {
-    const wrap = sec.querySelector('.bracket-wrap');
-    if (!wrap) return;
-    const titleH = (sec.querySelector('.section-title') || {}).offsetHeight || 28;
-    const prevMinW = wrap.style.minWidth;
-    wrap.style.minWidth = '0px';
-    const naturalW = wrap.scrollWidth;
-    const naturalH = wrap.scrollHeight;
-    wrap.style.minWidth = prevMinW;
-    // Title stays unscaled (it's outside the wrap), so subtract its
-    // height from the available page height before computing scaleH.
-    const scaleW = (PAGE_W - 4) / naturalW;
-    const scaleH = (PAGE_H - titleH - 12) / naturalH;
-    const scale = Math.min(scaleW, scaleH);
-    sec.style.setProperty('--print-scale', String(scale));
-  });
 }
 function teardownPrint() {
   const sty = document.getElementById('breakoutPrintStyle');
   if (sty) sty.remove();
-  document.querySelectorAll('.bracket-section').forEach(sec => {
-    sec.style.removeProperty('--print-scale');
-  });
 }
 function firePrint(orient) {
   preparePrint(orient);
