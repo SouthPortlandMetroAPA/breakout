@@ -230,9 +230,12 @@
        content still scrolls via drag, wheel, keys, touch. */
     scrollbar-width: none;          /* Firefox */
     -ms-overflow-style: none;       /* legacy Edge/IE */
-    /* Tell the browser this surface handles its own horizontal panning so
-       it doesn't fight us with native gesture interpretation on touch. */
-    touch-action: pan-x;
+    /* Allow native horizontal pan within the viewport AND vertical pan that
+       falls through to the body for page scroll (so users can swipe down to
+       see the next bracket section). Pinch is omitted so our custom
+       two-finger pinch-zoom handler can take over without the browser
+       trying to zoom the whole page. */
+    touch-action: pan-x pan-y;
   }
   .viewport::-webkit-scrollbar { display: none; height: 0; }
   .viewport.panning { cursor: grabbing; user-select: none; }
