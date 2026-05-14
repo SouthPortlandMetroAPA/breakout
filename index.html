@@ -743,9 +743,47 @@
     font-size: 1.05rem;
   }
 
-  /* Search match highlight */
-  .match.match-hit { box-shadow: 0 0 0 3px rgba(0,49,161,0.45), 0 1px 3px rgba(0,0,0,0.06); border-color: var(--spm-accent); }
-  .match.match-hit-latest { box-shadow: 0 0 0 3px var(--spm-primary), 0 4px 14px rgba(0,0,0,0.12); border-color: var(--spm-primary); }
+  /* Search match highlight — uses the same SVG-halo trick as jump-to-match
+     so the highlight actually radiates beyond the card's foreignObject clip.
+     The card itself gets a tinted background (contained inside the box, not
+     clipped) so each match-row reads as "found" even when the SVG halo is
+     far away. */
+  .match.match-hit { background: rgba(0,49,161,0.08); border-color: var(--spm-accent); }
+  .match.match-hit-latest {
+    background: rgba(234,0,42,0.10);
+    border-color: var(--spm-primary);
+    animation: searchLatestBgPulse 2.4s ease-out forwards;
+  }
+  @keyframes searchLatestBgPulse {
+    0%, 100%       { background: rgba(234,0,42,0.10); }
+    6%, 36%, 66%   { background: rgba(234,0,42,0.22); }
+    20%, 50%, 80%  { background: rgba(234,0,42,0.10); }
+  }
+
+  /* SVG halos drawn outside each card's foreignObject (in the bracket-svg
+     coordinate space) so they actually paint where the user can see them.
+     All hits get a steady blue ring; the latest hit (the one we scroll to)
+     pulses red 3 times then settles into a brighter red ring. */
+  .bracket-svg .search-hit-halo {
+    fill: none;
+    stroke: var(--spm-accent);
+    stroke-width: 4;
+    stroke-opacity: 0.7;
+    pointer-events: none;
+  }
+  .bracket-svg .search-hit-latest-halo {
+    fill: none;
+    stroke: #ea002a;
+    pointer-events: none;
+    filter: drop-shadow(0 0 8px rgba(234,0,42,0.55));
+    animation: searchLatestPulse 2.4s ease-out forwards;
+  }
+  @keyframes searchLatestPulse {
+    0%             { stroke-opacity: 0;    stroke-width: 0; }
+    6%, 36%, 66%   { stroke-opacity: 1;    stroke-width: 10; }
+    20%, 50%, 80%  { stroke-opacity: 0.5;  stroke-width: 4; }
+    100%           { stroke-opacity: 1;    stroke-width: 5; }
+  }
 
   /* Team-path highlight (viewer mode) — click any team row to spotlight all
      of that team's matches. Win = green border + tint, loss = red, pending
@@ -2217,6 +2255,7 @@ function highlightTeamMatches(teamNumber) {
   }
   // Clear any active search highlight — the two modes don't coexist.
   document.querySelectorAll('.match.match-hit, .match.match-hit-latest').forEach(el => el.classList.remove('match-hit', 'match-hit-latest'));
+  removeMatchHalos('search-hit-halo', 'search-hit-latest-halo');
   const si = document.getElementById('searchInput');
   if (si && si.value) {
     si.value = '';
@@ -2263,6 +2302,8 @@ function applySearch() {
   const q = _searchQuery.trim().toLowerCase();
   const cells = document.querySelectorAll('.match');
   cells.forEach(m => m.classList.remove('match-hit', 'match-hit-latest'));
+  // Wipe SVG halos from a prior search (or jump) before recomputing.
+  removeMatchHalos('search-hit-halo', 'search-hit-latest-halo');
   const result = document.getElementById('searchResult');
   if (!q) { result.textContent = ''; return; }
   const hits = [];
@@ -2279,8 +2320,12 @@ function applySearch() {
     const n = parseInt(el.dataset.globalNo, 10) || 0;
     if (n > maxNo) { maxNo = n; latest = el; }
   });
+  // Paint halos: every hit gets a steady blue ring, the latest gets a
+  // pulsing red ring on top of it so it's unmistakable when you arrive.
+  hits.forEach(m => { if (m !== latest) addMatchHalo(m, 'search-hit-halo'); });
   if (latest) {
     latest.classList.add('match-hit-latest');
+    addMatchHalo(latest, 'search-hit-latest-halo');
     latest.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
   }
   result.textContent = hits.length + ' match' + (hits.length === 1 ? '' : 'es');
@@ -2314,46 +2359,54 @@ window.addEventListener('resize', () => {
  *  Clicking "W → M37" or "L → M53" scrolls to the target match and
  *  pulses it with a flash highlight. Uses event delegation so it works
  *  for any re-rendered cards too. */
+/* SVG-native halo overlay shared by jump-to-match AND search highlights.
+ * The .match HTML lives inside a 240×136 <foreignObject> which clips any
+ * effect that would extend beyond it (box-shadow, outline). The halo is a
+ * stroked SVG rect drawn as a sibling of the foreignObject in the same
+ * bracket-svg coordinate space — so it can radiate outside the clip. */
+function addMatchHalo(target, className, padding) {
+  const fo = target && target.closest && target.closest('foreignObject.card-fo');
+  if (!fo) return null;
+  const svg = fo.closest('svg.bracket-svg');
+  if (!svg) return null;
+  const x = parseFloat(fo.getAttribute('x'));
+  const y = parseFloat(fo.getAttribute('y'));
+  const w = parseFloat(fo.getAttribute('width'));
+  const h = parseFloat(fo.getAttribute('height'));
+  const PAD = padding != null ? padding : 10;
+  const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  overlay.setAttribute('class', className);
+  overlay.setAttribute('x',      String(x - PAD));
+  overlay.setAttribute('y',      String(y - PAD));
+  overlay.setAttribute('width',  String(w + 2 * PAD));
+  overlay.setAttribute('height', String(h + 2 * PAD));
+  overlay.setAttribute('rx', '12');
+  overlay.setAttribute('ry', '12');
+  svg.appendChild(overlay);
+  return overlay;
+}
+function removeMatchHalos() {
+  // Remove every overlay class we own. Pass-through args lets callers be
+  // selective (e.g. only remove search halos but keep jump halo).
+  const classes = arguments.length ? Array.from(arguments)
+    : ['match-jump-overlay', 'search-hit-halo', 'search-hit-latest-halo'];
+  classes.forEach(cls => {
+    document.querySelectorAll('.bracket-svg .' + cls).forEach(o => o.remove());
+  });
+}
+
 function jumpToMatch(globalNo) {
   if (!globalNo) return;
   const target = document.querySelector('.match[data-global-no="' + globalNo + '"]');
   if (!target) return;
   target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
 
-  // SVG-native halo overlay: a stroked rect placed just outside the card's
-  // foreignObject, in the bracket-svg's coordinate space. Anything inside
-  // the foreignObject is clipped to 240×136, which is why box-shadow on
-  // .match was barely visible. The overlay sits in the SVG above the
-  // foreignObject and isn't clipped, so the halo can really radiate.
-  const fo = target.closest('foreignObject.card-fo');
-  if (fo) {
-    const svg = fo.closest('svg.bracket-svg');
-    if (svg) {
-      // Remove any prior overlay so back-to-back jumps don't stack.
-      svg.querySelectorAll('.match-jump-overlay').forEach(o => o.remove());
-      const x = parseFloat(fo.getAttribute('x'));
-      const y = parseFloat(fo.getAttribute('y'));
-      const w = parseFloat(fo.getAttribute('width'));
-      const h = parseFloat(fo.getAttribute('height'));
-      const PAD = 10;
-      const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      overlay.setAttribute('class', 'match-jump-overlay');
-      overlay.setAttribute('x',      String(x - PAD));
-      overlay.setAttribute('y',      String(y - PAD));
-      overlay.setAttribute('width',  String(w + 2 * PAD));
-      overlay.setAttribute('height', String(h + 2 * PAD));
-      overlay.setAttribute('rx', '12');
-      overlay.setAttribute('ry', '12');
-      overlay.setAttribute('fill', 'none');
-      overlay.setAttribute('stroke', '#ea002a');
-      overlay.setAttribute('stroke-width', '0');
-      svg.appendChild(overlay);
-      setTimeout(() => overlay.remove(), 2500);
-    }
-  }
+  // SVG halo (drawn outside the foreignObject's clip).
+  removeMatchHalos('match-jump-overlay');
+  const overlay = addMatchHalo(target, 'match-jump-overlay');
+  if (overlay) setTimeout(() => overlay.remove(), 2500);
 
-  // Background pulse on the card itself (contained inside the card box, so
-  // not clipped). Re-add the class so the animation can replay.
+  // Background pulse on the card (contained inside the box, not clipped).
   document.querySelectorAll('.match.match-jump-flash').forEach(m => m.classList.remove('match-jump-flash'));
   void target.offsetWidth;
   target.classList.add('match-jump-flash');
