@@ -92,6 +92,33 @@
     .view-tools .print-btn span.full { display: none; }
   }
 
+  /* Print orientation popover — small menu pinned below the Print button. */
+  .view-tools .print-wrap { position: relative; }
+  .view-tools .print-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: #fff;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+    padding: 4px;
+    min-width: 160px;
+    z-index: 50;
+    display: flex; flex-direction: column;
+  }
+  .view-tools .print-popover[hidden] { display: none; }
+  .view-tools .print-popover-opt {
+    display: flex; align-items: center; gap: 10px;
+    background: transparent; border: 0; border-radius: 6px;
+    padding: 9px 12px; cursor: pointer;
+    color: var(--text); font: inherit; font-size: 0.9rem; font-weight: 600;
+    text-align: left;
+    width: 100%;
+  }
+  .view-tools .print-popover-opt:hover { background: rgba(0,49,161,0.08); color: var(--spm-accent); }
+  .view-tools .print-popover-opt .opt-icon { font-size: 1.05rem; line-height: 1; width: 18px; text-align: center; color: var(--spm-accent); }
+
   /* Print: one bracket per page, fitted to page dimensions WITHOUT touching
      the on-screen UI.
      SVG viewBox makes this trivial: each .bracket-svg has width/height = 100%
@@ -607,12 +634,36 @@
 
   /* Jump-to flash — when a dest chip is clicked, the target match
      pulses with an SPM red glow for 1.8s. */
+  /* Jump-to-match highlight — 3 pulses with strong red halo around the card.
+     The halo lives OUTSIDE the foreignObject's clip as a sibling SVG <rect>
+     (see jumpToMatch in JS); box-shadow on the inner card was clipped by
+     the foreignObject and barely visible. The card itself also flashes its
+     background red to reinforce the target, since background is contained
+     inside the card's box. */
   @keyframes matchJumpFlash {
-    0%   { box-shadow: 0 0 0 4px rgba(234,0,42,0.55), 0 4px 18px rgba(0,0,0,0.18); border-color: var(--spm-primary); }
-    60%  { box-shadow: 0 0 0 8px rgba(234,0,42,0.10), 0 2px 8px rgba(0,0,0,0.10); border-color: var(--spm-primary); }
-    100% { box-shadow: 0 1px 2px rgba(0,0,0,0.05); border-color: var(--border-strong); }
+    0%, 100%        { background: var(--card);                 border-color: var(--border-strong); }
+    6%, 36%, 66%    { background: rgba(234,0,42,0.14);          border-color: var(--spm-primary); }
+    20%, 50%, 80%   { background: var(--card);                 border-color: var(--spm-primary); }
   }
-  .match.match-jump-flash { animation: matchJumpFlash 1.8s ease-out; }
+  .match.match-jump-flash {
+    animation: matchJumpFlash 2.4s ease-out;
+    border-color: var(--spm-primary);
+  }
+
+  /* SVG halo overlay added by jumpToMatch — a stroked rect just outside
+     the card's foreignObject. Animates 3 pulses of stroke-width + opacity
+     plus a drop-shadow glow. Removed automatically after the animation. */
+  @keyframes matchJumpHalo {
+    0%             { stroke-opacity: 0;    stroke-width: 0; }
+    6%, 36%, 66%   { stroke-opacity: 1;    stroke-width: 10; }
+    20%, 50%, 80%  { stroke-opacity: 0.45; stroke-width: 4; }
+    100%           { stroke-opacity: 0;    stroke-width: 0; }
+  }
+  .bracket-svg .match-jump-overlay {
+    animation: matchJumpHalo 2.4s ease-out forwards;
+    filter: drop-shadow(0 0 10px rgba(234,0,42,0.65));
+    pointer-events: none;
+  }
 
   /* Bracket Champ — promoted OUT of the card so it can be loud. Sits in
      the final round's column, centered under the final match. Pulses
@@ -709,7 +760,6 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .update-title { font-size: 1.1rem; font-weight: 800; color: var(--spm-accent); margin-bottom: 6px; }
 
-  .foot { max-width: 1500px; margin: 0 auto; padding: 6px 20px 24px; color: var(--muted); font-size: 0.78rem; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -769,8 +819,17 @@
       <button class="zoom-label" id="zoomLabel" title="Click to reset to 100%" aria-label="Reset zoom">100%</button>
       <button id="zoomIn"    title="Zoom in (Ctrl++)"   aria-label="Zoom in">+</button>
       <div class="divider" aria-hidden="true"></div>
-      <button class="print-btn" id="printLand" title="Print each bracket on its own page, landscape orientation"><span class="full">Print&nbsp;</span>⇲</button>
-      <button class="print-btn" id="printPort" title="Print each bracket on its own page, portrait orientation"><span class="full">Portrait&nbsp;</span>⇱</button>
+      <div class="print-wrap">
+        <button class="print-btn" id="printBtn" title="Print — choose orientation"><span class="full">Print&nbsp;</span>🖨</button>
+        <div class="print-popover" id="printPopover" hidden role="menu" aria-label="Choose print orientation">
+          <button type="button" role="menuitem" data-orient="landscape" class="print-popover-opt">
+            <span class="opt-icon">⇲</span><span class="opt-label">Landscape</span>
+          </button>
+          <button type="button" role="menuitem" data-orient="portrait" class="print-popover-opt">
+            <span class="opt-icon">⇱</span><span class="opt-label">Portrait</span>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -784,8 +843,6 @@
 </div>
 
 <div id="tournamentRoot"></div>
-
-<p class="foot">Two 12-team brackets feed losers into the 64-team consolation at staggered rounds; the 64-team alternates "integrate losers" / "winners advance" through to the final. Loser destinations and entry sources are annotated on every match.</p>
 
 <script>
 document.write('<script src="version.js?_=' + Date.now() + '"><\/script>');
@@ -2237,10 +2294,45 @@ function jumpToMatch(globalNo) {
   const target = document.querySelector('.match[data-global-no="' + globalNo + '"]');
   if (!target) return;
   target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+
+  // SVG-native halo overlay: a stroked rect placed just outside the card's
+  // foreignObject, in the bracket-svg's coordinate space. Anything inside
+  // the foreignObject is clipped to 240×136, which is why box-shadow on
+  // .match was barely visible. The overlay sits in the SVG above the
+  // foreignObject and isn't clipped, so the halo can really radiate.
+  const fo = target.closest('foreignObject.card-fo');
+  if (fo) {
+    const svg = fo.closest('svg.bracket-svg');
+    if (svg) {
+      // Remove any prior overlay so back-to-back jumps don't stack.
+      svg.querySelectorAll('.match-jump-overlay').forEach(o => o.remove());
+      const x = parseFloat(fo.getAttribute('x'));
+      const y = parseFloat(fo.getAttribute('y'));
+      const w = parseFloat(fo.getAttribute('width'));
+      const h = parseFloat(fo.getAttribute('height'));
+      const PAD = 10;
+      const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      overlay.setAttribute('class', 'match-jump-overlay');
+      overlay.setAttribute('x',      String(x - PAD));
+      overlay.setAttribute('y',      String(y - PAD));
+      overlay.setAttribute('width',  String(w + 2 * PAD));
+      overlay.setAttribute('height', String(h + 2 * PAD));
+      overlay.setAttribute('rx', '12');
+      overlay.setAttribute('ry', '12');
+      overlay.setAttribute('fill', 'none');
+      overlay.setAttribute('stroke', '#ea002a');
+      overlay.setAttribute('stroke-width', '0');
+      svg.appendChild(overlay);
+      setTimeout(() => overlay.remove(), 2500);
+    }
+  }
+
+  // Background pulse on the card itself (contained inside the card box, so
+  // not clipped). Re-add the class so the animation can replay.
   document.querySelectorAll('.match.match-jump-flash').forEach(m => m.classList.remove('match-jump-flash'));
   void target.offsetWidth;
   target.classList.add('match-jump-flash');
-  setTimeout(() => target.classList.remove('match-jump-flash'), 1800);
+  setTimeout(() => target.classList.remove('match-jump-flash'), 2400);
 }
 // Walk up from the event target to find anything with a data-jump attribute.
 // Works for both HTML anchor chips and SVG <text> labels — closest() can
@@ -2473,10 +2565,32 @@ function firePrint(orient) {
   setTimeout(() => window.print(), 30);
 }
 function initPrintButtons() {
-  const land = document.getElementById('printLand');
-  const port = document.getElementById('printPort');
-  if (land) land.addEventListener('click', () => firePrint('landscape'));
-  if (port) port.addEventListener('click', () => firePrint('portrait'));
+  // Single Print button → opens a popover with Landscape / Portrait choices.
+  // Picking one fires the print + hides the popover. Click outside, Escape,
+  // or pressing the Print button again also closes the popover.
+  const btn = document.getElementById('printBtn');
+  const pop = document.getElementById('printPopover');
+  const openPopover = () => { if (pop) pop.hidden = false; };
+  const closePopover = () => { if (pop) pop.hidden = true; };
+  const togglePopover = () => { if (pop) pop.hidden = !pop.hidden; };
+  if (btn && pop) {
+    btn.addEventListener('click', (e) => { e.stopPropagation(); togglePopover(); });
+    pop.addEventListener('click', (e) => {
+      const opt = e.target.closest('.print-popover-opt');
+      if (!opt) return;
+      const orient = opt.dataset.orient;
+      closePopover();
+      firePrint(orient === 'portrait' ? 'portrait' : 'landscape');
+    });
+    document.addEventListener('click', (e) => {
+      if (pop.hidden) return;
+      if (e.target.closest('#printPopover, #printBtn')) return;
+      closePopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !pop.hidden) { closePopover(); btn.focus(); }
+    });
+  }
   // Intercept Ctrl+P / Cmd+P → run our fit-to-page logic (landscape default).
   // Capture phase so we beat the browser's native print binding.
   document.addEventListener('keydown', (e) => {
