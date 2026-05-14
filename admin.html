@@ -416,7 +416,7 @@
         <button class="btn btn-outline btn-sm" onclick="renderCapacityAnalyzer()">Refresh</button>
       </div>
     </div>
-    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. A "match" = one APA team match (5 individual matches). <code>duration_min</code> is the <em>1-table</em> sequential duration. On <strong>2 tables</strong> the wall-clock halves (individuals fill in parallel) and the match occupies 2 tables at once. Demand at a slot = sum of tables consumed by every active team match in that slot. Every match in a round shares <code>scheduled_at</code>; no wave-staggering.</p>
+    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. A "match" = one APA team match (5 individual matches). <code>duration_min</code> is the wall-clock duration the operator set in the schedule editor — used as-is. On <strong>2 tables</strong> a team match occupies 2 tables at once for that duration. Demand at a slot = sum of tables consumed by every active team match in that slot. Every match in a round shares <code>scheduled_at</code>; no wave-staggering.</p>
     <div id="capacityBody"><p class="hint">Loading&hellip;</p></div>
   </div>
 
@@ -1127,7 +1127,7 @@ function renderScheduleEditor() {
       +   '<input type="date" data-field="date" value="' + escapeHtml(dt.date) + '">'
       +   '<select data-field="time">' + buildTimeOptions(dt.time) + '</select>'
       + '</div>'
-      + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="How many tables EACH team match in this round occupies. 1 table = 5 individuals play sequentially. 2 tables = individuals 1 & 2 start together and fill in as tables free — wall-clock halves, capacity demand per match doubles.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
+      + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="How many tables EACH team match in this round occupies. 1 table = 5 individuals play sequentially. 2 tables = individuals 1 & 2 start together and fill in as tables free. Set the duration to the wall-clock you expect for that table count — capacity uses it as-is.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
       + '<select class="dur-select" data-field="duration_min" title="Total expected duration for this round.">' + buildDurationOptions(durMin) + '</select>'
       + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
       + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
@@ -1138,9 +1138,10 @@ function renderScheduleEditor() {
 }
 
 function toggleTablesInParallel(btn) {
-  // duration_min stays put — it is the 1-table sequential duration always.
-  // The capacity math derives the 2-table wall-clock (halved) and the extra
-  // table demand (doubled) from this flag at render time.
+  // duration_min in the dropdown is the wall-clock the operator sets for
+  // whatever toggle state is active — capacity uses it as-is. This handler
+  // just flips the badge; the operator updates the dropdown manually if they
+  // want a different wall-clock for the new table count.
   const cur = parseInt(btn.dataset.tables, 10) || 1;
   const next = cur === 1 ? 2 : 1;
   btn.dataset.tables = next;
@@ -1235,18 +1236,15 @@ async function renumberAllTables() {
 /* ── Schedule math ─────────────────────────
  *  A "match" in BreakOut is an APA team match = 5 individual matches between
  *  two teams. tables_in_parallel describes how many tables ONE team match
- *  occupies:
- *    • 1 table → 5 individuals play sequentially → full duration_min
- *    • 2 tables → individuals 1 & 2 start together, the rest fill in as
- *      tables free → wall-clock ≈ duration_min / 2 (simple halving rule)
+ *  occupies (1 or 2). The schedule editor's duration_min is the WALL-CLOCK
+ *  duration the operator has set for that round — already accounts for the
+ *  toggle. The capacity math must NOT halve it again.
  *
- *  duration_min is ALWAYS the 1-table sequential value. The math derives the
- *  2-table wall-clock from it. Every match in a round shares scheduled_at
- *  (they all start together) — no wave staggering.
+ *  So computeMatchInterval reads duration_min as-is. tablesPerMatch is used
+ *  only for the demand count: a 2-table team match consumes 2 tables
+ *  concurrently for the full duration_min minutes.
  *
- *  Capacity demand at any time = sum of (tables_in_parallel) across all
- *  team matches active at that time. So a round of 4 team matches each on
- *  2 tables consumes 4×2 = 8 tables concurrently for duration_min/2 minutes.
+ *  Every match in a round shares scheduled_at; no wave staggering.
  */
 function indexMatchSlots(matches) {
   // Retained for callers that want per-round counts; the timing math no
@@ -1276,11 +1274,11 @@ function computeMatchInterval(m /* , roundCounts (unused) */) {
   if (!m.scheduled_at) return null;
   const start = new Date(m.scheduled_at);
   if (isNaN(start.getTime())) return null;
-  const dur1Table = m.duration_min != null ? m.duration_min : 240;
-  // 1 table → full dur. 2 tables → halve (5 individuals split across 2 tables,
-  // simple halving per operator's rule).
-  const effDur = tablesPerMatch(m) === 2 ? dur1Table / 2 : dur1Table;
-  const end = new Date(start.getTime() + effDur * 60 * 1000);
+  // duration_min is the WALL-CLOCK duration as set by the operator. The
+  // capacity math does not adjust it for table count — tablesPerMatch only
+  // affects how many tables of demand the match contributes, not its length.
+  const dur = m.duration_min != null ? m.duration_min : 240;
+  const end = new Date(start.getTime() + dur * 60 * 1000);
   return { start, end, m };
 }
 
