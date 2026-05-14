@@ -1046,7 +1046,7 @@ async function loadMatchesView() {
   const status = document.getElementById('matchesStatus');
   body.innerHTML = '<p class="hint">Loading&hellip;</p>';
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,slug,name,start_date,end_date,matches', { headers: HEADERS_READ });
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,slug,name,start_date,end_date,matches,config,total_tables,venue_name', { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
     if (!list.length) {
