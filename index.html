@@ -246,6 +246,16 @@
     background: linear-gradient(180deg, #fff 0%, var(--bg) 100%);
     padding: 28px 18px 18px;
     border-bottom: 1px solid var(--border);
+    /* Stay horizontally pinned to viewport during horizontal pan. Without
+       this, the hero would slide out of view to the left when user pans
+       the bracket to the right. width: 100vw + sticky left: 0 means the
+       hero always fills the viewport horizontally; hero-inner inside is
+       still max-width: 1500px margin: auto, so the text stays centered.
+       No `top` property — hero scrolls normally vertically. */
+    position: sticky; left: 0;
+    width: 100vw;
+    box-sizing: border-box;
+    z-index: 4;
   }
   .hero-inner {
     max-width: 1500px;
@@ -305,9 +315,18 @@
   .section-title {
     padding: 4px 18px 8px;
     font-size: 0.86rem; font-weight: 800; letter-spacing: 0.02em;
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
     color: var(--spm-accent);
-    max-width: 1500px; margin: 0 auto;
+    /* Horizontally pin to viewport during horizontal pan (the bracket SVG
+       below it pans, but the title stays centered on screen). width: 100vw
+       and sticky left:0 make the title span the viewport horizontally;
+       justify-content: center centers the pill text within it. No `top`
+       so the title scrolls vertically along with its section. */
+    position: sticky; left: 0;
+    width: 100vw;
+    box-sizing: border-box;
+    background: var(--bg);
+    z-index: 5;
   }
   .section-title .pill {
     display: inline-block; font-size: 0.66rem; font-weight: 800;
