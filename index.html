@@ -2,8 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>BreakOut — Tournament viewer</title>
+
+<!-- PWA: install to home screen for standalone (no URL bar) experience.
+     Tap browser menu → "Add to Home Screen" / "Install app". Launched from
+     the home-screen icon, BreakOut runs full-screen without browser chrome. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ea002a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BreakOut">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
 <style>
   :root {
     --spm-primary: #ea002a;
@@ -2240,21 +2251,22 @@ function renderTournament() {
       _highlightedTeam = null;
       highlightTeamMatches(team);
     }
-    // Initial scroll position: upper-left of Bracket A. Each section's
-    // wrap has 50% padding on each side (v0.75 2× pan canvas), so we
-    // scroll past Bracket A's left/top padding so its SVG (the actual
-    // bracket content) lands at the top-left of the visible area instead
-    // of in the middle of empty pan space. Only on initial render, not
-    // on data-poll re-renders (preserve user's scroll position then).
+    // Initial scroll position: upper-left of Bracket A's SECTION (title +
+    // bracket together). v0.79 dropped the wrap padding so the SVG is now
+    // flush with its section's left edge, and the section title sits in
+    // a sibling block at section.top. Scrolling to section.top lands the
+    // user with the title at the top of the viewport and the bracket
+    // immediately below — both visible. Only on initial render; data-poll
+    // re-renders preserve the user's current scroll position.
     if (!_initialScrollDone) {
       _initialScrollDone = true;
       const ps = document.getElementById('pageScroll');
-      const firstSvg = document.querySelector('svg.bracket-svg');
-      if (ps && firstSvg) {
+      const firstSec = document.querySelector('.bracket-section');
+      if (ps && firstSec) {
         const psRect  = ps.getBoundingClientRect();
-        const svgRect = firstSvg.getBoundingClientRect();
-        ps.scrollLeft += svgRect.left - psRect.left;
-        ps.scrollTop  += svgRect.top  - psRect.top;
+        const secRect = firstSec.getBoundingClientRect();
+        ps.scrollLeft += secRect.left - psRect.left;
+        ps.scrollTop  += secRect.top  - psRect.top;
       }
     }
   });
@@ -2649,18 +2661,15 @@ function applyZoomToSvgs() {
     const h = dh * z;
     svg.style.width  = w + 'px';
     svg.style.height = h + 'px';
-    // Pan canvas = 2× bracket size (option A). Wrap is 2x the SVG with the
-    // SVG centered, so the user can pan the bracket halfway out in any
-    // direction before hitting a wall. Padding (rather than margin) so the
-    // wrap is an inline-block-style box whose scroll content is wider than
-    // the viewport, enabling smooth pan in both axes.
+    // Wrap = 1× SVG (v0.79). Earlier versions added 50%/100% padding for
+    // "pan canvas," but with v0.78's unified scroll the wrap already
+    // overflows the page-scroll viewport naturally when zoomed, so extra
+    // padding was just dead space. Bracket sits flush at the top-left
+    // of its section, aligned with the section title above it.
     const wrap = svg.closest('.bracket-wrap');
     if (wrap) {
       wrap.style.boxSizing = 'content-box';
-      wrap.style.paddingLeft  = (w / 2) + 'px';
-      wrap.style.paddingRight = (w / 2) + 'px';
-      wrap.style.paddingTop    = (h / 2) + 'px';
-      wrap.style.paddingBottom = (h / 2) + 'px';
+      wrap.style.padding = '0';
       wrap.style.width  = w + 'px';
       wrap.style.height = h + 'px';
     }

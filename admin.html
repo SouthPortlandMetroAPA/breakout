@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BreakOut Admin</title>
+
+<!-- Match viewer's PWA setup so admins installing the app get a consistent
+     icon/theme. Admin isn't typically used standalone but lives in the
+     same app scope. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0031a1">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
 <style>
   :root {
     --spm-primary: #ea002a;
