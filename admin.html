@@ -490,11 +490,14 @@
         <datalist id="venueList"></datalist>
         <label>Address <input type="text" id="tEditVenueAddress" placeholder="123 Main St, Westbrook ME"></label>
         <label>Total tables at this venue <input type="number" id="tEditTotalTables" min="1" max="80" placeholder="8"></label>
-        <label>Available tables (numbers / ranges) <input type="text" id="tEditAvailableTables" placeholder="1,2,4-6,8-9,11"></label>
-        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">Use <code>-</code> for ranges and <code>,</code> to separate, e.g. <code>1,2,4-6,8-9,11</code>. The <strong>Auto-assign tables</strong> button uses this list and tries to never put a team on the same table twice (falls back to no back-to-back when impossible).</p>
+        <label>Primary tables (numbers / ranges) <input type="text" id="tEditAvailableTables" placeholder="1,2,4-6,8-9,11"></label>
+        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">Use <code>-</code> for ranges and <code>,</code> to separate, e.g. <code>1,2,4-6,8-9,11</code>. These are the preferred tables (e.g. main room). Auto-assign uses ONLY these tables for a time slot when the slot's concurrent match demand fits within them.</p>
         <p id="tEditAvailableTablesPreview" class="hint" style="margin:2px 0 0;font-size:0.74rem;color:var(--spm-accent)"></p>
+        <label>Secondary tables (overflow only) <input type="text" id="tEditSecondaryTables" placeholder="12-15,17"></label>
+        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">Optional overflow tables (e.g. second room). <strong>HARD rule:</strong> these are only used at a time slot when the slot's concurrent match demand exceeds the primary list — never otherwise.</p>
+        <p id="tEditSecondaryTablesPreview" class="hint" style="margin:2px 0 0;font-size:0.74rem;color:var(--spm-accent)"></p>
         <label>Adjacent tables (pairs) <input type="text" id="tEditAdjacentTables" placeholder="2-6,9-6,7-10,8-11"></label>
-        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">CSV of <code>A-B</code> pairs listing physically adjacent tables. Auto-assign uses this for 2-table matches — both tables in a pair must be physically next to each other. Pairs are bidirectional (writing <code>2-6</code> means 6 is also adjacent to 2).</p>
+        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">CSV of <code>A-B</code> pairs listing physically adjacent tables (works across primary + secondary). Auto-assign uses this for 2-table matches — both tables in a pair must be physically next to each other. Bidirectional.</p>
         <p id="tEditAdjacentTablesPreview" class="hint" style="margin:2px 0 0;font-size:0.74rem;color:var(--spm-accent)"></p>
       </fieldset>
 
@@ -1326,6 +1329,22 @@ function updateAvailableTablesPreview() {
   }
 }
 
+function updateSecondaryTablesPreview() {
+  const inp = document.getElementById('tEditSecondaryTables');
+  const out = document.getElementById('tEditSecondaryTablesPreview');
+  if (!inp || !out) return;
+  const raw = inp.value;
+  if (!raw.trim()) { out.textContent = ''; out.style.color = ''; return; }
+  try {
+    const list = parseTableSpec(raw);
+    out.style.color = 'var(--spm-accent)';
+    out.textContent = (list && list.length ? list.length + ' overflow tables: ' + list.join(', ') : '(empty)');
+  } catch (e) {
+    out.style.color = 'var(--danger)';
+    out.textContent = '⚠ ' + e.message;
+  }
+}
+
 function updateAdjacentTablesPreview() {
   const inp = document.getElementById('tEditAdjacentTables');
   const out = document.getElementById('tEditAdjacentTablesPreview');
@@ -1372,19 +1391,26 @@ async function autoAssignTables() {
     avail = [];
     for (let i = 1; i <= cap; i++) avail.push(i);
   }
+  let secondary = null;
+  try { secondary = parseTableSpec(cfg.secondaryTablesSpec); }
+  catch (e) { alert('Secondary-tables spec invalid: ' + e.message); return; }
+  if (!secondary) secondary = [];
   let adjacency = null;
   try { adjacency = parseAdjacencySpec(cfg.adjacentTablesSpec); }
   catch (e) { alert('Adjacent-tables spec invalid: ' + e.message); return; }
   const adjacencyNote = adjacency && adjacency.size
     ? ' 2-table matches must use an adjacent pair from your adjacency list.'
     : ' (No adjacency list set — any pair of available tables can be used for 2-table matches.)';
+  const secondaryNote = secondary.length
+    ? ' HARD priority: secondary tables (' + secondary.join(', ') + ') are used at a time slot only when the slot\'s concurrent demand exceeds the ' + avail.length + ' primary table' + (avail.length === 1 ? '' : 's') + '.'
+    : '';
   confirmModal({
     title: 'Auto-assign tables?',
-    message: 'Assigns tables using these ' + avail.length + ' table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '. Hard rule: no back-to-back (a match never lands on its immediate feeder\'s table). Soft preference: avoid putting a team on a table they\'ve played before — accepts an earlier-round repeat (e.g. T4 → T1 → T4) when nothing else is free.' + adjacencyNote + ' Overwrites every current assignment.',
+    message: 'Assigns tables using these ' + avail.length + ' primary table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '.' + secondaryNote + ' Hard rule: no back-to-back (a match never lands on its immediate feeder\'s table). Soft preference: avoid putting a team on a table they\'ve played before — accepts an earlier-round repeat (e.g. T4 → T1 → T4) when nothing else is free.' + adjacencyNote + ' Overwrites every current assignment.',
     okText: 'Auto-assign',
     onOk: async () => {
       const snapshot = JSON.stringify(t.matches);
-      const result = runAutoAssign(t.matches, avail, adjacency);
+      const result = runAutoAssign(t.matches, avail, adjacency, secondary);
       try {
         await sb('PATCH', 'tournaments?id=eq.' + t.id, { matches: t.matches });
         renderMatchesEditor();
@@ -1407,12 +1433,42 @@ async function autoAssignTables() {
   });
 }
 
-function runAutoAssign(matches, availableTables, adjacency) {
+function runAutoAssign(matches, availableTables, adjacency, secondaryTables) {
+  // availableTables: PRIMARY pool (preferred — main room).
+  // secondaryTables: OVERFLOW pool. HARD rule — only used at a time slot
+  // when the concurrent demand at that slot exceeds the primary pool size.
   // adjacency: Map<int, Set<int>> or null. When non-null, 2-table picks
   // MUST land on a pair (a, b) with `adjacency.get(a).has(b)`.
+  if (!secondaryTables) secondaryTables = [];
+  const primarySet = new Set(availableTables);
   const byId = {};
   for (const m of matches) byId[m.id] = m;
   const isAdjacent = (a, b) => adjacency && adjacency.has(a) && adjacency.get(a).has(b);
+
+  // Pre-compute per-time-slot table demand. Sum of tablesPerMatch
+  // (1 or 2) across all non-bye matches at the same scheduled_at. A slot
+  // whose total demand fits the primary pool stays primary-only.
+  const slotDemand = {};
+  for (const m of matches) {
+    if (m.is_bye) continue;
+    const slot = m.scheduled_at || '__unscheduled__';
+    const tip = (m.tables_in_parallel && m.tables_in_parallel >= 2) ? 2 : 1;
+    slotDemand[slot] = (slotDemand[slot] || 0) + tip;
+  }
+  // Per-slot pool: primary only if demand fits, else primary + secondary.
+  const slotPool = {};
+  for (const slot in slotDemand) {
+    if (slotDemand[slot] <= availableTables.length) {
+      slotPool[slot] = availableTables;
+    } else {
+      // Merge primary + secondary, primary first so it's preferred by sort.
+      const seen = new Set();
+      const merged = [];
+      for (const t of availableTables) { if (!seen.has(t)) { seen.add(t); merged.push(t); } }
+      for (const t of secondaryTables) { if (!seen.has(t)) { seen.add(t); merged.push(t); } }
+      slotPool[slot] = merged;
+    }
+  }
 
   // Iteration order: by scheduled_at then bracket/round/slot. Matches without
   // a scheduled_at get processed LAST so their feeders are already assigned.
@@ -1469,6 +1525,8 @@ function runAutoAssign(matches, availableTables, adjacency) {
     const need = (m.tables_in_parallel && m.tables_in_parallel >= 2) ? 2 : 1;
     const slotKey = m.scheduled_at || '__unscheduled__';
     const inUse = usedAtSlot[slotKey] = usedAtSlot[slotKey] || new Set();
+    // Pool for this slot: primary only if slot fits, else primary+secondary.
+    const pool = slotPool[slotKey] || availableTables;
 
     // HARD rule: no back-to-back. Never pick a table that's already on this
     // match's IMMEDIATE feeders (one round back). T4 → T1 → T4 is fine.
@@ -1478,11 +1536,11 @@ function runAutoAssign(matches, availableTables, adjacency) {
     const ancestry = ancestorTables(m);
     tableHistory[m.id] = ancestry;
 
-    let candidates = availableTables.filter(t => !immediateForbid.has(t) && !inUse.has(t));
+    let candidates = pool.filter(t => !immediateForbid.has(t) && !inUse.has(t));
     let mode = 'no-back-to-back';
     if (candidates.length < need) {
       // Even back-to-back is unavoidable. Take any free table this slot.
-      candidates = availableTables.filter(t => !inUse.has(t));
+      candidates = pool.filter(t => !inUse.has(t));
       mode = 'b2b-fallback';
     }
     if (candidates.length < need) {
@@ -1492,10 +1550,12 @@ function runAutoAssign(matches, availableTables, adjacency) {
     }
 
     // Score function for a candidate table: lower is better.
+    //  0. PRIMARY tier (0) before SECONDARY tier (1) — HARD rule: secondary
+    //     tables are only chosen when primary doesn't have a valid candidate.
     //  1. Tables NOT in ancestry come first (soft constraint).
     //  2. Then least-used globally (wear leveling).
     //  3. Then table number (deterministic).
-    const score = t => [ancestry.has(t) ? 1 : 0, globalCount[t] || 0, t];
+    const score = t => [primarySet.has(t) ? 0 : 1, ancestry.has(t) ? 1 : 0, globalCount[t] || 0, t];
     const cmpScore = (a, b) => {
       const sa = score(a), sb = score(b);
       for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return sa[i] - sb[i];
@@ -2273,6 +2333,8 @@ async function openTournamentEditModal(tournamentId, focusStatus) {
     document.getElementById('tEditChampion').value       = cfg.championText || '';
     document.getElementById('tEditAvailableTables').value = cfg.availableTablesSpec || '';
     updateAvailableTablesPreview();
+    document.getElementById('tEditSecondaryTables').value = cfg.secondaryTablesSpec || '';
+    updateSecondaryTablesPreview();
     document.getElementById('tEditAdjacentTables').value  = cfg.adjacentTablesSpec  || '';
     updateAdjacentTablesPreview();
     const bn = cfg.bracketNames || {};
@@ -2312,6 +2374,7 @@ async function saveTournamentEdit() {
     bracketChampText: document.getElementById('tEditBracketChamp').value.trim() || 'Bracket Champ',
     championText:     document.getElementById('tEditChampion').value.trim()     || 'Champion',
     availableTablesSpec: document.getElementById('tEditAvailableTables').value.trim() || '',
+    secondaryTablesSpec: document.getElementById('tEditSecondaryTables').value.trim() || '',
     adjacentTablesSpec:  document.getElementById('tEditAdjacentTables').value.trim()  || '',
     bracketNames: {
       A:   document.getElementById('tEditBracketNameA').value.trim()   || '',
@@ -2614,6 +2677,7 @@ async function init() {
   document.getElementById('tEditVenueName').addEventListener('change', maybeAutofillVenue);
   document.getElementById('tEditVenueName').addEventListener('blur', maybeAutofillVenue);
   document.getElementById('tEditAvailableTables').addEventListener('input', updateAvailableTablesPreview);
+  document.getElementById('tEditSecondaryTables').addEventListener('input', updateSecondaryTablesPreview);
   document.getElementById('tEditAdjacentTables').addEventListener('input',  updateAdjacentTablesPreview);
 }
 document.addEventListener('DOMContentLoaded', init);

@@ -178,6 +178,9 @@
       width: 100% !important;
       height: 100% !important;
       min-width: 0 !important;
+      /* Strip the screen-only pan-canvas padding (option-A 2× canvas) so
+         the SVG fills the page instead of sitting in a 4× empty box. */
+      padding: 0 !important;
     }
     .bracket-section .bracket-svg {
       width: 100% !important;
@@ -2587,8 +2590,25 @@ function applyZoomToSvgs() {
     const dw = parseFloat(sec.dataset.designW);
     const dh = parseFloat(sec.dataset.designH);
     if (!isFinite(dw) || !isFinite(dh)) return;
-    svg.style.width  = (dw * z) + 'px';
-    svg.style.height = (dh * z) + 'px';
+    const w = dw * z;
+    const h = dh * z;
+    svg.style.width  = w + 'px';
+    svg.style.height = h + 'px';
+    // Pan canvas = 2× bracket size (option A). Wrap is 2x the SVG with the
+    // SVG centered, so the user can pan the bracket halfway out in any
+    // direction before hitting a wall. Padding (rather than margin) so the
+    // wrap is an inline-block-style box whose scroll content is wider than
+    // the viewport, enabling smooth pan in both axes.
+    const wrap = svg.closest('.bracket-wrap');
+    if (wrap) {
+      wrap.style.boxSizing = 'content-box';
+      wrap.style.paddingLeft  = (w / 2) + 'px';
+      wrap.style.paddingRight = (w / 2) + 'px';
+      wrap.style.paddingTop    = (h / 2) + 'px';
+      wrap.style.paddingBottom = (h / 2) + 'px';
+      wrap.style.width  = w + 'px';
+      wrap.style.height = h + 'px';
+    }
   });
   updateCardDensity(z);
 }
