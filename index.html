@@ -1750,9 +1750,9 @@ const SVG = {
   ROUND_GAP: 110,
   SLOT_H: 152,
   SLOTS: 8,
-  HEADER_H: 36,           // round-header band
-  HEADER_TEXT_Y: 18,      // baseline for round-name text
-  HEADER_PILL_Y: 30,      // baseline for "N tables" pill text
+  HEADER_H: 44,           // round-header band (tall enough to fit round name + "N TABLES" pill + underline without collision)
+  HEADER_TEXT_Y: 18,      // baseline for round-name text (y = TOP_PAD + 18 = 30)
+  HEADER_PILL_Y: 30,      // baseline for "N tables" pill text (rect spans y = 33..46)
   LEFT_PAD: 110,          // left gutter — gives cross-source labels room
   RIGHT_PAD: 8,
   TOP_PAD: 12,            // small gap above header band
