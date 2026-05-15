@@ -493,6 +493,9 @@
         <label>Available tables (numbers / ranges) <input type="text" id="tEditAvailableTables" placeholder="1,2,4-6,8-9,11"></label>
         <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">Use <code>-</code> for ranges and <code>,</code> to separate, e.g. <code>1,2,4-6,8-9,11</code>. The <strong>Auto-assign tables</strong> button uses this list and tries to never put a team on the same table twice (falls back to no back-to-back when impossible).</p>
         <p id="tEditAvailableTablesPreview" class="hint" style="margin:2px 0 0;font-size:0.74rem;color:var(--spm-accent)"></p>
+        <label>Adjacent tables (pairs) <input type="text" id="tEditAdjacentTables" placeholder="2-6,9-6,7-10,8-11"></label>
+        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">CSV of <code>A-B</code> pairs listing physically adjacent tables. Auto-assign uses this for 2-table matches — both tables in a pair must be physically next to each other. Pairs are bidirectional (writing <code>2-6</code> means 6 is also adjacent to 2).</p>
+        <p id="tEditAdjacentTablesPreview" class="hint" style="margin:2px 0 0;font-size:0.74rem;color:var(--spm-accent)"></p>
       </fieldset>
 
       <fieldset>
@@ -1257,6 +1260,36 @@ function parseTableSpec(spec) {
   return Array.from(out).sort((a, b) => a - b);
 }
 
+/* parseAdjacencySpec("2-6,9-6,7-10,8-11") → Map { 2 → Set([6]), 6 → Set([2,9]),
+ * 9 → Set([6]), 7 → Set([10]), 10 → Set([7]), 8 → Set([11]), 11 → Set([8]) }.
+ * Bidirectional — each "A-B" adds both A→B and B→A. Returns null when the
+ * spec is empty so 2-table auto-assign can fall back to "any pair works".
+ * Throws on syntax errors. */
+function parseAdjacencySpec(spec) {
+  if (spec == null) return null;
+  const s = String(spec).trim();
+  if (!s) return null;
+  const adj = new Map();
+  const link = (a, b) => {
+    if (!adj.has(a)) adj.set(a, new Set());
+    adj.get(a).add(b);
+  };
+  for (const part of s.split(',')) {
+    const p = part.trim();
+    if (!p) continue;
+    const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (!m) throw new Error('bad pair "' + p + '" — expected number-number, e.g. 2-6');
+    const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b < 1) {
+      throw new Error('bad pair "' + p + '" — both sides must be positive integers');
+    }
+    if (a === b) throw new Error('bad pair "' + p + '" — a table cannot be adjacent to itself');
+    link(a, b);
+    link(b, a);
+  }
+  return adj;
+}
+
 /* table_no may be a number, a string "5", or a comma-separated string "5,6"
  * (for matches that occupy 2 tables). These helpers normalize. */
 function tableNoToArray(v) {
@@ -1293,6 +1326,26 @@ function updateAvailableTablesPreview() {
   }
 }
 
+function updateAdjacentTablesPreview() {
+  const inp = document.getElementById('tEditAdjacentTables');
+  const out = document.getElementById('tEditAdjacentTablesPreview');
+  if (!inp || !out) return;
+  const raw = inp.value;
+  if (!raw.trim()) { out.textContent = ''; out.style.color = ''; return; }
+  try {
+    const adj = parseAdjacencySpec(raw);
+    out.style.color = 'var(--spm-accent)';
+    if (!adj || !adj.size) { out.textContent = '(empty)'; return; }
+    // Count unique unordered pairs for the preview.
+    const pairs = new Set();
+    for (const [a, neighbors] of adj) for (const b of neighbors) pairs.add(a < b ? a + '-' + b : b + '-' + a);
+    out.textContent = pairs.size + ' adjacent pair' + (pairs.size === 1 ? '' : 's') + ' across ' + adj.size + ' table' + (adj.size === 1 ? '' : 's');
+  } catch (e) {
+    out.style.color = 'var(--danger)';
+    out.textContent = '⚠ ' + e.message;
+  }
+}
+
 /* Auto-assign tables. Rules:
  *  • HARD: no back-to-back — a match never lands on its immediate feeder's
  *    table. (T4 → T1 → T4 is fine because T4 is two matches back.)
@@ -1319,13 +1372,19 @@ async function autoAssignTables() {
     avail = [];
     for (let i = 1; i <= cap; i++) avail.push(i);
   }
+  let adjacency = null;
+  try { adjacency = parseAdjacencySpec(cfg.adjacentTablesSpec); }
+  catch (e) { alert('Adjacent-tables spec invalid: ' + e.message); return; }
+  const adjacencyNote = adjacency && adjacency.size
+    ? ' 2-table matches must use an adjacent pair from your adjacency list.'
+    : ' (No adjacency list set — any pair of available tables can be used for 2-table matches.)';
   confirmModal({
     title: 'Auto-assign tables?',
-    message: 'Assigns tables using these ' + avail.length + ' table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '. Hard rule: no back-to-back (a match never lands on its immediate feeder\'s table). Soft preference: avoid putting a team on a table they\'ve played before — accepts an earlier-round repeat (e.g. T4 → T1 → T4) when nothing else is free. Overwrites every current assignment.',
+    message: 'Assigns tables using these ' + avail.length + ' table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '. Hard rule: no back-to-back (a match never lands on its immediate feeder\'s table). Soft preference: avoid putting a team on a table they\'ve played before — accepts an earlier-round repeat (e.g. T4 → T1 → T4) when nothing else is free.' + adjacencyNote + ' Overwrites every current assignment.',
     okText: 'Auto-assign',
     onOk: async () => {
       const snapshot = JSON.stringify(t.matches);
-      const result = runAutoAssign(t.matches, avail);
+      const result = runAutoAssign(t.matches, avail, adjacency);
       try {
         await sb('PATCH', 'tournaments?id=eq.' + t.id, { matches: t.matches });
         renderMatchesEditor();
@@ -1335,7 +1394,8 @@ async function autoAssignTables() {
           const bits = [result.assigned + ' assigned'];
           if (result.relaxed)   bits.push(result.relaxed   + ' ancestry repeat (back-to-back avoided)');
           if (result.fallback)  bits.push(result.fallback  + ' BACK-TO-BACK forced (no other table free)');
-          if (result.failed)    bits.push(result.failed    + ' failed');
+          if (result.failed)    bits.push(result.failed    + ' FAILED');
+          if (result.adjacency_unsatisfied) bits.push('— ' + result.adjacency_unsatisfied + ' caused by no adjacent pair available; widen the adjacency list');
           status.textContent = bits.join(' · ');
           setTimeout(() => { status.textContent = ''; }, 5000);
         }
@@ -1347,9 +1407,12 @@ async function autoAssignTables() {
   });
 }
 
-function runAutoAssign(matches, availableTables) {
+function runAutoAssign(matches, availableTables, adjacency) {
+  // adjacency: Map<int, Set<int>> or null. When non-null, 2-table picks
+  // MUST land on a pair (a, b) with `adjacency.get(a).has(b)`.
   const byId = {};
   for (const m of matches) byId[m.id] = m;
+  const isAdjacent = (a, b) => adjacency && adjacency.has(a) && adjacency.get(a).has(b);
 
   // Iteration order: by scheduled_at then bracket/round/slot. Matches without
   // a scheduled_at get processed LAST so their feeders are already assigned.
@@ -1428,19 +1491,77 @@ function runAutoAssign(matches, availableTables) {
       continue;
     }
 
-    // Sort:
-    //  1. Tables NOT in ancestry come first (soft constraint — avoid earlier
-    //     repeats when possible).
+    // Score function for a candidate table: lower is better.
+    //  1. Tables NOT in ancestry come first (soft constraint).
     //  2. Then least-used globally (wear leveling).
     //  3. Then table number (deterministic).
-    candidates.sort((a, b) => {
-      const aInAnc = ancestry.has(a) ? 1 : 0;
-      const bInAnc = ancestry.has(b) ? 1 : 0;
-      if (aInAnc !== bInAnc) return aInAnc - bInAnc;
-      if (globalCount[a] !== globalCount[b]) return globalCount[a] - globalCount[b];
-      return a - b;
-    });
-    const picked = candidates.slice(0, need);
+    const score = t => [ancestry.has(t) ? 1 : 0, globalCount[t] || 0, t];
+    const cmpScore = (a, b) => {
+      const sa = score(a), sb = score(b);
+      for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return sa[i] - sb[i];
+      return 0;
+    };
+
+    let picked = null;
+    if (need === 1) {
+      const sorted = candidates.slice().sort(cmpScore);
+      picked = [sorted[0]];
+    } else {
+      // need === 2 — pick a PAIR. When adjacency is set, the pair must be
+      // adjacent. Score the pair by summing per-table scores so the best
+      // (least-ancestry, least-used) pair wins; deterministic tiebreak by
+      // (lo, hi) table numbers.
+      let bestPair = null, bestScore = null;
+      const checkPair = (a, b) => {
+        if (a === b) return;
+        if (inUse.has(a) || inUse.has(b)) return;
+        // back-to-back check already filtered candidates; just guard the b2b
+        // fallback case where candidates ignored immediateForbid.
+        if (mode === 'no-back-to-back' && (immediateForbid.has(a) || immediateForbid.has(b))) return;
+        const sa = score(a), sb = score(b);
+        const pairScore = [sa[0] + sb[0], sa[1] + sb[1], Math.min(a, b), Math.max(a, b)];
+        if (bestScore == null || cmpVec(pairScore, bestScore) < 0) {
+          bestScore = pairScore; bestPair = [a, b].sort((x, y) => x - y);
+        }
+      };
+      if (adjacency && adjacency.size) {
+        // Iterate only adjacency edges, both sides constrained to candidates.
+        const candSet = new Set(candidates);
+        for (const [a, neighbors] of adjacency) {
+          if (!candSet.has(a)) continue;
+          for (const b of neighbors) {
+            if (a < b && candSet.has(b)) checkPair(a, b);
+          }
+        }
+      } else {
+        // No adjacency constraint — any pair of candidates.
+        for (let i = 0; i < candidates.length; i++)
+          for (let j = i + 1; j < candidates.length; j++)
+            checkPair(candidates[i], candidates[j]);
+      }
+      if (!bestPair) {
+        // Adjacency constraint made the strict mode infeasible. Step down to
+        // fallback (no back-to-back honored, ignored, etc.) before giving up.
+        if (adjacency && adjacency.size && mode === 'no-back-to-back') {
+          // Try again without the back-to-back filter.
+          const candSet2 = new Set(availableTables.filter(t => !inUse.has(t)));
+          for (const [a, neighbors] of adjacency) {
+            if (!candSet2.has(a)) continue;
+            for (const b of neighbors) {
+              if (a < b && candSet2.has(b)) checkPair(a, b);
+            }
+          }
+          if (bestPair) mode = 'b2b-fallback';
+        }
+      }
+      if (!bestPair) {
+        counters.failed++;
+        if (adjacency && adjacency.size) counters.adjacency_unsatisfied = (counters.adjacency_unsatisfied || 0) + 1;
+        continue;
+      }
+      picked = bestPair;
+    }
+
     const ancestryRepeat = picked.some(t => ancestry.has(t));
     for (const t of picked) {
       inUse.add(t);
@@ -1453,6 +1574,11 @@ function runAutoAssign(matches, availableTables) {
     else if (ancestryRepeat)        counters.relaxed++;
   }
   return counters;
+}
+
+function cmpVec(a, b) {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
 }
 
 async function renumberAllTables() {
@@ -2147,6 +2273,8 @@ async function openTournamentEditModal(tournamentId, focusStatus) {
     document.getElementById('tEditChampion').value       = cfg.championText || '';
     document.getElementById('tEditAvailableTables').value = cfg.availableTablesSpec || '';
     updateAvailableTablesPreview();
+    document.getElementById('tEditAdjacentTables').value  = cfg.adjacentTablesSpec  || '';
+    updateAdjacentTablesPreview();
     const bn = cfg.bracketNames || {};
     document.getElementById('tEditBracketNameA').value   = bn.A   || '';
     document.getElementById('tEditBracketNameB').value   = bn.B   || '';
@@ -2184,6 +2312,7 @@ async function saveTournamentEdit() {
     bracketChampText: document.getElementById('tEditBracketChamp').value.trim() || 'Bracket Champ',
     championText:     document.getElementById('tEditChampion').value.trim()     || 'Champion',
     availableTablesSpec: document.getElementById('tEditAvailableTables').value.trim() || '',
+    adjacentTablesSpec:  document.getElementById('tEditAdjacentTables').value.trim()  || '',
     bracketNames: {
       A:   document.getElementById('tEditBracketNameA').value.trim()   || '',
       B:   document.getElementById('tEditBracketNameB').value.trim()   || '',
@@ -2485,6 +2614,7 @@ async function init() {
   document.getElementById('tEditVenueName').addEventListener('change', maybeAutofillVenue);
   document.getElementById('tEditVenueName').addEventListener('blur', maybeAutofillVenue);
   document.getElementById('tEditAvailableTables').addEventListener('input', updateAvailableTablesPreview);
+  document.getElementById('tEditAdjacentTables').addEventListener('input',  updateAdjacentTablesPreview);
 }
 document.addEventListener('DOMContentLoaded', init);
 </script>
