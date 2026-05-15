@@ -45,14 +45,23 @@
      disabled by this, which is fine because the bracket auto-refreshes via
      the 15s updated_at poll. */
   html, body { height: 100%; margin: 0; }
-  body { position: fixed; inset: 0; overflow: hidden; }
+  /* Body is a fixed flex column. Header sits at the top (full viewport
+     width, no horizontal scroll), .page-scroll fills the remaining space.
+     This makes the header pin to the viewport regardless of how far the
+     user pans horizontally inside the bracket canvas — sticky-positioned
+     elements inside a scroll container slide horizontally with the
+     scroll, which is why the previous setup made the banner appear to
+     scroll off-screen during a right-pan. */
+  body {
+    position: fixed; inset: 0; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
   .page-scroll {
-    position: absolute; inset: 0;
-    /* Single scroll container for the whole tournament. Both axes own the
-       horizontal AND vertical pan — each bracket-section is just a static
-       block inside, with no per-section scroll. Lets all three brackets
-       feel like one page; horizontal pan moves all brackets together up
-       to the widest one's range, vertical pan moves between them. */
+    /* Single 2-axis scroll container for the whole tournament. Sits below
+       the (now extracted) header and fills the rest of the body via flex. */
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
     overflow: auto;
     -webkit-overflow-scrolling: touch;
     /* contain prevents overscroll from chaining up to the body (which would
@@ -70,7 +79,12 @@
     background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
     color: #fff; padding: 14px 18px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    position: sticky; top: 0; z-index: 10;
+    /* Sits outside .page-scroll now (direct body child via flex column),
+       so it spans the full viewport width and stays pinned at top without
+       any sticky positioning — which had a bug where it would slide
+       horizontally with .page-scroll's scrollLeft during a right-pan. */
+    flex: 0 0 auto;
+    z-index: 10;
   }
   .header-inner {
     max-width: 1500px; margin: 0 auto;
@@ -582,7 +596,10 @@
     font-weight: 800;
     letter-spacing: 0.02em;
     display: flex; align-items: center; gap: 10px; justify-content: center;
-    position: sticky; top: 56px; z-index: 9;
+    /* Inserted by setupStaffMode as a sibling of the header, both outside
+       .page-scroll. Flex item, no sticky needed. */
+    flex: 0 0 auto;
+    z-index: 9;
     box-shadow: 0 2px 6px rgba(0,0,0,0.10);
   }
   .staff-banner .dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.35); }
@@ -888,7 +905,9 @@
 
 <div class="save-toast" id="saveToast"></div>
 
-<div class="page-scroll" id="pageScroll">
+<!-- Header is a direct body child (NOT inside .page-scroll) so it spans the
+     full viewport width and stays pinned at the top regardless of how far
+     the user pans horizontally inside the bracket canvas. -->
 <div class="header">
   <div class="header-inner">
     <h1><span class="brand-dot"></span>South Portland Metro APA</h1>
@@ -919,7 +938,9 @@
     </div>
   </div>
 </div>
+<!-- /.header (outside .page-scroll — full viewport width) -->
 
+<div class="page-scroll" id="pageScroll">
 <div class="hero" id="tournamentHero" hidden>
   <div class="hero-inner">
     <div class="hero-status" id="tournamentHeroStatus" hidden></div>
