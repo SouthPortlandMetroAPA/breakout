@@ -172,6 +172,13 @@
   }
   .view-tools .print-popover-opt:hover { background: rgba(0,49,161,0.08); color: var(--spm-accent); }
   .view-tools .print-popover-opt .opt-icon { font-size: 1.05rem; line-height: 1; width: 18px; text-align: center; color: var(--spm-accent); }
+  /* Hide the orientation popover on touch-only devices — mobile Chromium
+     ignores the @page orientation hint anyway, so the choice is misleading.
+     JS short-circuits the Print button to fire directly on those devices.
+     This rule is belt-and-suspenders in case JS detection misses an edge case. */
+  @media (hover: none) and (pointer: coarse) {
+    .view-tools .print-popover { display: none !important; }
+  }
 
   /* Print: one bracket per page, fitted to page dimensions WITHOUT touching
      the on-screen UI.
@@ -2831,16 +2838,33 @@ function firePrint(orient) {
   setTimeout(() => window.print(), 30);
 }
 function initPrintButtons() {
-  // Single Print button → opens a popover with Landscape / Portrait choices.
-  // Picking one fires the print + hides the popover. Click outside, Escape,
-  // or pressing the Print button again also closes the popover.
+  // Print button:
+  //   • Desktop (hover-capable, mouse): popover with Landscape / Portrait.
+  //     @page orientation hint is honored, so the choice actually takes
+  //     effect.
+  //   • Mobile / touch-only: skip the popover. The mobile Chromium /
+  //     Samsung Internet print engines ignore the @page orientation hint
+  //     anyway — the user picks orientation in the system dialog. Tapping
+  //     the in-app orientation buttons just adds a misleading step.
+  //     One tap on Print → fires directly (CSS handles either output
+  //     orientation cleanly via the 7in max-height cap).
   const btn = document.getElementById('printBtn');
   const pop = document.getElementById('printPopover');
+  const isTouchOnly = () =>
+    window.matchMedia('(hover: none) and (pointer: coarse)').matches;
   const openPopover = () => { if (pop) pop.hidden = false; };
   const closePopover = () => { if (pop) pop.hidden = true; };
   const togglePopover = () => { if (pop) pop.hidden = !pop.hidden; };
   if (btn && pop) {
-    btn.addEventListener('click', (e) => { e.stopPropagation(); togglePopover(); });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (isTouchOnly()) {
+        closePopover();
+        firePrint('landscape');
+      } else {
+        togglePopover();
+      }
+    });
     pop.addEventListener('click', (e) => {
       const opt = e.target.closest('.print-popover-opt');
       if (!opt) return;
