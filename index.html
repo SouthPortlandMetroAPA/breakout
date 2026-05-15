@@ -657,35 +657,22 @@
 
   /* Jump-to flash — when a dest chip is clicked, the target match
      pulses with an SPM red glow for 1.8s. */
-  /* Jump-to-match highlight — 3 pulses with strong red halo around the card.
-     The halo lives OUTSIDE the foreignObject's clip as a sibling SVG <rect>
-     (see jumpToMatch in JS); box-shadow on the inner card was clipped by
-     the foreignObject and barely visible. The card itself also flashes its
-     background red to reinforce the target, since background is contained
-     inside the card's box. */
-  @keyframes matchJumpFlash {
-    0%, 100%        { background: var(--card);                 border-color: var(--border-strong); }
-    6%, 36%, 66%    { background: rgba(234,0,42,0.14);          border-color: var(--spm-primary); }
-    20%, 50%, 80%   { background: var(--card);                 border-color: var(--spm-primary); }
-  }
+  /* Jump-to-match highlight — visually identical to search "latest" hit so
+     clicking W/L and a search current-match pulse look the same. Card
+     background pulses red; SVG halo pulses red ring outside foreignObject
+     clip. Animations defined further down with the search keyframes; we
+     just point the jump-specific classes at the same animations. */
   .match.match-jump-flash {
-    animation: matchJumpFlash 2.4s ease-out;
+    animation: searchLatestBgPulse 2.4s ease-out forwards;
+    background: rgba(234,0,42,0.10);
     border-color: var(--spm-primary);
   }
-
-  /* SVG halo overlay added by jumpToMatch — a stroked rect just outside
-     the card's foreignObject. Animates 3 pulses of stroke-width + opacity
-     plus a drop-shadow glow. Removed automatically after the animation. */
-  @keyframes matchJumpHalo {
-    0%             { stroke-opacity: 0;    stroke-width: 0; }
-    6%, 36%, 66%   { stroke-opacity: 1;    stroke-width: 10; }
-    20%, 50%, 80%  { stroke-opacity: 0.45; stroke-width: 4; }
-    100%           { stroke-opacity: 0;    stroke-width: 0; }
-  }
   .bracket-svg .match-jump-overlay {
-    animation: matchJumpHalo 2.4s ease-out forwards;
-    filter: drop-shadow(0 0 10px rgba(234,0,42,0.65));
+    fill: none;
+    stroke: #ea002a;
     pointer-events: none;
+    filter: drop-shadow(0 0 8px rgba(234,0,42,0.55));
+    animation: searchLatestPulse 2.4s ease-out forwards;
   }
 
   /* Bracket Champ — promoted OUT of the card so it can be loud. Sits in
@@ -2441,7 +2428,10 @@ function setupPanScroll() {
     vp.dataset.panBound = '1';
     vp.tabIndex = 0;
 
-    let isDown = false, startX = 0, startLeft = 0, moved = false;
+    // Omni-pan: track both X (viewport horizontal scroll) and Y (page-level
+    // vertical scroll via the .page-scroll container) so click-drag on
+    // desktop behaves like a touch-pan on an image — both axes move at once.
+    let isDown = false, startX = 0, startY = 0, startLeft = 0, startTop = 0, moved = false;
 
     vp.addEventListener('mousedown', (e) => {
       // Don't hijack clicks on form controls or anything that opts into its
@@ -2454,7 +2444,10 @@ function setupPanScroll() {
       isDown = true;
       moved = false;
       startX = e.pageX;
+      startY = e.pageY;
       startLeft = vp.scrollLeft;
+      const ps = document.getElementById('pageScroll');
+      startTop = ps ? ps.scrollTop : (window.scrollY || document.documentElement.scrollTop || 0);
       vp.classList.add('panning');
     });
     const stop = () => {
@@ -2467,8 +2460,12 @@ function setupPanScroll() {
     vp.addEventListener('mousemove', (e) => {
       if (!isDown) return;
       const dx = e.pageX - startX;
-      if (Math.abs(dx) > 3) moved = true;
+      const dy = e.pageY - startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
       vp.scrollLeft = startLeft - dx;
+      const ps = document.getElementById('pageScroll');
+      if (ps) ps.scrollTop = startTop - dy;
+      else window.scrollTo(0, startTop - dy);
       e.preventDefault();
     });
     // Suppress click after a drag so card-clicks don't fire spuriously.
