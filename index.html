@@ -246,16 +246,16 @@
     background: linear-gradient(180deg, #fff 0%, var(--bg) 100%);
     padding: 28px 18px 18px;
     border-bottom: 1px solid var(--border);
-    /* Stay horizontally pinned to viewport during horizontal pan. Without
-       this, the hero would slide out of view to the left when user pans
-       the bracket to the right. width: 100vw + sticky left: 0 means the
-       hero always fills the viewport horizontally; hero-inner inside is
-       still max-width: 1500px margin: auto, so the text stays centered.
-       No `top` property — hero scrolls normally vertically. */
-    position: sticky; left: 0;
+    /* width: 100vw spans the viewport horizontally; hero-inner inside
+       (max-width: 1500px, margin: 0 auto) centers content within that
+       span. The horizontal pin is done in JS (see pinTitlesToViewport)
+       via transform: translateX(scrollLeft) because CSS sticky requires
+       the parent to be larger than the sticky element — which isn't the
+       case here (hero parent == 100vw, hero == 100vw). */
     width: 100vw;
     box-sizing: border-box;
     z-index: 4;
+    will-change: transform;
   }
   .hero-inner {
     max-width: 1500px;
@@ -317,16 +317,16 @@
     font-size: 0.86rem; font-weight: 800; letter-spacing: 0.02em;
     display: flex; align-items: center; justify-content: center; gap: 10px;
     color: var(--spm-accent);
-    /* Horizontally pin to viewport during horizontal pan (the bracket SVG
-       below it pans, but the title stays centered on screen). width: 100vw
-       and sticky left:0 make the title span the viewport horizontally;
-       justify-content: center centers the pill text within it. No `top`
-       so the title scrolls vertically along with its section. */
-    position: sticky; left: 0;
+    /* width: 100vw spans the viewport; justify-content: center centers
+       the pill. The horizontal pin (so the title stays centered while
+       the bracket pans) is done in JS via transform: translateX(scrollLeft)
+       — CSS sticky doesn't work here because the section box is also
+       100vw wide, leaving sticky no range to operate in. */
     width: 100vw;
     box-sizing: border-box;
     background: var(--bg);
     z-index: 5;
+    will-change: transform;
   }
   .section-title .pill {
     display: inline-block; font-size: 0.66rem; font-weight: 800;
@@ -2284,6 +2284,7 @@ function renderTournament() {
     });
     applyZoomToSvgs();
     setupPanScroll();
+    pinTitlesToViewport();
     applySearch();
     // Re-apply team highlight if active (bracket was just re-rendered).
     if (_highlightedTeam !== null) {
@@ -2525,6 +2526,34 @@ document.addEventListener('click', (e) => {
 /* ── Pan & scroll on bracket viewports ───────
  *  Drag with mouse, Shift+wheel, or arrow keys (when viewport focused).
  *  Native touch scrolling already works via -webkit-overflow-scrolling. */
+/* Horizontally pin the bracket section titles + tournament hero to the
+ * viewport while the brackets pan beneath them. Each title's natural
+ * position is at the scroll content's left (x=0). Applying
+ *   transform: translateX(scrollLeft)
+ * shifts the title rightward by the current horizontal scroll so its
+ * effective screen position stays at viewport x=0, full viewport width.
+ * Content inside is centered via flex/text-align so the pill/hero text
+ * stays in the visible middle.
+ *
+ * CSS sticky doesn't work here because the title element is the same
+ * width (100vw) as its containing block — sticky needs the parent to be
+ * larger than the element to have any range to stick in. */
+let _pinTitlesBound = false;
+function pinTitlesToViewport() {
+  const ps = document.getElementById('pageScroll');
+  if (!ps) return;
+  const titles = () => document.querySelectorAll('.section-title, .hero');
+  const apply = () => {
+    const t = 'translateX(' + ps.scrollLeft + 'px)';
+    titles().forEach(el => { el.style.transform = t; });
+  };
+  if (!_pinTitlesBound) {
+    _pinTitlesBound = true;
+    ps.addEventListener('scroll', apply, { passive: true });
+  }
+  apply();
+}
+
 function setupPanScroll() {
   document.querySelectorAll('.viewport').forEach(vp => {
     if (vp.dataset.panBound) return;
