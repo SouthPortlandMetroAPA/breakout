@@ -402,7 +402,11 @@
      the operator's priority: match # → day → team-num → time → chips. */
   .match.cw-le-220 .match-top .mno { display: none; }
   .match.cw-le-200 .match-foot .when .day { display: none; }
+  /* When team-num is hidden, the 3-col grid (44px | 1fr | 18px) leaves the
+     name in the 44px slot — squishing it. Drop the team-num track so name
+     gets the full 1fr column. Same fix shape as v0.59's seed-track drop. */
   .match.cw-le-180 .match-row .team-num { display: none; }
+  .match.cw-le-180 .match-row { grid-template-columns: 1fr 18px; }
   .match.cw-le-150 .match-foot .when .time { display: none; }
   .match.cw-le-130 .match-top .destinations { display: none; }
   .match:hover { box-shadow: 0 6px 18px rgba(0,0,0,0.10); }
