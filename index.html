@@ -37,13 +37,23 @@
   body { position: fixed; inset: 0; overflow: hidden; }
   .page-scroll {
     position: absolute; inset: 0;
-    overflow-y: auto; overflow-x: hidden;
+    /* Single scroll container for the whole tournament. Both axes own the
+       horizontal AND vertical pan — each bracket-section is just a static
+       block inside, with no per-section scroll. Lets all three brackets
+       feel like one page; horizontal pan moves all brackets together up
+       to the widest one's range, vertical pan moves between them. */
+    overflow: auto;
     -webkit-overflow-scrolling: touch;
     /* contain prevents overscroll from chaining up to the body (which would
        defeat the whole point on Chrome Mobile) and disables pull-to-refresh
        on Android. */
     overscroll-behavior: contain;
+    /* Hide native scrollbars — the bracket UI is pan-driven on touch and
+       click-drag on desktop. Content still scrolls programmatically. */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
   }
+  .page-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
   .header {
     background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
@@ -288,22 +298,19 @@
      a pan surface: click-drag to scroll, Shift+wheel for mouse, arrow keys
      when focused. Native touch scrolling handles mobile. */
   .viewport {
-    overflow-x: auto; overflow-y: hidden;
+    /* As of v0.78: the per-section viewport no longer owns its own scroll
+       — the parent .page-scroll is the single 2-axis scroll container for
+       the whole tournament. This lets the three brackets feel like one
+       page (Option A). The .viewport stays as a styling/padding wrapper
+       and as the binding target for click-drag pan + pinch handlers
+       (they redirect scroll to .page-scroll). */
+    overflow: visible;
     padding: 4px 16px 24px;
-    -webkit-overflow-scrolling: touch;
-    scroll-snap-type: x proximity;
     cursor: grab;
     outline: none;
-    /* Hide native scrollbars on the bracket viewport: panning UX is the
-       primary interaction and the visible scrollbar competed with it. The
-       content still scrolls via drag, wheel, keys, touch. */
-    scrollbar-width: none;          /* Firefox */
-    -ms-overflow-style: none;       /* legacy Edge/IE */
-    /* Allow native horizontal pan within the viewport AND vertical pan that
-       falls through to the body for page scroll (so users can swipe down to
-       see the next bracket section). Pinch is omitted so our custom
-       two-finger pinch-zoom handler can take over without the browser
-       trying to zoom the whole page. */
+    /* touch-action: allow native pan in both axes (page-scroll handles
+       scrolling); pinch is omitted so the custom two-finger zoom handler
+       below can claim it. */
     touch-action: pan-x pan-y;
   }
   .viewport::-webkit-scrollbar { display: none; height: 0; }
@@ -2233,8 +2240,26 @@ function renderTournament() {
       _highlightedTeam = null;
       highlightTeamMatches(team);
     }
+    // Initial scroll position: upper-left of Bracket A. Each section's
+    // wrap has 50% padding on each side (v0.75 2× pan canvas), so we
+    // scroll past Bracket A's left/top padding so its SVG (the actual
+    // bracket content) lands at the top-left of the visible area instead
+    // of in the middle of empty pan space. Only on initial render, not
+    // on data-poll re-renders (preserve user's scroll position then).
+    if (!_initialScrollDone) {
+      _initialScrollDone = true;
+      const ps = document.getElementById('pageScroll');
+      const firstSvg = document.querySelector('svg.bracket-svg');
+      if (ps && firstSvg) {
+        const psRect  = ps.getBoundingClientRect();
+        const svgRect = firstSvg.getBoundingClientRect();
+        ps.scrollLeft += svgRect.left - psRect.left;
+        ps.scrollTop  += svgRect.top  - psRect.top;
+      }
+    }
   });
 }
+let _initialScrollDone = false;
 
 /* ── Click-a-team highlight (viewer mode) ────
  *  Click any team's row in any match to spotlight every match that team
@@ -2471,9 +2496,12 @@ function setupPanScroll() {
       moved = false;
       startX = e.pageX;
       startY = e.pageY;
-      startLeft = vp.scrollLeft;
+      // v0.78: the .page-scroll container owns scroll for both axes. Drag
+      // updates ps.scrollLeft / ps.scrollTop, NOT vp.scrollLeft (which is
+      // now non-scrolling since viewport overflow is visible).
       const ps = document.getElementById('pageScroll');
-      startTop = ps ? ps.scrollTop : (window.scrollY || document.documentElement.scrollTop || 0);
+      startLeft = ps ? ps.scrollLeft : 0;
+      startTop  = ps ? ps.scrollTop  : 0;
       vp.classList.add('panning');
     });
     const stop = () => {
@@ -2488,10 +2516,13 @@ function setupPanScroll() {
       const dx = e.pageX - startX;
       const dy = e.pageY - startY;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-      vp.scrollLeft = startLeft - dx;
       const ps = document.getElementById('pageScroll');
-      if (ps) ps.scrollTop = startTop - dy;
-      else window.scrollTo(0, startTop - dy);
+      if (ps) {
+        ps.scrollLeft = startLeft - dx;
+        ps.scrollTop  = startTop - dy;
+      } else {
+        window.scrollTo(startLeft - dx, startTop - dy);
+      }
       e.preventDefault();
     });
     // Suppress click after a drag so card-clicks don't fire spuriously.
@@ -2499,23 +2530,27 @@ function setupPanScroll() {
       if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; }
     }, true);
 
-    // Keyboard horizontal scroll when viewport has focus.
+    // Keyboard horizontal scroll when viewport has focus. v0.78: scrolls
+    // .page-scroll (the single 2-axis container), not the viewport.
     vp.addEventListener('keydown', (e) => {
-      const step = Math.max(120, vp.clientWidth * 0.4);
-      if (e.key === 'ArrowLeft')  { vp.scrollLeft -= step; e.preventDefault(); }
-      else if (e.key === 'ArrowRight') { vp.scrollLeft += step; e.preventDefault(); }
-      else if (e.key === 'Home')   { vp.scrollLeft = 0; e.preventDefault(); }
-      else if (e.key === 'End')    { vp.scrollLeft = vp.scrollWidth; e.preventDefault(); }
+      const ps = document.getElementById('pageScroll');
+      if (!ps) return;
+      const step = Math.max(120, ps.clientWidth * 0.4);
+      if (e.key === 'ArrowLeft')  { ps.scrollLeft -= step; e.preventDefault(); }
+      else if (e.key === 'ArrowRight') { ps.scrollLeft += step; e.preventDefault(); }
+      else if (e.key === 'Home')   { ps.scrollLeft = 0; e.preventDefault(); }
+      else if (e.key === 'End')    { ps.scrollLeft = ps.scrollWidth; e.preventDefault(); }
     });
 
-    // Shift+wheel → horizontal scroll. (Trackpads already do horizontal natively.)
+    // Shift+wheel → horizontal scroll on the page-scroll container.
     // Ctrl+wheel → zoom (handled globally below, but we preventDefault here too
     // so the bracket viewport doesn't double-fire browser-level zoom.)
     vp.addEventListener('wheel', (e) => {
       if (e.ctrlKey) { e.preventDefault(); applyZoomDelta(e.deltaY < 0 ? +0.1 : -0.1, true); return; }
       if (!e.shiftKey) return;
       e.preventDefault();
-      vp.scrollLeft += e.deltaY;
+      const ps = document.getElementById('pageScroll');
+      if (ps) ps.scrollLeft += e.deltaY;
     }, { passive: false });
 
     // Two-finger pinch-to-zoom on touch. Zooms around the centroid of the
@@ -2556,14 +2591,18 @@ function setupPanScroll() {
       setZoom(pinchStartZoom * ratio);
       if (!pinchSvgEl) return;
       // setZoom resized the SVG via applyZoomToSvgs; re-measure and adjust
-      // scroll so the original content point lands under the live centroid.
+      // .page-scroll's scroll position so the snapshotted content point
+      // lands back under the live centroid (both axes — v0.78 unified
+      // canvas, no more per-viewport horizontal scroll).
       const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
       const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       const z = getZoom();
       const r = pinchSvgEl.getBoundingClientRect();
-      vp.scrollLeft += (r.left + pinchContentX * z) - cx;
       const ps = document.getElementById('pageScroll');
-      if (ps) ps.scrollTop += (r.top + pinchContentY * z) - cy;
+      if (ps) {
+        ps.scrollLeft += (r.left + pinchContentX * z) - cx;
+        ps.scrollTop  += (r.top  + pinchContentY * z) - cy;
+      }
     }, { passive: false });
     vp.addEventListener('touchend', () => {
       pinchStartDist = 0;
