@@ -1759,11 +1759,18 @@ function bracketSectionHtml(bracket, kind, rounds, opts) {
         + '</div></foreignObject>';
       if (isFinal && !m.bye) {
         const yCenter = matchYCenter(m);
-        const champY = yCenter + SVG.CARD_H / 2 + 6;
         const champCx = roundXCenter(i);
-        // Inner foreignObject for the champ pill — fixed-size enclosure
-        // sized to the longest reasonable text so the pill is centered.
-        const PILL_W = 230, PILL_H = 50;
+        // Foreign-object enclosure for the champ pill. Sized with vertical
+        // headroom so the bounce + scale-up animation (translateY -4px +
+        // scale 1.05) AND the box-shadow halo around the pill don't clip
+        // against the FO bounds. The pill stays vertically centered inside
+        // the FO via flex, so we move the FO up by half the extra padding
+        // to keep the pill's visual position the same.
+        const PILL_W = 260;
+        const PILL_VISIBLE_H = 50;  // unanimated pill height (legacy reference)
+        const PILL_PAD = 20;        // extra room on each side for animation + shadow
+        const PILL_H = PILL_VISIBLE_H + PILL_PAD * 2;
+        const champY = (yCenter + SVG.CARD_H / 2 + 6) - PILL_PAD;
         svgInner += '<foreignObject class="champ-fo" data-match-fo="' + esc(m.id) + '-champ"'
           + ' x="' + (champCx - PILL_W / 2) + '" y="' + champY
           + '" width="' + PILL_W + '" height="' + PILL_H
