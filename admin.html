@@ -199,6 +199,13 @@
   .tournaments-table tbody tr.is-active:hover { background: rgba(0,49,161,0.13); }
   .tournaments-table .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .tournaments-table .status-pill { cursor: pointer; transition: opacity 0.15s; }
+  /* Seeding editor */
+  .seed-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .seed-col-head { font-weight: 800; margin-bottom: 6px; font-size: 0.95rem; }
+  .seed-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .seed-lbl { font-weight: 700; width: 36px; font-family: 'SF Mono',Consolas,Menlo,monospace; font-size: 0.82rem; color: #0031a1; }
+  .seed-select { flex: 1; padding: 5px 6px; font: inherit; font-size: 0.86rem; min-width: 0; }
+  @media (max-width: 640px) { .seed-grid { grid-template-columns: 1fr; } }
   .tournaments-table .status-pill:hover { opacity: 0.8; }
 
   /* Schedule-by-round editor */
@@ -407,6 +414,18 @@
     </div>
     <p class="hint">Uses the <code>Mod-SE 12+12&rarr;64</code> template and assigns the first 24 teams (by number) to seeds 1&ndash;12 in each 12-team bracket. The viewer auto-loads the active tournament.</p>
     <div id="tournamentBody" class="hint">Loading&hellip;</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Teams &amp; Seeding</h2>
+      <span class="hint" id="seedingStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-primary btn-sm" onclick="saveSeedingEditor()">Save seeding</button>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:0">Which team sits in each seed of the active tournament's two 12-team brackets. Empty seeds render as TBD in the bracket. Changing a seed only changes who appears where &mdash; match wiring is untouched. A team can hold only one seed.</p>
+    <div id="seedingEditorBody"><p class="hint">Loading&hellip;</p></div>
   </div>
 
   <div class="card">
@@ -1164,7 +1183,7 @@ async function loadMatchesView() {
   const status = document.getElementById('matchesStatus');
   body.innerHTML = '<p class="hint">Loading&hellip;</p>';
   try {
-    const sel = 'id,slug,name,start_date,end_date,matches,config,total_tables,venue_name';
+    const sel = 'id,slug,name,start_date,end_date,matches,config,total_tables,venue_name,seed_assignments';
     const r = await fetch(SB_URL + '/rest/v1/' + activeTournamentQuery(sel), { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
@@ -1187,8 +1206,10 @@ async function loadMatchesView() {
       _persistActiveTournamentId();
     }
     if (!Array.isArray(_activeMatchTournament.matches)) _activeMatchTournament.matches = [];
+    if (!Array.isArray(_activeMatchTournament.seed_assignments)) _activeMatchTournament.seed_assignments = [];
     renderMatchesEditor();
     renderScheduleEditor();
+    renderSeedingEditor();
     const matches = _activeMatchTournament.matches;
     const real = matches.filter(m => !m.is_bye).length;
     const byes = matches.length - real;
@@ -1196,6 +1217,97 @@ async function loadMatchesView() {
   } catch (e) {
     body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
     status.textContent = '';
+  }
+}
+
+/* ── Seeding editor ─────────────────────────
+ *  Edits the active tournament's seed_assignments — which team sits in
+ *  each of the 24 seeds (Bracket A 1-12, Bracket B 1-12). One <select>
+ *  per seed, populated from the global teams catalog. Save rebuilds the
+ *  seed_assignments array and PATCHes it; empty seeds are simply omitted
+ *  (the viewer renders any unassigned seed as TBD). Matches reference
+ *  seeds abstractly, so re-seeding never touches the wiring. */
+function renderSeedingEditor() {
+  const body = document.getElementById('seedingEditorBody');
+  if (!body) return;
+  if (!_activeMatchTournament) {
+    body.innerHTML = '<p class="hint">No tournament selected.</p>';
+    return;
+  }
+  const sa = Array.isArray(_activeMatchTournament.seed_assignments)
+    ? _activeMatchTournament.seed_assignments : [];
+  const cur = {};   // "A.3" → team_number
+  for (const a of sa) cur[a.bracket + '.' + a.seed] = a.team_number;
+
+  const optionsFor = (selectedNum) => {
+    let html = '<option value="">— empty (TBD) —</option>';
+    for (const t of _teams) {
+      const sel = (selectedNum != null && String(t.number) === String(selectedNum)) ? ' selected' : '';
+      html += '<option value="' + escapeHtml(String(t.number)) + '"' + sel + '>'
+            + escapeHtml(String(t.number) + ' — ' + (t.name || '')) + '</option>';
+    }
+    return html;
+  };
+  const colFor = (bracket) => {
+    let rows = '<div class="seed-col"><div class="seed-col-head">Bracket ' + bracket + '</div>';
+    for (let s = 1; s <= 12; s++) {
+      rows += '<div class="seed-row">'
+        + '<span class="seed-lbl">' + bracket + s + '</span>'
+        + '<select class="seed-select" data-bracket="' + bracket + '" data-seed="' + s + '">'
+        +   optionsFor(cur[bracket + '.' + s])
+        + '</select>'
+        + '</div>';
+    }
+    return rows + '</div>';
+  };
+  if (!_teams.length) {
+    body.innerHTML = '<p class="hint">No teams in the database yet — add teams in the Teams card above, then re-open this tournament.</p>';
+    return;
+  }
+  body.innerHTML = '<div class="seed-grid">' + colFor('A') + colFor('B') + '</div>';
+  const st = document.getElementById('seedingStatus');
+  if (st) st.textContent = '';
+}
+
+async function saveSeedingEditor() {
+  if (!_activeMatchTournament) { alert('No tournament selected.'); return; }
+  const selects = document.querySelectorAll('#seedingEditorBody .seed-select');
+  if (!selects.length) { alert('Nothing to save.'); return; }
+  const assignments = [];
+  const usedTeam = new Map();   // team_number string → "A3"
+  const dups = [];
+  for (const sel of selects) {
+    const val = sel.value;
+    if (!val) continue;   // empty seed — omit
+    const bracket = sel.dataset.bracket;
+    const seed    = parseInt(sel.dataset.seed, 10);
+    const team    = _teams.find(t => String(t.number) === val);
+    if (!team) continue;
+    const slot = bracket + seed;
+    if (usedTeam.has(val)) {
+      dups.push(team.number + ' "' + (team.name || '') + '" — ' + usedTeam.get(val) + ' and ' + slot);
+    } else {
+      usedTeam.set(val, slot);
+    }
+    // Store team_number in the catalog's native type for a clean join.
+    assignments.push({ bracket: bracket, seed: seed, team_number: team.number });
+  }
+  if (dups.length) {
+    alert('A team is assigned to more than one seed:\n\n  ' + dups.join('\n  ')
+      + '\n\nEach team can hold only one seed. Fix the duplicates, then Save again.');
+    return;
+  }
+  const st = document.getElementById('seedingStatus');
+  if (st) st.textContent = 'Saving…';
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id,
+      { seed_assignments: assignments });
+    _activeMatchTournament.seed_assignments = assignments;
+    if (st) st.textContent = 'Saved — ' + assignments.length + ' seed'
+      + (assignments.length === 1 ? '' : 's') + ' assigned.';
+  } catch (e) {
+    if (st) st.textContent = '';
+    alert('Save failed: ' + e.message);
   }
 }
 
