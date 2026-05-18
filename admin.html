@@ -543,6 +543,7 @@
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closeTournamentEditModal()">Cancel</button>
       <button class="btn btn-danger" onclick="deleteEditingTournament()">Delete tournament</button>
+      <button class="btn btn-outline" onclick="duplicateEditingTournament()">Duplicate</button>
       <button class="btn btn-primary" onclick="saveTournamentEdit()">Save</button>
     </div>
   </div>
@@ -2493,6 +2494,63 @@ function deleteEditingTournament() {
         loadMatchesView();
       } catch (e) {
         alert('Delete failed: ' + e.message);
+      }
+    }
+  });
+}
+
+/* Duplicate the tournament currently open in the edit modal.
+ * Copies every column (structure, seeds, schedule, venue, director,
+ * config) into a NEW row. Differences from the source:
+ *   - new unique slug (permalinks must stay distinct)
+ *   - name gets a " (copy)" suffix
+ *   - status forced to 'draft' (never two live tournaments — the viewer
+ *     picks the most-recently-created live row, so a live duplicate
+ *     would silently hijack the public URL)
+ *   - every match's winner_side cleared → copy starts at all-TBD
+ * Duplicates the SAVED DB row, not unsaved modal edits — re-fetches
+ * fresh so the behavior is predictable. */
+async function duplicateEditingTournament() {
+  if (!_editingTournamentId) return;
+  const srcId = _editingTournamentId;
+  confirmModal({
+    title: 'Duplicate tournament?',
+    message: 'Creates a copy with the same bracket structure, teams, seeds, schedule, '
+      + 'and settings. Match results are cleared (every match back to TBD) and the copy '
+      + 'is created as a draft. The original is left untouched. '
+      + 'Note: this duplicates the last SAVED version — save your edits first if you want them included.',
+    okText: 'Duplicate',
+    onOk: async () => {
+      try {
+        const r = await fetch(SB_URL + '/rest/v1/tournaments?id=eq.' + srcId + '&select=*', { headers: HEADERS_READ });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const list = await r.json();
+        if (!list.length) throw new Error('Source tournament not found');
+        const src = list[0];
+
+        // Copy all columns except identity / timestamps (DB regenerates those).
+        const copy = Object.assign({}, src);
+        delete copy.id;
+        delete copy.created_at;
+        delete copy.updated_at;
+
+        copy.name   = (src.name || 'Tournament') + ' (copy)';
+        copy.slug   = await uniqueSlug(slugify(copy.name));
+        copy.status = 'draft';
+        copy.is_active = false;
+
+        // Clear staff-recorded results so the copy is a fresh tournament.
+        if (Array.isArray(copy.matches)) {
+          copy.matches = copy.matches.map(m => Object.assign({}, m, { winner_side: null }));
+        }
+
+        await sb('POST', 'tournaments', copy);
+        closeTournamentEditModal();
+        loadTournaments();
+        loadMatchesView();
+        renderCapacityAnalyzer();
+      } catch (e) {
+        setStatus('tournamentEditStatus', 'Duplicate failed: ' + e.message, 'err');
       }
     }
   });
