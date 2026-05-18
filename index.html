@@ -1695,7 +1695,10 @@ async function loadActiveTournament() {
 }
 
 async function buildTournament() {
-  if (_teams.length < 24) throw new Error('Need at least 24 teams in the DB (have ' + _teams.length + ').');
+  // No team-count gate. The bracket structure comes from the template
+  // (or the DB row); teams are seeded into it where they exist. With
+  // 0 teams every slot resolves to TBD; with a partial roster the
+  // unfilled seeds show TBD. The bracket always renders.
   const dbRow = await loadActiveTournament();
   let matchData, seedAssignments, config;
   if (dbRow && Array.isArray(dbRow.matches) && dbRow.matches.length) {
@@ -2004,6 +2007,22 @@ function byeMatchHtml(m, stripeColor) {
   }
   const idAttr = m.globalNo ? ' id="m' + m.globalNo + '"' : '';
   const stripeStyle = stripeColor ? ' style="--stripe:' + stripeColor + '"' : '';
+  // The advancing slot — the seeded team, or TBD when no team is
+  // assigned yet (empty / partial roster). Guard every team.* access:
+  // m.top is null until a team is seeded into this bye.
+  const advancingRow = team
+    ? '<div class="match-row winner" data-team="' + esc((team.name || '').toLowerCase()) + '" data-team-num="' + team.number + '">'
+      +   '<span class="seed">' + esc(team.seed) + '</span>'
+      +   '<span class="team-num">' + pad4(team.number) + '</span>'
+      +   '<span class="name" title="' + esc(team.name) + '">' + esc(team.name) + '</span>'
+      +   '<span class="trophy" aria-label="Advances">&#x21E2;</span>'
+      + '</div>'
+    : '<div class="match-row">'
+      +   '<span class="seed">&mdash;</span>'
+      +   '<span class="team-num">&mdash;</span>'
+      +   '<span class="name" style="color:var(--muted);font-style:italic">TBD</span>'
+      +   '<span class="trophy"></span>'
+      + '</div>';
   return '<div class="match bye" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '"' + idAttr + stripeStyle + '>'
     + '<div class="match-stripe"></div>'
     + '<div class="match-top">'
@@ -2011,12 +2030,7 @@ function byeMatchHtml(m, stripeColor) {
     +   '<span class="destinations">' + advanceChip + '</span>'
     + '</div>'
     + '<div class="match-rows">'
-    +   '<div class="match-row winner" data-team="' + esc((team.name || '').toLowerCase()) + '" data-team-num="' + team.number + '">'
-    +     '<span class="seed">' + esc(team.seed) + '</span>'
-    +     '<span class="team-num">' + pad4(team.number) + '</span>'
-    +     '<span class="name" title="' + esc(team.name) + '">' + esc(team.name) + '</span>'
-    +     '<span class="trophy" aria-label="Advances">&#x21E2;</span>'
-    +   '</div>'
+    +   advancingRow
     +   '<div class="match-row bye-row">'
     +     '<span class="seed">&mdash;</span>'
     +     '<span class="team-num">&mdash;</span>'
