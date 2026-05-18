@@ -195,6 +195,9 @@
 
   .tournaments-table tbody tr.editable { cursor: pointer; }
   .tournaments-table tbody tr.editable:hover { background: rgba(0,49,161,0.04); }
+  .tournaments-table tbody tr.is-active { background: rgba(0,49,161,0.10); box-shadow: inset 3px 0 0 #0031a1; }
+  .tournaments-table tbody tr.is-active:hover { background: rgba(0,49,161,0.13); }
+  .tournaments-table .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .tournaments-table .status-pill { cursor: pointer; transition: opacity 0.15s; }
   .tournaments-table .status-pill:hover { opacity: 0.8; }
 
@@ -889,6 +892,48 @@ document.getElementById('bulkInput').addEventListener('keydown', (ev) => {
 /* ── Tournament management ────────────────── */
 const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
 
+/* ── Active-tournament pointer ─────────────────────────────────────────
+ * "Active" = the tournament the structural editors (Matches, Schedule,
+ * Capacity) operate on. It is an ADMIN-WORKSPACE selection, independent
+ * of `status` (which controls the public viewer). Persisted in
+ * localStorage so it survives a reload; falls back to newest-live →
+ * newest-created when unset or stale (pointed at a deleted tournament).
+ * ───────────────────────────────────────────────────────────────────── */
+const ACTIVE_TOURNAMENT_LS = 'breakout.activeTournamentId.v1';
+let _tournamentsCache = [];
+let _activeTournamentId = (() => {
+  try { const v = localStorage.getItem(ACTIVE_TOURNAMENT_LS); return v ? parseInt(v, 10) : null; }
+  catch (e) { return null; }
+})();
+function _persistActiveTournamentId() {
+  try {
+    if (_activeTournamentId == null) localStorage.removeItem(ACTIVE_TOURNAMENT_LS);
+    else localStorage.setItem(ACTIVE_TOURNAMENT_LS, String(_activeTournamentId));
+  } catch (e) { /* private mode — in-memory only */ }
+}
+/* Given the freshly-loaded list, confirm _activeTournamentId still points
+ * at a real row; if not, pick the default (newest live → newest created,
+ * list is created_at desc). Returns the resolved id (or null if empty). */
+function resolveActiveTournamentId(list) {
+  if (!list || !list.length) { _activeTournamentId = null; _persistActiveTournamentId(); return null; }
+  if (_activeTournamentId != null && list.some(t => t.id === _activeTournamentId)) {
+    return _activeTournamentId;
+  }
+  const live = list.find(t => t.status === 'live');
+  _activeTournamentId = (live || list[0]).id;
+  _persistActiveTournamentId();
+  return _activeTournamentId;
+}
+/* Query string targeting the active tournament — or the default
+ * (newest live) when nothing is selected yet. Shared by every editor
+ * that used to hardcode `status=eq.live`. */
+function activeTournamentQuery(selectCols) {
+  if (_activeTournamentId != null) {
+    return 'tournaments?id=eq.' + _activeTournamentId + '&select=' + selectCols + '&limit=1';
+  }
+  return 'tournaments?status=eq.live&order=created_at.desc&limit=1&select=' + selectCols;
+}
+
 async function loadTournaments() {
   const body = document.getElementById('tournamentBody');
   const status = document.getElementById('tournamentStatus');
@@ -896,33 +941,81 @@ async function loadTournaments() {
     const r = await fetch(SB_URL + '/rest/v1/tournaments?order=created_at.desc&select=id,slug,name,format_template,status,start_date,end_date,created_at', { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
+    _tournamentsCache = list;
     if (!list.length) {
       body.innerHTML = '<p class="hint">No tournaments yet. Click <strong>Generate tournament</strong> to create one.</p>';
       status.textContent = '';
+      _activeTournamentId = null; _persistActiveTournamentId();
       return;
     }
+    const activeId = resolveActiveTournamentId(list);
     const live = list.filter(t => t.status === 'live').length;
-    status.textContent = list.length + ' total · ' + live + ' live';
+    const activeName = (list.find(t => t.id === activeId) || {}).name || '—';
+    status.textContent = list.length + ' total · ' + live + ' live · editing: ' + activeName;
     body.innerHTML = '<table class="table tournaments-table"><thead><tr>'
-      + '<th>Slug</th><th>Name</th><th>Status</th><th>Dates</th><th>Created</th>'
+      + '<th>Slug</th><th>Name</th><th>Status</th><th>Dates</th><th>Created</th><th>Actions</th>'
       + '</tr></thead><tbody>'
       + list.map(t => {
+          const isActive = t.id === activeId;
           const slugCell = '<span style="font-family:\'SF Mono\',Consolas,Menlo,monospace;color:var(--spm-accent);font-weight:700">' + escapeHtml(t.slug) + '</span>';
           const statusCell = '<span class="status-pill status-' + escapeHtml(t.status) + '" data-tournament-id="' + t.id + '" onclick="event.stopPropagation(); openTournamentEditModal(' + t.id + ', true)" title="Click to change status">' + escapeHtml(t.status) + '</span>';
           const dates = (t.start_date || t.end_date)
             ? (escapeHtml(t.start_date || '?') + ' &rarr; ' + escapeHtml(t.end_date || '?'))
             : '<span class="hint">—</span>';
-          return '<tr class="editable" data-tournament-id="' + t.id + '" onclick="openTournamentEditModal(' + t.id + ')">'
+          const activeBtn = isActive
+            ? '<button class="btn btn-sm" disabled style="opacity:0.7">Active &#10003;</button>'
+            : '<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); setActiveTournament(' + t.id + ')">Make Active</button>';
+          const delBtn = '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteTournamentRow(' + t.id + ')">Delete</button>';
+          return '<tr class="editable' + (isActive ? ' is-active' : '') + '" data-tournament-id="' + t.id + '" onclick="openTournamentEditModal(' + t.id + ')">'
             + '<td>' + slugCell + '</td>'
             + '<td>' + escapeHtml(t.name) + '</td>'
             + '<td>' + statusCell + '</td>'
             + '<td class="hint">' + dates + '</td>'
             + '<td class="hint">' + new Date(t.created_at).toLocaleString() + '</td>'
+            + '<td><div class="row-actions">' + activeBtn + delBtn + '</div></td>'
             + '</tr>';
         }).join('') + '</tbody></table>';
   } catch (e) {
     body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
   }
+}
+
+/* Make a tournament the admin's active workspace. Re-points the
+ * Matches / Schedule / Capacity editors at it and scrolls them into
+ * view. Does NOT touch `status` — the public viewer is unaffected. */
+async function setActiveTournament(id) {
+  _activeTournamentId = id;
+  _persistActiveTournamentId();
+  await loadTournaments();      // re-render list: move highlight + status line
+  await loadMatchesView();      // retargets Matches + Schedule editors
+  renderCapacityAnalyzer();     // retargets Capacity
+  const card = document.getElementById('scheduleEditorBody');
+  if (card && card.closest('.card')) {
+    card.closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+/* Permanent per-row delete with an are-you-sure confirm. */
+function deleteTournamentRow(id) {
+  const t = _tournamentsCache.find(x => x.id === id);
+  if (!t) return;
+  confirmModal({
+    title: 'Delete tournament?',
+    message: 'Permanently deletes "' + (t.name || 'this tournament') + '" (' + (t.slug || '') + '), '
+      + 'including all match wiring, schedule, and staff-recorded results. This cannot be undone.',
+    okText: 'Delete permanently',
+    onOk: async () => {
+      try {
+        await sb('DELETE', 'tournaments?id=eq.' + id);
+        if (_activeTournamentId === id) { _activeTournamentId = null; _persistActiveTournamentId(); }
+        await loadTournaments();
+        await loadMatchesView();
+        renderCapacityAnalyzer();
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      }
+    }
+  });
 }
 
 /* Slugify a human-readable string into a URL-safe id. Lowercase, non-alnum
@@ -1047,8 +1140,11 @@ async function doGenerateDefaultTournament() {
       start_date: ymd,
       is_active: true   // kept temporarily for backward compat; will be retired
     };
-    await sb('POST', 'tournaments', row);
-    loadTournaments();
+    const created = await sb('POST', 'tournaments', row);
+    // Make the tournament you just generated the active workspace.
+    const newId = created && created[0] && created[0].id;
+    if (newId != null) { _activeTournamentId = newId; _persistActiveTournamentId(); }
+    await loadTournaments();
     loadMatchesView();
     renderCapacityAnalyzer();
   } catch (e) {
@@ -1068,16 +1164,28 @@ async function loadMatchesView() {
   const status = document.getElementById('matchesStatus');
   body.innerHTML = '<p class="hint">Loading&hellip;</p>';
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,slug,name,start_date,end_date,matches,config,total_tables,venue_name', { headers: HEADERS_READ });
+    const sel = 'id,slug,name,start_date,end_date,matches,config,total_tables,venue_name';
+    const r = await fetch(SB_URL + '/rest/v1/' + activeTournamentQuery(sel), { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
     if (!list.length) {
-      body.innerHTML = '<p class="hint">No live tournament. Hit <strong>Generate tournament</strong> above to create one.</p>';
+      // The selected tournament is gone (deleted in another tab, etc.) —
+      // drop the stale pointer and retry once against the default.
+      if (_activeTournamentId != null) {
+        _activeTournamentId = null; _persistActiveTournamentId();
+        return loadMatchesView();
+      }
+      body.innerHTML = '<p class="hint">No tournament. Hit <strong>Generate tournament</strong> above to create one.</p>';
       status.textContent = '';
       _activeMatchTournament = null;
       return;
     }
     _activeMatchTournament = list[0];
+    // Lock in the resolved id when we fell back to the default.
+    if (_activeTournamentId == null) {
+      _activeTournamentId = _activeMatchTournament.id;
+      _persistActiveTournamentId();
+    }
     if (!Array.isArray(_activeMatchTournament.matches)) _activeMatchTournament.matches = [];
     renderMatchesEditor();
     renderScheduleEditor();
@@ -1740,11 +1848,11 @@ async function renderCapacityAnalyzer() {
   const status = document.getElementById('capacityStatus');
   body.innerHTML = '<p class="hint">Loading&hellip;</p>';
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,name,slug,venue_name,total_tables,matches', { headers: HEADERS_READ });
+    const r = await fetch(SB_URL + '/rest/v1/' + activeTournamentQuery('id,name,slug,venue_name,total_tables,matches'), { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
     if (!list.length) {
-      body.innerHTML = '<p class="hint">No live tournament. Generate one above.</p>';
+      body.innerHTML = '<p class="hint">No tournament selected. Generate or pick one above.</p>';
       status.textContent = '';
       return;
     }
@@ -2223,10 +2331,10 @@ async function addMatchToEditor() {
 async function clearAllMatchResults() {
   let active;
   try {
-    const r = await fetch(SB_URL + '/rest/v1/tournaments?status=eq.live&order=created_at.desc&limit=1&select=id,name,matches', { headers: HEADERS_READ });
+    const r = await fetch(SB_URL + '/rest/v1/' + activeTournamentQuery('id,name,matches'), { headers: HEADERS_READ });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const list = await r.json();
-    if (!list.length) { alert('No live tournament to clear.'); return; }
+    if (!list.length) { alert('No active tournament to clear.'); return; }
     active = list[0];
   } catch (e) { alert('Load failed: ' + e.message); return; }
 
@@ -2735,7 +2843,9 @@ async function init() {
   if (staffLink && SB_KEY) staffLink.href = './?role=staff&key=' + encodeURIComponent(SB_KEY);
   try { await loadTeams(); } catch (e) { setStatus('bulkStatus', 'Load failed: ' + e.message, 'err'); return; }
   renderTeams();
-  loadTournaments();
+  // Await loadTournaments so the active-tournament pointer is resolved
+  // (and any stale localStorage id corrected) before the editors load.
+  await loadTournaments();
   loadMatchesView();
   loadVenues();
   renderCapacityAnalyzer();
