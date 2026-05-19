@@ -1632,9 +1632,10 @@ async function autoAssignTables() {
   const secondaryNote = secondary.length
     ? ' HARD priority: secondary tables (' + secondary.join(', ') + ') are used at a time slot only when the slot\'s concurrent demand exceeds the ' + avail.length + ' primary table' + (avail.length === 1 ? '' : 's') + '.'
     : '';
+  const winnersNote = ' Winners-side matches (bracket name contains "winner") claim primary tables first at over-capacity slots.';
   confirmModal({
     title: 'Auto-assign tables?',
-    message: 'Assigns tables using these ' + avail.length + ' primary table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '.' + secondaryNote + ' Hard rule: no back-to-back (a match never lands on its immediate feeder\'s table). Soft preference: avoid putting a team on a table they\'ve played before — accepts an earlier-round repeat (e.g. T4 → T1 → T4) when nothing else is free.' + adjacencyNote + ' Overwrites every current assignment.',
+    message: 'Assigns tables using these ' + avail.length + ' primary table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '.' + secondaryNote + winnersNote + ' Hard rule: no back-to-back (a match never lands on its immediate feeder\'s table). Soft preference: avoid putting a team on a table they\'ve played before — accepts an earlier-round repeat (e.g. T4 → T1 → T4) when nothing else is free.' + adjacencyNote + ' Overwrites every current assignment.',
     okText: 'Auto-assign',
     onOk: async () => {
       const snapshot = JSON.stringify(t.matches);
@@ -1698,12 +1699,22 @@ function runAutoAssign(matches, availableTables, adjacency, secondaryTables) {
     }
   }
 
-  // Iteration order: by scheduled_at then bracket/round/slot. Matches without
-  // a scheduled_at get processed LAST so their feeders are already assigned.
+  // Iteration order: by scheduled_at, then winners-side first, then bracket/
+  // round/slot. Within a time slot, matches whose bracket name contains
+  // "winner" (case-insensitive) get processed first so they claim primary
+  // tables before losers-side matches at the same slot. (For tournaments
+  // whose brackets are 'A'/'B'/'64' this is a no-op until the brackets are
+  // renamed; the explicit rule is in place for the modified-SE templates
+  // coming next.) Matches without a scheduled_at get processed LAST so
+  // their feeders are already assigned.
+  const isWinnersSide = m => /winner/i.test(String(m.bracket || ''));
   const order = matches.filter(m => !m.is_bye).slice().sort((a, b) => {
     const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : Infinity;
     const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : Infinity;
     if (ta !== tb) return ta - tb;
+    const wa = isWinnersSide(a) ? 0 : 1;
+    const wb = isWinnersSide(b) ? 0 : 1;
+    if (wa !== wb) return wa - wb;
     if (a.bracket !== b.bracket) return String(a.bracket).localeCompare(String(b.bracket));
     if (a.round !== b.round) return a.round - b.round;
     return a.slot - b.slot;
