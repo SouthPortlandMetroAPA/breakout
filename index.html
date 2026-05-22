@@ -29,9 +29,12 @@
     --drop: #f59e0b;
     --radius: 10px;
     --pill: 999px;
-    /* On-screen zoom factor (0.4–1.5). Applied by JS to each bracket SVG's
-       CSS width/height — the SVG's viewBox handles internal scaling, so
-       this single multiplier is all that's needed for zoom. */
+    /* On-screen zoom factor (0.4–1.5). Applied by JS as a CSS transform:
+       scale() on each bracket SVG (see applyZoomToSvgs). The SVG itself
+       always renders at natural 1:1 size; the compositor scales the
+       finished layer. This is a deliberate change from the old viewBox-
+       resize zoom, which broke <foreignObject> card positioning on WebKit
+       (iOS) — cards drifted off their connector lines when zoomed. */
     --zoom: 1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -239,6 +242,9 @@
          Portrait brackets naturally come in under this. */
       max-height: 7in !important;
       margin: 0 auto !important;
+      /* Drop the on-screen zoom transform for print — paper fit comes from
+         the viewBox (width:100% + height:auto), not the screen scale(). */
+      transform: none !important;
     }
     /* Re-enable visible borders for paper output */
     .match { box-shadow: none !important; }
@@ -354,8 +360,14 @@
        the whole tournament. This lets the three brackets feel like one
        page (Option A). The .viewport stays as a styling/padding wrapper
        and as the binding target for click-drag pan + pinch handlers
-       (they redirect scroll to .page-scroll). */
-    overflow: visible;
+       (they redirect scroll to .page-scroll).
+       overflow: hidden (v0.90): zoom is now a CSS transform on the SVG,
+       which renders at natural size and only PAINTS scaled — its layout
+       box stays natural-size and overflows the .bracket-wrap sizer at
+       zoom < 1. Clipping here keeps that stray box from inflating
+       .page-scroll's scrollable area with empty space. The 16px side
+       padding cushions card hover-shadows so they aren't clipped. */
+    overflow: hidden;
     padding: 4px 16px 24px;
     cursor: grab;
     outline: none;
@@ -370,19 +382,26 @@
   /* Cards keep default cursor so users can read text without the grab hint. */
   .viewport .match { cursor: default; }
 
-  /* Bracket wrap holds one big SVG per section. The SVG has a fixed viewBox
-     so it scales identically at any container size — print fit-to-page is
-     automatic via the @media print rule above. Cards live inside the SVG as
-     <foreignObject> so they keep their HTML/CSS rendering (ellipsis, hover,
-     container queries) while inheriting SVG's coordinate-system scaling. */
+  /* Bracket wrap holds one big SVG per section. Cards live inside the SVG
+     as <foreignObject> so they keep their HTML/CSS rendering (ellipsis,
+     hover, container queries).
+     v0.90: the wrap doubles as the zoom "sizer" — JS sets its explicit
+     width/height to design × zoom so .page-scroll gets honest scroll
+     overflow. The SVG inside renders at natural 1:1 size and is scaled
+     by a CSS transform (a transform alone does NOT resize the layout
+     box, hence the separate sizer). */
   .bracket-wrap {
     position: relative;
     display: block;
-    /* Width follows --zoom × natural-content-width set inline by JS. */
+    /* Width/height = --zoom × natural-content size, set inline by JS. */
   }
   .bracket-svg {
     display: block;
     overflow: visible;
+    /* Zoom transform is applied inline by applyZoomToSvgs(). Scale from the
+       top-left so the SVG's painted box starts flush at the wrap's 0,0 and
+       exactly fills the sizer. */
+    transform-origin: 0 0;
   }
   .bracket-svg text.cross-source-link {
     /* bounding-box (not auto) so the whole text bbox catches the pointer —
@@ -2713,15 +2732,19 @@ function setupPanScroll() {
   });
 }
 
-/* ── Zoom (resizes each SVG's CSS width/height) ─────
+/* ── Zoom (CSS transform: scale on each SVG) ─────
  *  Range 0.4–1.5. Persists in sessionStorage so a refresh doesn't reset.
- *  Each .bracket-svg has a fixed viewBox; on-screen size = design × zoom.
- *  No connector redraw needed — SVG and cards live in the same coordinate
- *  space, so scaling the SVG element scales everything together.
- *  The container query on cards continues to work because the foreignObject's
- *  CSS width DOES scale with the SVG's CSS size (foreignObject's px width
- *  is in viewBox units → on-screen pixels = (viewBox-w / svg-css-w) inverse,
- *  and container queries inside the FO observe the rendered CSS width). */
+ *  v0.90: zoom is a CSS `transform: scale(z)` on each .bracket-svg, NOT a
+ *  resize of the SVG's CSS width/height. The SVG always renders at its
+ *  natural design size (viewBox maps 1:1 to the SVG box), so WebKit
+ *  positions the <foreignObject> cards correctly; the compositor then
+ *  scales the whole painted layer. The old approach (resizing the SVG so
+ *  its viewBox scaled internally) desynced foreignObject cards from the
+ *  native connector lines on iOS Safari — cards drifted off their lines.
+ *  No connector redraw needed — the entire SVG (lines + cards) is one
+ *  layer scaled as a unit. Card "density" still keys off design × zoom
+ *  via updateCardDensity(), since the foreignObject's own CSS width stays
+ *  at the natural design width regardless of the transform. */
 const ZOOM_MIN = 0.4, ZOOM_MAX = 1.5;
 function clampZoom(z) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)); }
 function getZoom() {
@@ -2747,21 +2770,26 @@ function applyZoomToSvgs() {
     const dw = parseFloat(sec.dataset.designW);
     const dh = parseFloat(sec.dataset.designH);
     if (!isFinite(dw) || !isFinite(dh)) return;
-    const w = dw * z;
-    const h = dh * z;
-    svg.style.width  = w + 'px';
-    svg.style.height = h + 'px';
-    // Wrap = 1× SVG (v0.79). Earlier versions added 50%/100% padding for
-    // "pan canvas," but with v0.78's unified scroll the wrap already
-    // overflows the page-scroll viewport naturally when zoomed, so extra
-    // padding was just dead space. Bracket sits flush at the top-left
-    // of its section, aligned with the section title above it.
+    // v0.90 — Fix 1: zoom via CSS transform, never a viewBox resize.
+    // The SVG keeps its NATURAL design size (1:1 viewBox→box) so WebKit
+    // lays out the <foreignObject> cards correctly; `transform: scale(z)`
+    // then scales the finished layer. Resizing the SVG instead (old code)
+    // forced viewBox scaling, which iOS Safari does not apply to
+    // foreignObject content — cards drifted off their connector lines.
+    svg.style.width  = dw + 'px';            // natural — NOT × zoom
+    svg.style.height = dh + 'px';
+    svg.style.transform = z === 1 ? 'none' : 'scale(' + z + ')';
+    // The wrap is the zoom "sizer": an explicit box of design × zoom.
+    // A CSS transform does not change layout size, so without this the
+    // .page-scroll container would think every bracket is its natural
+    // (un-zoomed) size. The natural-size SVG visually overflows this
+    // smaller box at zoom < 1; .viewport's overflow:hidden clips it.
     const wrap = svg.closest('.bracket-wrap');
     if (wrap) {
       wrap.style.boxSizing = 'content-box';
       wrap.style.padding = '0';
-      wrap.style.width  = w + 'px';
-      wrap.style.height = h + 'px';
+      wrap.style.width  = (dw * z) + 'px';
+      wrap.style.height = (dh * z) + 'px';
     }
   });
   updateCardDensity(z);
