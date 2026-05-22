@@ -361,13 +361,14 @@
        page (Option A). The .viewport stays as a styling/padding wrapper
        and as the binding target for click-drag pan + pinch handlers
        (they redirect scroll to .page-scroll).
-       overflow: hidden (v0.90): zoom is now a CSS transform on the SVG,
-       which renders at natural size and only PAINTS scaled — its layout
-       box stays natural-size and overflows the .bracket-wrap sizer at
-       zoom < 1. Clipping here keeps that stray box from inflating
-       .page-scroll's scrollable area with empty space. The 16px side
-       padding cushions card hover-shadows so they aren't clipped. */
-    overflow: hidden;
+       overflow MUST stay visible: .viewport is only viewport-width (a
+       block element does not widen to fit wide content), so the bracket
+       — which is far wider — overflows it on purpose, and THAT overflow
+       is what gives .page-scroll its horizontal scroll range. v0.90
+       wrongly set this to hidden to clip a stray SVG box; that clipped
+       the whole bracket to viewport width and killed horizontal panning.
+       The clip belongs on .bracket-wrap (the zoom sizer), not here. */
+    overflow: visible;
     padding: 4px 16px 24px;
     cursor: grab;
     outline: none;
@@ -387,14 +388,20 @@
   /* Bracket wrap holds one big SVG per section. Cards live inside the SVG
      as <foreignObject> so they keep their HTML/CSS rendering (ellipsis,
      hover, container queries).
-     v0.90: the wrap doubles as the zoom "sizer" — JS sets its explicit
+     The wrap doubles as the zoom "sizer" — JS sets its explicit
      width/height to design × zoom so .page-scroll gets honest scroll
-     overflow. The SVG inside renders at natural 1:1 size and is scaled
-     by a CSS transform (a transform alone does NOT resize the layout
-     box, hence the separate sizer). */
+     overflow in BOTH axes. The SVG inside renders at natural 1:1 size and
+     is scaled by a CSS transform (a transform alone does NOT resize the
+     layout box, hence the separate sizer).
+     overflow: hidden clips the natural-size SVG box — larger than this
+     sizer at zoom < 1 — to the sizer's exact bounds, so the stray box
+     can't inflate .page-scroll's scroll area with empty space. Clipping
+     HERE is correct because the sizer is exactly as wide as the zoomed
+     bracket; clipping on .viewport (only viewport-width) amputates it. */
   .bracket-wrap {
     position: relative;
     display: block;
+    overflow: hidden;
     /* Width/height = --zoom × natural-content size, set inline by JS. */
   }
   .bracket-svg {
