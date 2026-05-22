@@ -371,10 +371,12 @@
     padding: 4px 16px 24px;
     cursor: grab;
     outline: none;
-    /* touch-action: allow native pan in both axes (page-scroll handles
-       scrolling); pinch is omitted so the custom two-finger zoom handler
-       below can claim it. */
-    touch-action: pan-x pan-y;
+    /* touch-action: none — this viewport owns ALL touch gestures in JS
+       (one-finger pan + two-finger pinch; see setupPanScroll). Native
+       touch scrolling of the nested .page-scroll container is unreliable
+       on iOS Safari under a position:fixed <body>, so we drive the pan
+       ourselves via programmatic scrolling, which works everywhere. */
+    touch-action: none;
   }
   .viewport::-webkit-scrollbar { display: none; height: 0; }
   .viewport.panning { cursor: grabbing; user-select: none; }
@@ -2565,7 +2567,13 @@ document.addEventListener('click', (e) => {
 
 /* ── Pan & scroll on bracket viewports ───────
  *  Drag with mouse, Shift+wheel, or arrow keys (when viewport focused).
- *  Native touch scrolling already works via -webkit-overflow-scrolling. */
+ *  Touch pan is driven entirely in JS (one-finger drag → programmatic
+ *  scroll of .page-scroll, with flick momentum). v0.91: we no longer
+ *  rely on native touch scrolling of the nested .page-scroll container —
+ *  iOS Safari does not reliably hand a touch-drag to a nested
+ *  overflow:auto element when an ancestor (<body>) is position:fixed, so
+ *  pan was dead on iPhone/iPad. .viewport gets touch-action:none and this
+ *  handler owns every touch gesture, like a custom pan/zoom canvas. */
 /* Horizontally pin the bracket section titles + tournament hero to the
  * viewport while the brackets pan beneath them. Each title's natural
  * position is at the scroll content's left (x=0). Applying
@@ -2594,6 +2602,37 @@ function pinTitlesToViewport() {
   apply();
 }
 
+/* Flick momentum for touch pan. One requestAnimationFrame loop, shared
+ * across all viewports (only one finger-drag happens at a time). Velocity
+ * arrives as finger px/ms; the bracket scrolls OPPOSITE the finger, so
+ * scroll velocity = −finger velocity. It decays ~5%/frame until it falls
+ * below a small threshold or the scroll hits a wall. Any new touch or
+ * mouse drag cancels it so a fling never fights a fresh gesture. */
+let _momentumRAF = 0;
+function cancelMomentum() {
+  if (_momentumRAF) { cancelAnimationFrame(_momentumRAF); _momentumRAF = 0; }
+}
+function startMomentum(fingerVX, fingerVY) {
+  cancelMomentum();
+  const ps = document.getElementById('pageScroll');
+  if (!ps) return;
+  let sx = -fingerVX, sy = -fingerVY;          // scroll velocity, px/ms
+  if (Math.hypot(sx, sy) < 0.05) return;       // too gentle to bother
+  let last = performance.now();
+  const step = (now) => {
+    const dt = Math.min(now - last, 50); last = now;   // cap stalls
+    const beforeL = ps.scrollLeft, beforeT = ps.scrollTop;
+    ps.scrollLeft = beforeL + sx * dt;
+    ps.scrollTop  = beforeT + sy * dt;
+    if (ps.scrollLeft === beforeL) sx = 0;     // hit a horizontal wall
+    if (ps.scrollTop  === beforeT) sy = 0;     // hit a vertical wall
+    const decay = Math.pow(0.95, dt / 16.67);
+    sx *= decay; sy *= decay;
+    _momentumRAF = (Math.hypot(sx, sy) > 0.015) ? requestAnimationFrame(step) : 0;
+  };
+  _momentumRAF = requestAnimationFrame(step);
+}
+
 function setupPanScroll() {
   document.querySelectorAll('.viewport').forEach(vp => {
     if (vp.dataset.panBound) return;
@@ -2606,6 +2645,7 @@ function setupPanScroll() {
     let isDown = false, startX = 0, startY = 0, startLeft = 0, startTop = 0, moved = false;
 
     vp.addEventListener('mousedown', (e) => {
+      cancelMomentum();
       // Don't hijack clicks on form controls or anything that opts into its
       // own click handler via [data-jump] (SVG cross-source "L of M#" labels
       // and the in-card dest chips). Without the [data-jump] bail the
@@ -2667,6 +2707,7 @@ function setupPanScroll() {
     // Ctrl+wheel → zoom (handled globally below, but we preventDefault here too
     // so the bracket viewport doesn't double-fire browser-level zoom.)
     vp.addEventListener('wheel', (e) => {
+      cancelMomentum();
       if (e.ctrlKey) { e.preventDefault(); applyZoomDelta(e.deltaY < 0 ? +0.1 : -0.1, true); return; }
       if (!e.shiftKey) return;
       e.preventDefault();
@@ -2674,58 +2715,145 @@ function setupPanScroll() {
       if (ps) ps.scrollLeft += e.deltaY;
     }, { passive: false });
 
-    // Two-finger pinch-to-zoom on touch. Zooms around the centroid of the
-    // two fingers (NOT the bracket's top-left) so the content the user is
-    // looking at stays under their fingers as they pinch. Math:
-    //   1. At pinchstart, snapshot the centroid in client (screen) coords
-    //      and convert to the SVG's UNSCALED content coords by dividing by
-    //      the current zoom factor.
-    //   2. On each pinchmove, set the new zoom, then re-scroll the viewport
-    //      (horizontal) and the page-scroll container (vertical) so that the
-    //      snapshotted content point lands back under the CURRENT centroid.
-    //   3. Fingers can drift mid-pinch; we recompute from the live centroid
-    //      so the zoom follows the user's hand instead of the original spot.
+    // ── Touch gestures: one-finger pan + two-finger pinch-zoom ──────────
+    // v0.91: panning is driven HERE in JS, not by native scrolling. iOS
+    // Safari will not reliably touch-scroll a nested overflow:auto element
+    // (.page-scroll) while <body> is position:fixed, so a one-finger drag
+    // was completely dead on iPhone/iPad. We now scroll .page-scroll
+    // programmatically — the exact mechanism the mouse-drag handler above
+    // already uses, which works on every platform — and add flick
+    // momentum so it still feels native. .viewport has touch-action:none
+    // so the browser never competes for the gesture.
+    //
+    // Pinch zooms around the centroid of the two fingers (NOT the
+    // bracket's top-left) so the content under the fingers stays put:
+    //   1. At pinchstart, snapshot the centroid in client coords and
+    //      convert to the SVG's UNSCALED content coords (÷ current zoom).
+    //   2. On each move, set the new zoom, then re-scroll so the
+    //      snapshotted point lands back under the live centroid.
+    //   3. Fingers can drift mid-pinch; recompute from the live centroid.
     let pinchStartDist = 0, pinchStartZoom = 1;
     let pinchContentX = 0, pinchContentY = 0, pinchSvgEl = null;
-    vp.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 2) return;
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      pinchStartDist = Math.hypot(dx, dy);
-      pinchStartZoom = getZoom();
-      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-      pinchSvgEl = vp.querySelector('svg.bracket-svg');
-      if (pinchSvgEl) {
-        const r = pinchSvgEl.getBoundingClientRect();
-        pinchContentX = (cx - r.left) / pinchStartZoom;
-        pinchContentY = (cy - r.top)  / pinchStartZoom;
-      }
-    }, { passive: true });
-    vp.addEventListener('touchmove', (e) => {
-      if (e.touches.length !== 2 || !pinchStartDist) return;
-      e.preventDefault();
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.hypot(dx, dy);
-      const ratio = dist / pinchStartDist;
-      setZoom(pinchStartZoom * ratio);
-      if (!pinchSvgEl) return;
-      // setZoom resized the SVG via applyZoomToSvgs; re-measure and adjust
-      // .page-scroll's scroll position so the snapshotted content point
-      // lands back under the live centroid (both axes — v0.78 unified
-      // canvas, no more per-viewport horizontal scroll).
-      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-      const z = getZoom();
-      const r = pinchSvgEl.getBoundingClientRect();
+    // One-finger pan + flick-velocity state.
+    let panActive = false;
+    let velX = 0, velY = 0, lastMoveX = 0, lastMoveY = 0, lastMoveT = 0;
+
+    // (Re)start one-finger pan tracking from finger `t`. `asContinuation`
+    // true means we're already mid-drag (tap-slop cleared, or a 2→1
+    // finger handoff) so it counts as a move and suppresses the tap-click.
+    const beginPan = (t, asContinuation) => {
+      panActive = true;
+      moved = !!asContinuation;
+      startX = t.clientX; startY = t.clientY;
       const ps = document.getElementById('pageScroll');
-      if (ps) {
-        ps.scrollLeft += (r.left + pinchContentX * z) - cx;
-        ps.scrollTop  += (r.top  + pinchContentY * z) - cy;
+      startLeft = ps ? ps.scrollLeft : 0;
+      startTop  = ps ? ps.scrollTop  : 0;
+      velX = 0; velY = 0;
+      lastMoveX = t.clientX; lastMoveY = t.clientY;
+      lastMoveT = performance.now();
+    };
+
+    vp.addEventListener('touchstart', (e) => {
+      const wasFlinging = !!_momentumRAF;
+      cancelMomentum();
+      if (e.touches.length >= 2) {
+        // Two-finger pinch — abandon any one-finger pan in progress.
+        panActive = false;
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        pinchStartDist = Math.hypot(dx, dy);
+        pinchStartZoom = getZoom();
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        pinchSvgEl = vp.querySelector('svg.bracket-svg');
+        if (pinchSvgEl) {
+          const r = pinchSvgEl.getBoundingClientRect();
+          pinchContentX = (cx - r.left) / pinchStartZoom;
+          pinchContentY = (cy - r.top)  / pinchStartZoom;
+        }
+        return;
+      }
+      // One finger → pan. Bail on interactive sub-elements so taps on
+      // chips / jump labels / form controls still register as taps.
+      pinchStartDist = 0;
+      if (e.target && e.target.closest &&
+          e.target.closest('button, a, input, select, textarea, [data-jump]')) {
+        panActive = false;
+        return;
+      }
+      beginPan(e.touches[0], false);
+      // A tap that only meant to stop a fling shouldn't also click a card.
+      if (wasFlinging) moved = true;
+    }, { passive: true });
+
+    vp.addEventListener('touchmove', (e) => {
+      // Two-finger pinch.
+      if (e.touches.length >= 2 && pinchStartDist) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const ratio = Math.hypot(dx, dy) / pinchStartDist;
+        setZoom(pinchStartZoom * ratio);
+        if (!pinchSvgEl) return;
+        // setZoom re-applied the CSS zoom transform; re-measure and adjust
+        // .page-scroll so the snapshotted content point lands back under
+        // the live centroid (both axes).
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        const z = getZoom();
+        const r = pinchSvgEl.getBoundingClientRect();
+        const ps = document.getElementById('pageScroll');
+        if (ps) {
+          ps.scrollLeft += (r.left + pinchContentX * z) - cx;
+          ps.scrollTop  += (r.top  + pinchContentY * z) - cy;
+        }
+        return;
+      }
+      // One-finger pan.
+      if (e.touches.length === 1 && panActive) {
+        const t = e.touches[0];
+        if (!moved) {
+          // Tap slop: stay still until the finger clears 3px so a tap on a
+          // card still selects a team instead of nudging the bracket.
+          if (Math.abs(t.clientX - startX) <= 3 && Math.abs(t.clientY - startY) <= 3) return;
+          beginPan(t, true);   // re-baseline at the threshold → no jump
+        }
+        e.preventDefault();
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        const ps = document.getElementById('pageScroll');
+        if (ps) {
+          ps.scrollLeft = startLeft - dx;
+          ps.scrollTop  = startTop  - dy;
+        }
+        const now = performance.now();
+        const dt = now - lastMoveT;
+        if (dt > 0) {
+          velX = (t.clientX - lastMoveX) / dt;
+          velY = (t.clientY - lastMoveY) / dt;
+        }
+        lastMoveX = t.clientX; lastMoveY = t.clientY; lastMoveT = now;
       }
     }, { passive: false });
-    vp.addEventListener('touchend', () => {
+
+    vp.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) { pinchStartDist = 0; pinchSvgEl = null; }
+      if (e.touches.length === 1) {
+        // Two fingers dropped to one — keep dragging with the survivor
+        // instead of dead-stopping.
+        beginPan(e.touches[0], true);
+        return;
+      }
+      if (e.touches.length === 0) {
+        // Stale-velocity guard: a flick that ended in a pause must not fling.
+        if (performance.now() - lastMoveT > 100) { velX = 0; velY = 0; }
+        if (panActive && moved) startMomentum(velX, velY);
+        panActive = false;
+      }
+    }, { passive: true });
+
+    vp.addEventListener('touchcancel', () => {
+      panActive = false;
       pinchStartDist = 0;
       pinchSvgEl = null;
     }, { passive: true });
