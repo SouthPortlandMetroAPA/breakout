@@ -2518,14 +2518,35 @@ function wiringDetectArms(matches) {
     for (const m of byRound[r]) {
       if (r === 1) { arms[m.id] = 'center'; continue; }
       const inputs = [m.top_from, m.bot_from].filter(Boolean);
-      let arm = 'W';
-      for (const inp of inputs) {
-        const src = byId[inp.match_id];
-        const srcArm = src ? arms[src.id] : null;
-        if (inp.kind === 'loser') { arm = 'L'; break; }
-        if (srcArm === 'L')       { arm = 'L'; break; }
+      // Cross-bracket inputs describe where a team came from, not this
+      // bracket's internal flow. Filter them out before arm classification.
+      const sameBracketInputs = inputs.filter(inp => byId[inp.match_id]);
+
+      // Rule 1: any SAME-BRACKET loser-kind input → L (consolation flow
+      // within this bracket). Cross-bracket loser-kinds (e.g. 64.R3's top
+      // taking A.R3's loser) describe team origin, not L-arm wiring.
+      if (sameBracketInputs.some(inp => inp.kind === 'loser')) {
+        arms[m.id] = 'L';
+        continue;
       }
-      arms[m.id] = arm;
+
+      // Rule 2a: no same-bracket inputs at all (pure cross-bracket integration
+      // rounds like 12-12-64's 64.R1 / R3 / R5) → default W.
+      if (sameBracketInputs.length === 0) {
+        arms[m.id] = 'W';
+        continue;
+      }
+
+      // Rule 2b: all same-bracket inputs are winner-kind. If ANY same-bracket
+      // source is W or center → this match is W. Only fall to L when every
+      // same-bracket source is also L (a pure consolation chain like 32→8's
+      // R4_L). Integration rounds like 48→8's R4 (top from W-arm R3 + bot from
+      // L-arm L_R3, both winner-kind) correctly land on W via this rule.
+      let hasNonL = false;
+      for (const inp of sameBracketInputs) {
+        if (arms[byId[inp.match_id].id] !== 'L') { hasNonL = true; break; }
+      }
+      arms[m.id] = hasNonL ? 'W' : 'L';
     }
   }
   return arms;
