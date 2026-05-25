@@ -90,7 +90,7 @@
 <div class="banner">
   <div>⚠️ <strong>STAGING</strong> — wiring-driven bracket renderer.
     Does NOT modify production. <a href="./" target="_blank">production →</a></div>
-  <div class="version">v0.2 · staging engine</div>
+  <div class="version">v0.3 · staging engine</div>
 </div>
 
 <header class="header">
@@ -505,7 +505,32 @@ async function init() {
     const teamNameMap = await loadTeamsByNumber(teamNumbers);
 
     const root = document.getElementById('bracketRoot');
-    root.innerHTML = renderBracket(_matches, _seedMap, teamNameMap);
+    // Group matches by their `bracket` field so multi-bracket tournaments
+    // (e.g. mod-se-12-12-to-64 with A, B, 64) render as separate sections
+    // stacked vertically. Each section runs its own lane detection.
+    const byBracket = {};
+    for (const m of _matches) {
+      const b = m.bracket || 'default';
+      (byBracket[b] = byBracket[b] || []).push(m);
+    }
+    const bracketOrder = Object.keys(byBracket).sort((a, b) => {
+      // Stable, user-friendly ordering. Known labels first; then numerics
+      // (e.g. '64'), then alphabetical.
+      const rank = (x) => ({ 'A': 1, 'B': 2, '32': 5, '64': 9 }[x] ?? (x.match(/^\d/) ? parseInt(x, 10) + 100 : 200));
+      return rank(a) - rank(b) || a.localeCompare(b);
+    });
+
+    let html = '';
+    for (const label of bracketOrder) {
+      const ms = byBracket[label];
+      html += '<section style="margin: 24px 0;">';
+      html += '<h2 style="font-size:1.05rem;font-weight:800;color:var(--spm-blue);padding:0 16px;margin:0 0 8px;">' +
+              'Bracket ' + esc(label) + ' <span style="color:var(--muted);font-weight:600;font-size:0.86rem;">· ' +
+              ms.length + ' matches</span></h2>';
+      html += renderBracket(ms, _seedMap, teamNameMap);
+      html += '</section>';
+    }
+    root.innerHTML = html;
     setStatus('');
 
     if (DEBUG && _layout) {
