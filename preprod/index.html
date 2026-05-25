@@ -992,8 +992,8 @@
     Same data as production, alternate URL.
     <a href="../" target="_blank">production →</a></div>
   <div class="pp-meta">v<span id="preprodVersion">0.95</span>-preprod ·
-    <span id="preprodEngine">classic engine</span> ·
-    <a href="?engine=wiring">try wiring engine</a></div>
+    <span id="preprodEngine">WIRING engine</span> ·
+    <a href="?engine=classic">fallback to classic</a></div>
 </div>
 
 <div class="update-overlay" id="updateOverlay">
@@ -1114,23 +1114,17 @@ const URL_SLUG   = URL_PARAMS.get('t') || null;
 const IS_STAFF   = URL_PARAMS.get('role') === 'staff';
 const STAFF_KEY  = URL_PARAMS.get('key') || '';
 
-/* ── PREPROD feature flag: wiring-driven engine ─────────────────────
-   When ?engine=wiring is passed, render uses the new wiring-driven
-   detectArms/detectTerminals/computePositions pipeline (ported from
-   wiring engine v0.4) instead of the hardcoded A/B/T64 round-by-round
-   filter. This lets us smoke-test the new engine against the same
-   tournaments production already supports, side-by-side, before
-   promoting. Default off so the preprod URL looks identical to prod
-   on a cold load. */
-const WIRING_ENGINE = URL_PARAMS.get('engine') === 'wiring';
-if (WIRING_ENGINE) {
-  // Reflect the choice in the preprod banner so the user can see at a
-  // glance which engine is rendering.
-  document.addEventListener('DOMContentLoaded', () => {
-    const el = document.getElementById('preprodEngine');
-    if (el) el.textContent = 'WIRING engine';
-  });
-}
+/* ── PREPROD render engine selection ─────────────────────────────────
+   Preprod exists to prove the wiring-driven engine works against every
+   live tournament before promoting. So wiring is the DEFAULT here;
+   ?engine=classic is the escape hatch that falls back to the production
+   A/B/T64 hardcoded path. The banner reflects which engine is rendering
+   so smoke-testers can tell at a glance. */
+const WIRING_ENGINE = URL_PARAMS.get('engine') !== 'classic';
+document.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('preprodEngine');
+  if (el) el.textContent = WIRING_ENGINE ? 'WIRING engine' : 'classic engine';
+});
 const HEADERS_STAFF = STAFF_KEY
   ? { apikey: STAFF_KEY, Authorization: 'Bearer ' + STAFF_KEY, 'Accept-Profile': 'breakout', 'Content-Profile': 'breakout', 'Content-Type': 'application/json' }
   : null;
@@ -1826,7 +1820,15 @@ function reconstructTournament(matchData, seedAssignments, teamsByNumber) {
       globalNo: md.match_no || null,
       scheduled_at: md.scheduled_at || null,
       day: md.day, time: md.time, payout: md.payout, table_no: md.table_no,
-      tables_in_parallel: md.tables_in_parallel || 1
+      tables_in_parallel: md.tables_in_parallel || 1,
+      // Carry raw wiring references forward so the wiring engine can run
+      // straight off `t.all` (no double-bookkeeping with matchData).
+      top_from: md.top_from || null,
+      bot_from: md.bot_from || null,
+      top_seed: md.top_seed != null ? md.top_seed : null,
+      bot_seed: md.bot_seed != null ? md.bot_seed : null,
+      is_qualifier: !!md.is_qualifier,
+      match_no: md.match_no || null
     };
     if (m.bye && m.top) { m.winner = m.top; m.topWins = true; }
     matchById[m.id] = m;
@@ -2622,30 +2624,342 @@ function wiringAnalyzeTournament(allMatches) {
   });
 }
 
-function renderTournament() {
-  // PREPROD: when ?engine=wiring is set, log the wiring analysis so the
-  // smoke-tester can verify arm/terminal/position math against
-  // tools/claude/breakout/validate-engine.mjs output. Render still goes
-  // through the classic path for now — wiring-driven SVG output is the
-  // next promotion gate. See tools/claude/breakout/SMOKETEST.md.
-  if (WIRING_ENGINE && _tournament && Array.isArray(_tournament.all)) {
-    try {
-      const analysis = wiringAnalyzeTournament(_tournament.all);
-      console.group('[WIRING_ENGINE] tournament analysis');
-      for (const b of analysis) {
-        console.log('Bracket ' + b.label + ': '
-          + b.matches.length + ' matches, '
-          + b.termCount + ' terminal');
-      }
-      console.groupEnd();
-      // Stash on window for live inspection in devtools.
-      window._wiringAnalysis = analysis;
-    } catch (e) {
-      console.error('[WIRING_ENGINE] analysis failed:', e);
+/* ════════════════════════════════════════════════════════════════════════
+   WIRING-DRIVEN BRACKET RENDERER
+   ─────────────────────────────────────────────────────────────────
+   Lays out an arbitrary set of matches (any bracket label, any wiring
+   shape) using positions from wiringComputePositions. Produces the
+   same outer DOM shape as bracketSectionHtml so search / highlight /
+   pan / zoom / print all keep working — but the brain is the engine.
+
+   Coordinate system:
+     col 0  = center R1 (cards stacked vertically by slot)
+     col >0 = W arm, one column per round right of R1
+     col <0 = L arm, one column per round left of R1
+     row N  = N * SVG.SLOT_H from the top of the cards band
+
+   Layout output for one bracket:
+     • One <svg> per bracket with foreignObject HTML cards (parity with
+       production's matchHtml output — chips, schedule, table, all
+       reused unchanged via matchHtml(m, isFinal, stripeColor)).
+     • Round headers at the top of each column.
+     • Connectors layer + cross-source layer (same div ids as the
+       classic renderer so drawConnectorsForWiring can paint into them).
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Determine if a bracket label should render a vertical red→blue stripe
+   on its cards (per the 2026-05-25 design decision for the 32-bracket
+   case). Drives the `.match.bracket-32` class hook in CSS. */
+function wiringBracketCssClass(label) {
+  if (label === '32') return 'bracket-32';
+  return '';
+}
+
+/* Compute pixel geometry for a match. Takes the engine's GLOBAL (col,row)
+   pair (signed col: -N to +N, row: minRow to maxRow) plus layout bounds,
+   and normalizes to local 0-based pixel coords. */
+function wiringCellGeom(globalPos, layout) {
+  const localCol = globalPos.col - layout.minCol;
+  const localRow = globalPos.row - layout.minRow;
+  const xLeft   = SVG.LEFT_PAD + localCol * (SVG.CARD_W + SVG.ROUND_GAP);
+  const yCenter = SVG.TOP_PAD + SVG.HEADER_H + (localRow + 0.5) * SVG.SLOT_H;
+  const yTop    = yCenter - SVG.CARD_H / 2;
+  return {
+    left: xLeft,
+    right: xLeft + SVG.CARD_W,
+    top: yTop,
+    bottom: yTop + SVG.CARD_H,
+    cx: xLeft + SVG.CARD_W / 2,
+    cy: yCenter,
+    // Row Y coordinates for connector anchors — match the top/bot team
+    // rows inside the card. ~18% off cy puts them near the team row
+    // baselines without overlapping the match number band.
+    topRowY: yCenter - SVG.CARD_H * 0.18,
+    botRowY: yCenter + SVG.CARD_H * 0.18
+  };
+}
+
+/* Per-column round-name label. The center column is R1; right cols are
+   W2/W3/…; left cols are L2/L3/…. Returns null for cols outside the
+   bracket (won't happen given layout, but guards anyway). */
+function wiringRoundLabel(col) {
+  if (col === 0) return 'Round 1';
+  if (col > 0)   return 'W Round ' + (col + 1);
+  return 'L Round ' + (Math.abs(col) + 1);
+}
+
+function wiringRenderBracket(displayLabel, label, matches, opts) {
+  const analysis  = wiringAnalyzeTournament(matches);
+  // analysis is [{label, matches, arms, terminals, positions, termCount}] —
+  // but here we already know we're rendering ONE bracket, so use the first.
+  const b = analysis[0] || { label, matches, arms: {}, terminals: {}, positions: {}, termCount: 0 };
+  const arms = b.arms, terminals = b.terminals, positions = b.positions;
+
+  // Layout bounds across all positions in this bracket.
+  const rows = Object.values(positions).map(p => p.row);
+  const cols = Object.values(positions).map(p => p.col);
+  const minRow = rows.length ? Math.min(...rows) : 0;
+  const maxRow = rows.length ? Math.max(...rows) : 0;
+  const minCol = cols.length ? Math.min(...cols) : 0;
+  const maxCol = cols.length ? Math.max(...cols) : 0;
+  const numCols = (maxCol - minCol + 1);
+  const numRows = (maxRow - minRow + 1);
+  const w = SVG.LEFT_PAD + numCols * SVG.CARD_W + Math.max(0, numCols - 1) * SVG.ROUND_GAP + SVG.RIGHT_PAD;
+  const h = SVG.TOP_PAD + SVG.HEADER_H + (numRows + 0.5) * SVG.SLOT_H + SVG.CHAMP_BAND_H;
+  const layout = { w, h, minRow, maxRow, minCol, maxCol };
+
+  // Bracket stripe color for the in-card stripe div. Falls back to the
+  // accent gray (matches existing convention).
+  const stripeColor = SVG.BRACKET_COLORS[label] || '#94a3b8';
+
+  // Round headers: iterate every populated column, label by arm.
+  let svgInner = '';
+  for (let c = minCol; c <= maxCol; c++) {
+    const colCells = matches.filter(m => positions[m.id] && positions[m.id].col === c);
+    if (!colCells.length) continue;
+    const cx = SVG.LEFT_PAD + (c - minCol) * (SVG.CARD_W + SVG.ROUND_GAP) + SVG.CARD_W / 2;
+    const xL = SVG.LEFT_PAD + (c - minCol) * (SVG.CARD_W + SVG.ROUND_GAP);
+    const xR = xL + SVG.CARD_W;
+    const headerText = wiringRoundLabel(c);
+    svgInner += '<text class="round-name" x="' + cx + '" y="' + (SVG.TOP_PAD + SVG.HEADER_TEXT_Y)
+              + '" text-anchor="middle" dominant-baseline="alphabetic">' + esc(headerText) + '</text>';
+    svgInner += '<line class="round-header-underline" x1="' + xL + '" y1="' + (SVG.TOP_PAD + SVG.HEADER_H - 6)
+              + '" x2="' + xR + '" y2="' + (SVG.TOP_PAD + SVG.HEADER_H - 6) + '"/>';
+    if (c > minCol) {
+      const dividerX = xL - SVG.ROUND_GAP / 2;
+      const topY = SVG.TOP_PAD + SVG.HEADER_H;
+      const botY = SVG.TOP_PAD + SVG.HEADER_H + numRows * SVG.SLOT_H;
+      svgInner += '<line class="round-divider" x1="' + dividerX + '" y1="' + topY
+                + '" x2="' + dividerX + '" y2="' + botY + '"/>';
     }
   }
 
+  // Connectors + cross-source layers (painted in JS pass after innerHTML).
+  svgInner += '<g class="connectors-layer"></g>';
+  svgInner += '<g class="cross-source-layer"></g>';
+
+  // Card foreignObjects.
+  const bracketCssClass = wiringBracketCssClass(label);
+  for (const m of matches) {
+    const pos = positions[m.id];
+    if (!pos) continue;
+    const geom = wiringCellGeom(pos, layout);
+    // Pass isFinalOfBracket=false for wiring-rendered cards — terminals
+    // get the gold QUALIFIED badge via the `.qualifier-card` class hook
+    // instead of the classic "Bracket Champ" pill. The badge is the
+    // 2026-05-25 design decision for the 32→8 case.
+    const cardHtml = m.bye ? byeMatchHtml(m, stripeColor) : matchHtml(m, false, stripeColor);
+    // Augment the rendered card with optional classes for terminal +
+    // bracket-specific styling. We need to inject these into the root
+    // .match div. Quick string-rewrite is simplest.
+    let injectedClass = '';
+    if (terminals[m.id]) injectedClass += ' qualifier-card';
+    if (bracketCssClass) injectedClass += ' ' + bracketCssClass;
+    const cardHtmlAdj = injectedClass
+      ? cardHtml.replace('class="match', 'class="match' + injectedClass)
+      : cardHtml;
+    svgInner += '<foreignObject class="card-fo" data-match-fo="' + esc(m.id)
+              + '" x="' + geom.left + '" y="' + geom.top
+              + '" width="' + SVG.CARD_W + '" height="' + SVG.CARD_H + '">'
+              + '<div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%">'
+              + cardHtmlAdj
+              + '</div></foreignObject>';
+  }
+
+  // Outer svg.
+  const svg = '<svg class="bracket-svg" xmlns="http://www.w3.org/2000/svg" '
+            + 'data-wrap="' + esc(label) + '" '
+            + 'data-engine="wiring" '
+            + 'viewBox="0 0 ' + w + ' ' + h + '" '
+            + 'preserveAspectRatio="xMinYMin meet" '
+            + 'style="width:' + w + 'px;height:' + h + 'px">'
+            + svgInner + '</svg>';
+
+  // Optional qualifier band: shown when this bracket has any terminal
+  // matches. Reads "🏆 N World Qualifiers" + sub-line. Sits above the
+  // bracket SVG within the section.
+  let qualifierBand = '';
+  if (b.termCount > 0) {
+    qualifierBand = '<div class="qualifier-band">🏆 ' + b.termCount + ' World Qualifier'
+                  + (b.termCount === 1 ? '' : 's')
+                  + '<div class="qb-sub">Terminal matches feed straight to World Pool Championships</div>'
+                  + '</div>';
+  }
+
+  return '<div class="bracket-section" data-bracket="' + esc(label) + '" data-design-w="' + w + '" data-design-h="' + h + '" data-engine="wiring">'
+       + '<div class="section-title"><span class="pill ' + (opts.pillClass || '') + '">' + esc(displayLabel) + '</span></div>'
+       + qualifierBand
+       + '<div class="viewport"><div class="bracket-wrap" data-wrap="' + esc(label) + '" data-engine="wiring">'
+       +   svg
+       + '</div></div>'
+       + '</div>';
+}
+
+/* Draw connectors for a wiring-rendered bracket. Same-arm wires only
+   (cross-arm = label, not line). For each match m:
+     • For each input (top_from / bot_from), look up the source.
+     • If source is same-arm OR center, draw a wire from src right/left
+       (depending on dst arm) to dst's top or bot row.
+     • If cross-arm (kind='loser' from W into L, or vice versa), render
+       a "L of M<n>" / "W of M<n>" stub label outside the dst card. */
+function wiringDrawConnectors(wrap, matches, analysis) {
+  const svgEl = wrap.querySelector('svg.bracket-svg');
+  if (!svgEl) return;
+  const connLayer  = svgEl.querySelector('g.connectors-layer');
+  const crossLayer = svgEl.querySelector('g.cross-source-layer');
+  if (!connLayer || !crossLayer) return;
+  connLayer.innerHTML  = '';
+  crossLayer.innerHTML = '';
+
+  const positions = analysis.positions;
+  const arms      = analysis.arms;
+  const rowsArr = Object.values(positions).map(p => p.row);
+  const colsArr = Object.values(positions).map(p => p.col);
+  const minRow = rowsArr.length ? Math.min(...rowsArr) : 0;
+  const maxRow = rowsArr.length ? Math.max(...rowsArr) : 0;
+  const minCol = colsArr.length ? Math.min(...colsArr) : 0;
+  const maxCol = colsArr.length ? Math.max(...colsArr) : 0;
+  const layout = { minRow, maxRow, minCol, maxCol };
+
+  const byId = Object.fromEntries(matches.map(m => [m.id, m]));
+  const STROKE = '#94a3b8';
+
+  const drawPath = (d) => {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', STROKE);
+    p.setAttribute('stroke-width', '2');
+    p.setAttribute('stroke-linejoin', 'round');
+    p.setAttribute('stroke-linecap', 'round');
+    connLayer.appendChild(p);
+  };
+
+  for (const m of matches) {
+    const dstPos = positions[m.id];
+    if (!dstPos) continue;
+    const dstGeom = wiringCellGeom(dstPos, layout);
+    const myArm = arms[m.id];
+
+    const inputs = [
+      { from: m.top_from, side: 'top' },
+      { from: m.bot_from, side: 'bot' }
+    ].filter(x => x.from);
+
+    for (const { from, side } of inputs) {
+      const src = byId[from.match_id];
+      if (!src) continue;
+      const srcPos = positions[src.id];
+      if (!srcPos) {
+        // Cross-bracket reference (source lives in a different bracket).
+        // Render as label only.
+        const targetNo = src.match_no || src.globalNo || src.id;
+        const kindShort = from.kind === 'loser' ? 'L' : 'W';
+        const rowY = side === 'top' ? dstGeom.topRowY : dstGeom.botRowY;
+        const labelX = myArm === 'L' ? dstGeom.right : dstGeom.left;
+        const dir = myArm === 'L' ? +1 : -1;
+        const labelText = kindShort + ' of M' + targetNo;
+        // Stub + label.
+        const stubX1 = labelX;
+        const stubX2 = labelX + dir * 22;
+        crossLayer.appendChild(buildCrossPath('M ' + stubX1 + ' ' + rowY + ' L ' + stubX2 + ' ' + rowY));
+        crossLayer.appendChild(buildCrossLabel(stubX2 + dir * 4, rowY, labelText, targetNo, dir));
+        continue;
+      }
+      const srcArm = arms[src.id];
+      const srcGeom = wiringCellGeom(srcPos, layout);
+
+      // True cross-arm: source's arm differs from dst's AND source is
+      // not the center column. (Center R1 → L-arm R2 via loser-kind is
+      // a normal drop line, NOT a cross-arm skip — the wire flows
+      // naturally because center is column 0.) Match staging.html v0.4
+      // behavior: skip only when both arms are explicit and different.
+      const isCrossArm = (srcArm !== 'center') && (srcArm !== myArm);
+      if (isCrossArm) {
+        const targetNo = src.match_no || src.globalNo || src.id;
+        const kindShort = from.kind === 'loser' ? 'L' : 'W';
+        const labelText = kindShort + ' of M' + targetNo;
+        const rowY = side === 'top' ? dstGeom.topRowY : dstGeom.botRowY;
+        const labelX = myArm === 'L' ? dstGeom.right : dstGeom.left;
+        const dir = myArm === 'L' ? +1 : -1;
+        const stubX1 = labelX;
+        const stubX2 = labelX + dir * 22;
+        crossLayer.appendChild(buildCrossPath('M ' + stubX1 + ' ' + rowY + ' L ' + stubX2 + ' ' + rowY));
+        crossLayer.appendChild(buildCrossLabel(stubX2 + dir * 4, rowY, labelText, targetNo, dir));
+        continue;
+      }
+
+      // Same-arm intra-bracket wire (or center → arm flow).
+      // Source-side anchor: pick row based on src result if known, else
+      // use src.cy (no result yet — center).
+      let y1 = srcGeom.cy;
+      if (src.topWins === true)  y1 = srcGeom.topRowY;
+      if (src.topWins === false) y1 = srcGeom.botRowY;
+      const y2 = side === 'top' ? dstGeom.topRowY : dstGeom.botRowY;
+
+      // X anchors depend on direction of flow (dst arm).
+      let x1, x2;
+      if (myArm === 'L') {
+        // Flows right→left. Exit src.left, enter dst.right.
+        x1 = srcGeom.left;
+        x2 = dstGeom.right;
+      } else {
+        // Flows left→right (W arm, or R1→R2 in center→W).
+        x1 = srcGeom.right;
+        x2 = dstGeom.left;
+      }
+      const xMid = (x1 + x2) / 2;
+      if (Math.abs(y1 - y2) < 0.5) {
+        drawPath('M ' + x1 + ' ' + y1 + ' L ' + x2 + ' ' + y2);
+      } else {
+        drawPath('M ' + x1 + ' ' + y1 + ' L ' + xMid + ' ' + y1
+               + ' L ' + xMid + ' ' + y2 + ' L ' + x2 + ' ' + y2);
+      }
+    }
+  }
+}
+
+function buildCrossPath(d) {
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d);
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', '#b45309');
+  p.setAttribute('stroke-width', '1.5');
+  p.setAttribute('stroke-dasharray', '3 3');
+  p.setAttribute('stroke-linecap', 'round');
+  return p;
+}
+function buildCrossLabel(x, y, text, jumpToNo, dir) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const t = document.createElementNS(ns, 'text');
+  t.setAttribute('class', 'cross-source-link');
+  t.setAttribute('x', String(x));
+  t.setAttribute('y', String(y));
+  t.setAttribute('dominant-baseline', 'middle');
+  t.setAttribute('text-anchor', dir > 0 ? 'start' : 'end');
+  t.textContent = text;
+  if (jumpToNo) {
+    t.setAttribute('data-jump', String(jumpToNo));
+    t.setAttribute('style', 'cursor:pointer');
+  }
+  return t;
+}
+
+function renderTournament() {
   const t = _tournament;
+  if (!t) return;
+
+  // PREPROD: when ?engine=wiring is set, drive the entire render off
+  // the wiring engine. Group t.all by bracket label, run the engine
+  // per bracket, and use wiringRenderBracket() for layout.
+  // Otherwise fall through to the classic A/B/T64 path (preserved
+  // unchanged) so the preprod URL with no flag matches production for
+  // any tournament the classic renderer already handles.
+  if (WIRING_ENGINE) {
+    return renderTournamentWiring(t);
+  }
+
+  // ── Classic A/B/T64 path (unchanged from production) ──
   const ab = (label, bracket, kind, cls) => bracketSectionHtml(
     bracket, kind,
     Array.from({ length: 4 }, (_, i) => bracket.matches.filter(m => m.round === i + 1)),
@@ -2663,12 +2977,83 @@ function renderTournament() {
   root.innerHTML = html;
   renderHero();
 
-  // Draw connectors for each bracket and apply current zoom to SVGs.
   requestAnimationFrame(() => {
     document.querySelectorAll('.bracket-wrap[data-wrap]').forEach(wrap => {
       const label = wrap.dataset.wrap;
       const matches = label === 'A' ? t.A.matches : label === 'B' ? t.B.matches : t.T64.matches;
       drawConnectorsFor(wrap, matches);
+    });
+    applyZoomToSvgs();
+    setupPanScroll();
+    pinTitlesToViewport();
+    applySearch();
+    if (_highlightedTeam !== null) {
+      const team = _highlightedTeam;
+      _highlightedTeam = null;
+      highlightTeamMatches(team);
+    }
+    if (!_initialScrollDone) {
+      _initialScrollDone = true;
+      const ps = document.getElementById('pageScroll');
+      const firstSec = document.querySelector('.bracket-section');
+      if (ps && firstSec) {
+        const psRect  = ps.getBoundingClientRect();
+        const secRect = firstSec.getBoundingClientRect();
+        ps.scrollLeft += secRect.left - psRect.left;
+        ps.scrollTop  += secRect.top  - psRect.top;
+      }
+    }
+  });
+}
+
+/* Wiring-engine render path. Groups t.all by m.bracket and renders one
+   section per bracket via wiringRenderBracket. Bracket display label
+   comes from TOURNAMENT_TEXT for known labels (A/B/T64) and falls back
+   to "Bracket <label>" otherwise. */
+function renderTournamentWiring(t) {
+  const root = document.getElementById('tournamentRoot');
+  // Group all matches by bracket label.
+  const byBracket = {};
+  for (const m of t.all) {
+    const b = m.bracket || 'default';
+    (byBracket[b] = byBracket[b] || []).push(m);
+  }
+  // Sort labels: known A/B first, then numerics ascending, then alpha.
+  const rank = (x) => ({ 'A': 1, 'B': 2, '32': 5, '64': 9 }[x] ?? (x.match(/^\d/) ? parseInt(x, 10) + 100 : 200));
+  const labels = Object.keys(byBracket).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  // Cache per-bracket analysis so the connector-drawing pass doesn't
+  // re-run the engine. Keyed by bracket label.
+  const analysisByLabel = {};
+  let html = '';
+  for (const label of labels) {
+    const matches = byBracket[label];
+    const displayLabel =
+      label === 'A'  ? TOURNAMENT_TEXT.bracketNameA   :
+      label === 'B'  ? TOURNAMENT_TEXT.bracketNameB   :
+      label === '64' ? TOURNAMENT_TEXT.bracketNameT64 :
+      'Bracket ' + label;
+    const pillClass =
+      label === 'A'  ? '' :
+      label === 'B'  ? 'alt' :
+      label === '64' ? 'consolation' :
+      label === '32' ? 'mod-se-32' :
+      '';
+    const analysis = wiringAnalyzeTournament(matches);
+    analysisByLabel[label] = analysis[0];
+    html += wiringRenderBracket(displayLabel, label, matches, { pillClass });
+  }
+  root.innerHTML = html;
+  renderHero();
+
+  // Expose the latest analysis for devtools inspection.
+  window._wiringAnalysis = analysisByLabel;
+
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.bracket-wrap[data-engine="wiring"]').forEach(wrap => {
+      const label = wrap.dataset.wrap;
+      const matches = byBracket[label];
+      const analysis = analysisByLabel[label];
+      if (analysis) wiringDrawConnectors(wrap, matches, analysis);
     });
     applyZoomToSvgs();
     setupPanScroll();
