@@ -1139,13 +1139,18 @@ function buildDurationOptions(selected) {
 }
 
 async function generateDefaultTournament() {
-  if (_teams.length < 24) {
-    alert('Need at least 24 teams in the database (have ' + _teams.length + '). Paste teams in the Add teams card first.');
-    return;
-  }
+  // Blank brackets allowed — no team gate. Seeds beyond what's loaded
+  // render as TBD and can be assigned later via the Seeding editor.
+  const have = _teams.length;
+  const cap  = Math.min(have, 24);
+  const msg  = (have >= 24)
+    ? 'Creates a new Modified-SE 12+12→64 tournament using the first 24 teams (by number), wired and ready. Status: live. Existing tournaments are left untouched.'
+    : (have > 0
+      ? 'Creates a new Modified-SE 12+12→64 tournament. Only ' + have + ' team' + (have === 1 ? '' : 's') + ' in the database — seeds 1–' + cap + ' will be assigned, the rest render as TBD. Fill them in later via the Seeding editor.'
+      : 'Creates a BLANK Modified-SE 12+12→64 tournament — no teams loaded yet. Every seed renders as TBD; assign teams later via the Seeding editor.');
   confirmModal({
     title: 'Generate tournament?',
-    message: 'Creates a new Modified-SE 12+12→64 tournament using the first 24 teams (by number), wired and ready. Status: live. Existing tournaments are left untouched.',
+    message: msg,
     okText: 'Generate',
     onOk: doGenerateDefaultTournament
   });
@@ -1159,13 +1164,16 @@ async function generateDefaultTournament() {
  * Mirrors the APA Mod-SE 32-1 reference PDF but cut at the 8-team line.
  * ──────────────────────────────────────────────────────────────── */
 function generateMse32To8Tournament() {
-  if (_teams.length < 32) {
-    alert('Need at least 32 teams in the database (have ' + _teams.length + '). Paste teams in the Add teams card first.');
-    return;
-  }
+  // Blank brackets allowed — no team gate.
+  const have = _teams.length;
+  const msg  = (have >= 32)
+    ? 'Creates a Modified Single Elimination 32→8 tournament using the first 32 teams (by number). 48 matches, two terminal arms producing 8 World qualifiers. Status: live. Existing tournaments are left untouched.'
+    : (have > 0
+      ? 'Creates a Modified Single Elimination 32→8 tournament. Only ' + have + ' team' + (have === 1 ? '' : 's') + ' in the database — seeds 1–' + have + ' will be assigned, the rest render as TBD. 48 matches, 8 qualifiers. Fill remaining seeds via the Seeding editor.'
+      : 'Creates a BLANK Modified Single Elimination 32→8 tournament — no teams loaded yet. 48 matches, 8 qualifiers. Every seed renders as TBD; assign teams later via the Seeding editor.');
   confirmModal({
     title: 'Generate Mod-SE 32→8 tournament?',
-    message: 'Creates a Modified Single Elimination 32→8 tournament using the first 32 teams (by number). 48 matches, two terminal arms producing 8 World qualifiers. Status: live. Existing tournaments are left untouched.',
+    message: msg,
     okText: 'Generate',
     onOk: doGenerateMse32To8
   });
