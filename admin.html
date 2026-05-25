@@ -345,9 +345,28 @@
   .update-title { font-size: 1.1rem; font-weight: 800; color: var(--spm-accent); margin-bottom: 6px; }
 
   .hidden { display: none !important; }
+
+  /* PREPROD banner — mirror of preprod/index.html. */
+  .preprod-banner {
+    background: linear-gradient(90deg, #fde68a, #fcd34d);
+    border-bottom: 1px solid #d97706;
+    color: #78350f;
+    font-weight: 700; font-size: 0.78rem;
+    padding: 6px 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .preprod-banner .pp-meta { font-size: 0.7rem; color: #92400e; font-weight: 600; }
+  .preprod-banner a { color: #78350f; text-decoration: underline; }
 </style>
 </head>
 <body>
+
+<div class="preprod-banner">
+  <div>⚠️ <strong>PREPROD</strong> — staging build of BreakOut Admin.
+    Writes go to PRODUCTION data — use a test slug for destructive flows.
+    <a href="../admin.html" target="_blank">production admin →</a></div>
+  <div class="pp-meta">v0.95-preprod</div>
+</div>
 
 <div class="update-overlay" id="updateOverlay">
   <div class="update-box">
@@ -408,14 +427,22 @@
       <h2 style="margin-bottom:0">Tournament</h2>
       <span class="hint" id="tournamentStatus"></span>
       <div style="margin-left:auto" class="actions">
-        <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate 12+12&rarr;64</button>
-        <button class="btn btn-primary btn-sm" onclick="generateMse32To8Tournament()">Generate 32&rarr;8</button>
+        <!-- Generate buttons rendered from breakout.formats at runtime
+             (see renderFormatButtons / generateFromFormat). To add a new
+             bracket format: author DSL in tools/claude/breakout/dsl/formats/,
+             run sync-formats.mjs, and a button appears here automatically.
+             No admin code change required. -->
+        <span id="formatGenerateButtons" style="display:inline-flex;gap:6px;flex-wrap:wrap;">
+          <span class="hint" style="opacity:0.6">Loading formats&hellip;</span>
+        </span>
         <button class="btn btn-outline btn-sm" onclick="clearAllMatchResults()" style="color:var(--danger);border-color:var(--danger)">Clear all results</button>
       </div>
     </div>
     <p class="hint">
-      <strong>12+12&rarr;64</strong>: two 12-team brackets feeding a 64-team modified single-elim (uses first 24 teams).
-      <strong>32&rarr;8</strong>: 32 teams enter, 8 qualifiers advance &mdash; winners of M41&ndash;M44 (loser arm) and M45&ndash;M48 (winner arm) per the APA Mod-SE 32-1 bracket, truncated at the 8-qualifier line (no M49&ndash;M55). The viewer auto-loads the active tournament.
+      Pick a format to generate a new tournament. Formats are defined in
+      <code>tools/claude/breakout/dsl/formats/*.yml</code> and synced into
+      <code>breakout.formats</code> &mdash; this list updates automatically
+      when new formats are added.
     </p>
     <div id="tournamentBody" class="hint">Loading&hellip;</div>
   </div>
@@ -666,7 +693,10 @@ function hideStatus(id) { const el = document.getElementById(id); el.className =
 function validNumber(n) { return Number.isInteger(n) && n >= 101 && n <= 9916 && (n % 100) >= 1 && (n % 100) <= 16; }
 
 /* ── Auto-update ──────────────────────────── */
+/* PREPROD guard — see index.html for rationale. */
+const IS_PREPROD = location.pathname.indexOf('/preprod/') !== -1;
 async function checkVersion() {
+  if (IS_PREPROD) return;            // preprod doesn't track apa_core.apps
   if (_versionMismatch) return;
   try {
     const r = await fetch(SB_URL + '/rest/v1/apps?app_name=eq.' + APP_NAME + '&select=version', { headers: HEADERS_APA });
@@ -912,18 +942,11 @@ document.getElementById('bulkInput').addEventListener('keydown', (ev) => {
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); bulkAddTeams(); }
 });
 
-/* ── Tournament management ────────────────── */
-const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
-
-/* 32-team NCAA-style seeding (pairs in match order, M1..M16). Derived
- * by splitting each 16-team match (seed S vs 17-S) into two 32-team
- * matches (S vs 33-S, 17-S vs 16+S).                                  */
-const SEED_ORDER_32 = [
-  1, 32, 16, 17,   8, 25,  9, 24,
-  4, 29, 13, 20,   5, 28, 12, 21,
-  2, 31, 15, 18,   7, 26, 10, 23,
-  3, 30, 14, 19,   6, 27, 11, 22
-];
+/* ── Tournament management ──────────────────
+ * Seed pairings (SEED_ORDER_16, SEED_ORDER_32) used to live here for the
+ * hardcoded template generators. Both moved to the DSL files in
+ * tools/claude/breakout/dsl/formats/ — see seed_orders: { ... } in each
+ * .yml. The format registry (breakout.formats) is now the source of truth. */
 
 /* ── Active-tournament pointer ─────────────────────────────────────────
  * "Active" = the tournament the structural editors (Matches, Schedule,
@@ -1138,63 +1161,140 @@ function buildDurationOptions(selected) {
   return opts.join('');
 }
 
-async function generateDefaultTournament() {
-  // Blank brackets allowed — no team gate. Seeds beyond what's loaded
-  // render as TBD and can be assigned later via the Seeding editor.
-  const have = _teams.length;
-  const cap  = Math.min(have, 24);
-  const msg  = (have >= 24)
-    ? 'Creates a new Modified-SE 12+12→64 tournament using the first 24 teams (by number), wired and ready. Status: live. Existing tournaments are left untouched.'
-    : (have > 0
-      ? 'Creates a new Modified-SE 12+12→64 tournament. Only ' + have + ' team' + (have === 1 ? '' : 's') + ' in the database — seeds 1–' + cap + ' will be assigned, the rest render as TBD. Fill them in later via the Seeding editor.'
-      : 'Creates a BLANK Modified-SE 12+12→64 tournament — no teams loaded yet. Every seed renders as TBD; assign teams later via the Seeding editor.');
-  confirmModal({
-    title: 'Generate tournament?',
-    message: msg,
-    okText: 'Generate',
-    onOk: doGenerateDefaultTournament
-  });
-}
+/* ════════════════════════════════════════════════════════════════════════
+   FORMATS-DRIVEN TOURNAMENT GENERATION
+   ─────────────────────────────────────────────────────────────────
+   Sole path for creating new tournaments. Reads format definitions from
+   breakout.formats; each row holds compiled wiring (JSONB) produced by
+   the DSL codegen at tools/claude/breakout/dsl/. Adding a new format:
+     1. Author .yml in tools/claude/breakout/dsl/formats/
+     2. Run node tools/claude/breakout/dsl/sync-formats.mjs
+     3. UI button appears here automatically — no admin code change.
 
-/* ── Mod-SE 32 → 8 Qualifiers ──────────────────────────────────────
- * 32 teams enter (seeds 1–32). Bracket runs through R1 (M1–M16),
- * R2W (M17–M24) + R2L (M25–M32), R3L (M33–M40) and the two terminal
- * rounds: R3W (M45–M48) and R4L (M41–M44). 8 winners advance to
- * World Qualifiers; the bracket stops there (no M49–M55, no champion).
- * Mirrors the APA Mod-SE 32-1 reference PDF but cut at the 8-team line.
- * ──────────────────────────────────────────────────────────────── */
-function generateMse32To8Tournament() {
-  // Blank brackets allowed — no team gate.
-  const have = _teams.length;
-  const msg  = (have >= 32)
-    ? 'Creates a Modified Single Elimination 32→8 tournament using the first 32 teams (by number). 48 matches, two terminal arms producing 8 World qualifiers. Status: live. Existing tournaments are left untouched.'
-    : (have > 0
-      ? 'Creates a Modified Single Elimination 32→8 tournament. Only ' + have + ' team' + (have === 1 ? '' : 's') + ' in the database — seeds 1–' + have + ' will be assigned, the rest render as TBD. 48 matches, 8 qualifiers. Fill remaining seeds via the Seeding editor.'
-      : 'Creates a BLANK Modified Single Elimination 32→8 tournament — no teams loaded yet. 48 matches, 8 qualifiers. Every seed renders as TBD; assign teams later via the Seeding editor.');
-  confirmModal({
-    title: 'Generate Mod-SE 32→8 tournament?',
-    message: msg,
-    okText: 'Generate',
-    onOk: doGenerateMse32To8
-  });
-}
+   Legacy hardcoded template/generate functions (templateMse32To8,
+   templateModSe12_12To64, gen12Bracket, gen64Bracket, the *_SCHEDULE
+   constants, SEED_ORDER_16/32, generateDefaultTournament, etc.) were
+   deleted 2026-05-25 after smoke-test of this path against all three
+   live tournaments. See git history before promote for the originals.
+   ════════════════════════════════════════════════════════════════════════ */
 
-async function doGenerateMse32To8() {
+let _formats = [];
+
+async function loadFormats() {
   try {
-    const matchData = templateMse32To8();
+    const r = await fetch(SB_URL + '/rest/v1/formats?select=*&order=id.asc', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _formats = await r.json();
+  } catch (e) {
+    console.error('loadFormats failed:', e);
+    _formats = [];
+  }
+  renderFormatButtons();
+}
+
+function renderFormatButtons() {
+  const container = document.getElementById('formatGenerateButtons');
+  if (!container) return;
+  if (!_formats.length) {
+    container.innerHTML = '<span class="hint" style="color:var(--danger)">No formats found in breakout.formats — run sync-formats.mjs</span>';
+    return;
+  }
+  container.innerHTML = _formats.map(f => {
+    // Display name: trim "APA Mod-SE " prefix for compactness
+    const short = (f.name || f.id).replace(/^APA\s+Mod-?SE\s*/i, '').trim() || f.id;
+    return '<button class="btn btn-primary btn-sm" '
+         + 'onclick="generateFromFormat(' + JSON.stringify(f.id) + ')" '
+         + 'title="' + esc(f.description || f.name) + '">'
+         + 'Generate ' + esc(short)
+         + '</button>';
+  }).join(' ');
+}
+
+async function generateFromFormat(formatId) {
+  const format = _formats.find(f => f.id === formatId);
+  if (!format) { alert('Unknown format: ' + formatId); return; }
+  const have = _teams.length;
+  // Total seat count = sum of max-seed across all brackets in the wiring
+  const byBracket = {};
+  for (const m of (format.wiring || [])) {
+    const b = m.bracket || 'default';
+    if (!byBracket[b]) byBracket[b] = 0;
+    for (const s of [m.top_seed, m.bot_seed]) {
+      if (s != null && s > byBracket[b]) byBracket[b] = s;
+    }
+  }
+  const totalSeats = Object.values(byBracket).reduce((a, b) => a + b, 0);
+  const msg = (have >= totalSeats)
+    ? 'Creates a new "' + format.name + '" tournament using the first ' + totalSeats + ' teams (by number). '
+      + (format.wiring || []).length + ' matches, ' + (format.terminal_count || '?') + ' terminal(s). '
+      + 'Status: live. Existing tournaments are left untouched.'
+    : (have > 0
+      ? 'Creates a new "' + format.name + '" tournament. Only ' + have + ' team(s) in the database — seeds 1–'
+        + Math.min(have, totalSeats) + ' will be assigned, the rest render as TBD.'
+      : 'Creates a BLANK "' + format.name + '" tournament — no teams loaded yet. Every seed renders as TBD; assign teams later via the Seeding editor.');
+  confirmModal({
+    title: 'Generate ' + format.name + '?',
+    message: msg,
+    okText: 'Generate',
+    onOk: () => doGenerateFromFormat(format)
+  });
+}
+
+async function doGenerateFromFormat(format) {
+  try {
+    // Deep-copy the wiring template so we don't mutate the cached format object
+    const matchData = JSON.parse(JSON.stringify(format.wiring || []));
+
+    // Build seed_assignments. Each bracket has its own seed scope (seeds 1..N)
+    // — for multi-bracket formats like mse-12-12-to-64, A's seed 1 ≠ B's seed 1.
+    // We walk the team list in number order and fill each bracket's seeds
+    // sequentially in bracket-declaration order (matches the legacy behavior:
+    // first 12 teams → A seeds 1..12, next 12 → B seeds 1..12, etc.).
     const teams = _teams.slice().sort((a, b) => a.number - b.number);
     const seedAssignments = [];
-    teams.slice(0, 32).forEach((t, i) => seedAssignments.push({ bracket: '32', seed: i + 1, team_number: t.number }));
+    const maxSeedByBracket = {};
+    for (const m of matchData) {
+      const b = m.bracket || 'default';
+      if (!maxSeedByBracket[b]) maxSeedByBracket[b] = 0;
+      for (const s of [m.top_seed, m.bot_seed]) {
+        if (s != null && s > maxSeedByBracket[b]) maxSeedByBracket[b] = s;
+      }
+    }
+    // Bracket order = first-appearance order in the wiring (declaration order
+    // from the DSL). Crucially this preserves A → B → 64 for mse-12-12-to-64
+    // and A → B for mse-32-to-8 (new) / mse-48-to-8.
+    const bracketOrder = [];
+    for (const m of matchData) {
+      const b = m.bracket || 'default';
+      if (!bracketOrder.includes(b)) bracketOrder.push(b);
+    }
+    let teamIdx = 0;
+    for (const bracketId of bracketOrder) {
+      const maxSeed = maxSeedByBracket[bracketId] || 0;
+      for (let seed = 1; seed <= maxSeed; seed++) {
+        if (teamIdx >= teams.length) break;
+        seedAssignments.push({
+          bracket: bracketId,
+          seed,
+          team_number: teams[teamIdx].number
+        });
+        teamIdx++;
+      }
+    }
+
     const today = new Date();
     const ymd = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-    const name = 'Mod-SE 32→8  ' + ymd;
+    const name = format.name + '  ' + ymd;
     const slug = await uniqueSlug(slugify(name));
+    const championText = (format.terminal_count != null)
+      ? format.terminal_count + (format.terminal_count === 1 ? ' Champion' : ' Qualifiers')
+      : 'Champion';
     const row = {
       name,
       slug,
       status: 'live',
-      format_template: 'mse-32-to-8',
-      config: { bracketChampText: 'Qualifier', championText: '8 World Qualifiers' },
+      format_template: format.id,
+      config: { bracketChampText: 'Qualifier', championText },
       seed_assignments: seedAssignments,
       matches: matchData,
       start_date: ymd,
@@ -1211,39 +1311,12 @@ async function doGenerateMse32To8() {
   }
 }
 
-async function doGenerateDefaultTournament() {
-  try {
-    const matchData = templateModSe12_12To64();
-    const teams = _teams.slice().sort((a, b) => a.number - b.number);
-    const seedAssignments = [];
-    teams.slice(0, 12).forEach((t, i)  => seedAssignments.push({ bracket: 'A', seed: i + 1, team_number: t.number }));
-    teams.slice(12, 24).forEach((t, i) => seedAssignments.push({ bracket: 'B', seed: i + 1, team_number: t.number }));
-    const today = new Date();
-    const ymd = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-    const name = 'Tournament ' + ymd;
-    const slug = await uniqueSlug(slugify(name));
-    const row = {
-      name,
-      slug,
-      status: 'live',
-      format_template: 'mod-se-12-12-to-64',
-      config: { bracketChampText: 'Bracket Champ', championText: 'Champion' },
-      seed_assignments: seedAssignments,
-      matches: matchData,
-      start_date: ymd,
-      is_active: true   // kept temporarily for backward compat; will be retired
-    };
-    const created = await sb('POST', 'tournaments', row);
-    // Make the tournament you just generated the active workspace.
-    const newId = created && created[0] && created[0].id;
-    if (newId != null) { _activeTournamentId = newId; _persistActiveTournamentId(); }
-    await loadTournaments();
-    loadMatchesView();
-    renderCapacityAnalyzer();
-  } catch (e) {
-    alert('Generate failed: ' + e.message);
-  }
-}
+/* Legacy hardcoded generate functions (generateDefaultTournament,
+   doGenerateDefaultTournament, generateMse32To8Tournament,
+   doGenerateMse32To8) removed 2026-05-25 after the data-driven
+   generateFromFormat path above was smoke-tested against all three
+   live tournaments. Sourced wiring from breakout.formats; same
+   output shape. Git history before 32c4643 has the originals. */
 
 /* ── Matches editor (Stages 1/2/3) ──────────
  *  Stage 1: read-only table of every match in the most-recently-live tournament.
@@ -2861,300 +2934,6 @@ async function duplicateEditingTournament() {
   });
 }
 
-/* ══════════════════════════════════════════════════════════════════════
-   Template: Modified Single Elimination, 32 teams → 8 Qualifiers
-   ──────────────────────────────────────────────────────────────────
-   Mirrors the APA Mod-SE 32-1 reference PDF, TRUNCATED at the 8-team
-   advancement line. No M49–M55, no champion match.
-
-   Single bracket '32'. Match-number assignment preserves the PDF's
-   numbering scheme exactly:
-     R1   : M1–M16   (16 matches, 32 teams enter)
-     R2W  : M17–M24  (8 matches, winners of R1 pairs)
-     R2L  : M25–M32  (8 matches, losers of R1 pairs)
-     R3L  : M33–M40  (8 matches: W of R2L vs L of R2W, crossing)
-     R4L  : M41–M44  (4 matches, terminal — ★ qualifiers from loser arm)
-     R3W  : M45–M48  (4 matches, terminal — ★ qualifiers from winner arm)
-
-   Cross-wiring (per the PDF's "L OF X" labels on M33–M40):
-     M33 = W of M25 vs L of M24      (W of R2L[0], L of R2W[7])
-     M34 = W of M26 vs L of M23
-     M35 = W of M27 vs L of M22
-     M36 = W of M28 vs L of M21
-     M37 = W of M29 vs L of M20
-     M38 = W of M30 vs L of M19
-     M39 = W of M31 vs L of M18
-     M40 = W of M32 vs L of M17
-   ══════════════════════════════════════════════════════════════════════ */
-const MSE32_SCHEDULE = {
-  1: { day: 'Saturday', time: '9:00 AM',  payout: null },
-  2: { day: 'Saturday', time: '11:00 AM', payout: null },
-  3: { day: 'Saturday', time: '1:00 PM',  payout: null },
-  4: { day: 'Saturday', time: '3:00 PM',  payout: null }
-};
-
-function templateMse32To8() {
-  const md = [];
-  const b = '32';
-  const id = (r, s) => '32-r' + r + 's' + s;
-
-  // R1 (M1–M16): 32 teams seeded into 16 matches via SEED_ORDER_32.
-  for (let i = 0; i < 16; i++) {
-    md.push({
-      id: id(1, i),
-      bracket: b, round: 1, slot: i, is_bye: false,
-      top_seed: SEED_ORDER_32[i * 2],
-      bot_seed: SEED_ORDER_32[i * 2 + 1]
-    });
-  }
-  // R2 winners (M17–M24): winners of consecutive R1 pairs.
-  for (let i = 0; i < 8; i++) {
-    md.push({
-      id: id(2, i),
-      bracket: b, round: 2, slot: i, is_bye: false,
-      top_from: { match_id: id(1, i * 2),     kind: 'winner' },
-      bot_from: { match_id: id(1, i * 2 + 1), kind: 'winner' }
-    });
-  }
-  // R2 losers (M25–M32): losers of those same R1 pairs.
-  for (let i = 0; i < 8; i++) {
-    md.push({
-      id: id(2, i + 8),
-      bracket: b, round: 2, slot: i + 8, is_bye: false,
-      top_from: { match_id: id(1, i * 2),     kind: 'loser' },
-      bot_from: { match_id: id(1, i * 2 + 1), kind: 'loser' }
-    });
-  }
-  // R3 loser-arm (M33–M40): W of R2L[i] vs L of R2W[7-i] (crossing).
-  for (let i = 0; i < 8; i++) {
-    md.push({
-      id: id(3, i),
-      bracket: b, round: 3, slot: i, is_bye: false,
-      top_from: { match_id: id(2, i + 8), kind: 'winner' },
-      bot_from: { match_id: id(2, 7 - i), kind: 'loser'  }
-    });
-  }
-  // R4 loser-arm (M41–M44) — ★ TERMINAL qualifiers.
-  for (let i = 0; i < 4; i++) {
-    md.push({
-      id: id(4, i),
-      bracket: b, round: 4, slot: i, is_bye: false,
-      top_from: { match_id: id(3, i * 2),     kind: 'winner' },
-      bot_from: { match_id: id(3, i * 2 + 1), kind: 'winner' },
-      is_qualifier: true
-    });
-  }
-  // R3 winner-arm (M45–M48) — ★ TERMINAL qualifiers. Winners of R2W pairs.
-  for (let i = 0; i < 4; i++) {
-    md.push({
-      id: id(3, i + 8),
-      bracket: b, round: 3, slot: i + 8, is_bye: false,
-      top_from: { match_id: id(2, i * 2),     kind: 'winner' },
-      bot_from: { match_id: id(2, i * 2 + 1), kind: 'winner' },
-      is_qualifier: true
-    });
-  }
-
-  applyMse32To8Schedule(md);
-  assignMatchNumbersMse32(md);
-  assignTableNumbersMse32(md);
-  return md;
-}
-
-function applyMse32To8Schedule(md) {
-  for (const m of md) {
-    const s = MSE32_SCHEDULE[m.round];
-    if (s) { m.day = s.day; m.time = s.time; m.payout = s.payout; }
-  }
-}
-
-/* Assign M1..M48 numbering to match the PDF exactly. Six sequential
- * segments by (round, slot-range) maps R1→1, R2W→17, R2L→25, R3L→33,
- * R4L→41, R3W→45 — the reference layout's actual numbering.       */
-function assignMatchNumbersMse32(md) {
-  const segments = [
-    { round: 1, smin: 0, smax: 15, start: 1  },
-    { round: 2, smin: 0, smax: 7,  start: 17 },
-    { round: 2, smin: 8, smax: 15, start: 25 },
-    { round: 3, smin: 0, smax: 7,  start: 33 },
-    { round: 4, smin: 0, smax: 3,  start: 41 },
-    { round: 3, smin: 8, smax: 11, start: 45 }
-  ];
-  for (const seg of segments) {
-    md.filter(m => m.round === seg.round && m.slot >= seg.smin && m.slot <= seg.smax)
-      .sort((a, b) => a.slot - b.slot)
-      .forEach((m, i) => { m.match_no = seg.start + i; });
-  }
-  // play_order = the natural play order through the bracket — admin can
-  // tune times per-match later if rounds interleave differently.
-  let p = 1;
-  for (let r = 1; r <= 4; r++) {
-    md.filter(m => m.round === r && !m.is_bye)
-      .sort((a, b) => a.slot - b.slot)
-      .forEach(m => { m.play_order = p++; });
-  }
-}
-
-function assignTableNumbersMse32(md) {
-  for (let r = 1; r <= 4; r++) {
-    md.filter(m => m.round === r && !m.is_bye)
-      .sort((a, b) => a.slot - b.slot)
-      .forEach((m, idx) => { m.table_no = idx + 1; });
-  }
-}
-
-/* ── Template (mirror of viewer's templateModSe12_12To64) ─────────── */
-function templateModSe12_12To64() {
-  const md = [];
-  md.push(...gen12Bracket('A'));
-  md.push(...gen12Bracket('B'));
-  md.push(...gen64Bracket());
-  applyTemplateSchedule(md);
-  assignMatchNumbers(md);
-  assignTableNumbers(md);
-  return md;
-}
-
-const TEMPLATE_SCHEDULES = {
-  twelve: [
-    { day: 'Saturday', time: '9:00 AM',  payout: null },
-    { day: 'Saturday', time: '10:30 AM', payout: null },
-    { day: 'Saturday', time: '12:00 PM', payout: 100 },
-    { day: 'Saturday', time: '1:30 PM',  payout: 400 }
-  ],
-  sixtyfour: [
-    { day: 'Saturday', time: '11:00 AM', payout: null },
-    { day: 'Saturday', time: '1:00 PM',  payout: null },
-    { day: 'Saturday', time: '3:00 PM',  payout: null },
-    { day: 'Saturday', time: '5:00 PM',  payout: null },
-    { day: 'Sunday',   time: '10:00 AM', payout: 100 },
-    { day: 'Sunday',   time: '12:00 PM', payout: 600 }
-  ]
-};
-
-function gen12Bracket(label) {
-  const matches = [];
-  for (let i = 0; i < 8; i++) {
-    const topSeed = SEED_ORDER_16[i * 2];
-    const botSeed = SEED_ORDER_16[i * 2 + 1];
-    const topReal = topSeed <= 12 ? topSeed : null;
-    const botReal = botSeed <= 12 ? botSeed : null;
-    if (topReal && botReal) {
-      matches.push({ id: label + '-R1-M' + i, bracket: label, round: 1, slot: i, is_bye: false,
-                     top_seed: topReal, bot_seed: botReal });
-    } else {
-      const seededTeam = topReal || botReal;
-      matches.push({ id: label + '-R1-BYE' + i, bracket: label, round: 1, slot: i, is_bye: true,
-                     top_seed: seededTeam, bot_seed: null });
-    }
-  }
-  for (let i = 0; i < 4; i++) {
-    matches.push({ id: label + '-R2-M' + (i + 1), bracket: label, round: 2, slot: i, is_bye: false,
-                   top_from: { match_id: matches[i * 2].id, kind: 'winner' },
-                   bot_from: { match_id: matches[i * 2 + 1].id, kind: 'winner' } });
-  }
-  const r2 = matches.filter(m => m.round === 2);
-  for (let i = 0; i < 2; i++) {
-    matches.push({ id: label + '-R3-M' + (i + 1), bracket: label, round: 3, slot: i, is_bye: false,
-                   top_from: { match_id: r2[i * 2].id, kind: 'winner' },
-                   bot_from: { match_id: r2[i * 2 + 1].id, kind: 'winner' } });
-  }
-  const r3 = matches.filter(m => m.round === 3);
-  matches.push({ id: label + '-R4-M1', bracket: label, round: 4, slot: 0, is_bye: false,
-                 top_from: { match_id: r3[0].id, kind: 'winner' },
-                 bot_from: { match_id: r3[1].id, kind: 'winner' } });
-  return matches;
-}
-
-function gen64Bracket() {
-  const matches = [];
-  const aR1Real = [1, 3, 5, 7].map(i => 'A-R1-M' + i);
-  const aR2     = [1, 2, 3, 4].map(i => 'A-R2-M' + i);
-  const bR1Real = [1, 3, 5, 7].map(i => 'B-R1-M' + i);
-  const bR2     = [1, 2, 3, 4].map(i => 'B-R2-M' + i);
-  for (let i = 0; i < 4; i++) {
-    matches.push({ id: '64-R1-M' + (i + 1), bracket: '64', round: 1, slot: i, is_bye: false,
-                   top_from: { match_id: aR1Real[i], kind: 'loser' },
-                   bot_from: { match_id: aR2[i],     kind: 'loser' } });
-  }
-  for (let i = 0; i < 4; i++) {
-    matches.push({ id: '64-R1-M' + (i + 5), bracket: '64', round: 1, slot: i + 4, is_bye: false,
-                   top_from: { match_id: bR1Real[i], kind: 'loser' },
-                   bot_from: { match_id: bR2[i],     kind: 'loser' } });
-  }
-  for (let i = 0; i < 4; i++) {
-    matches.push({ id: '64-R2-M' + (i + 1), bracket: '64', round: 2, slot: i, is_bye: false,
-                   top_from: { match_id: '64-R1-M' + (i * 2 + 1), kind: 'winner' },
-                   bot_from: { match_id: '64-R1-M' + (i * 2 + 2), kind: 'winner' } });
-  }
-  const integ = [
-    ['64-R3-M1', 'A-R3-M1', '64-R2-M1'],
-    ['64-R3-M2', 'A-R3-M2', '64-R2-M2'],
-    ['64-R3-M3', 'B-R3-M1', '64-R2-M3'],
-    ['64-R3-M4', 'B-R3-M2', '64-R2-M4']
-  ];
-  integ.forEach((row, idx) => {
-    matches.push({ id: row[0], bracket: '64', round: 3, slot: idx, is_bye: false,
-                   top_from: { match_id: row[1], kind: 'loser' },
-                   bot_from: { match_id: row[2], kind: 'winner' } });
-  });
-  for (let i = 0; i < 2; i++) {
-    matches.push({ id: '64-R4-M' + (i + 1), bracket: '64', round: 4, slot: i, is_bye: false,
-                   top_from: { match_id: '64-R3-M' + (i * 2 + 1), kind: 'winner' },
-                   bot_from: { match_id: '64-R3-M' + (i * 2 + 2), kind: 'winner' } });
-  }
-  matches.push({ id: '64-R5-M1', bracket: '64', round: 5, slot: 0, is_bye: false,
-                 top_from: { match_id: 'A-R4-M1', kind: 'loser' },
-                 bot_from: { match_id: '64-R4-M1', kind: 'winner' } });
-  matches.push({ id: '64-R5-M2', bracket: '64', round: 5, slot: 1, is_bye: false,
-                 top_from: { match_id: 'B-R4-M1', kind: 'loser' },
-                 bot_from: { match_id: '64-R4-M2', kind: 'winner' } });
-  matches.push({ id: '64-R6-M1', bracket: '64', round: 6, slot: 0, is_bye: false,
-                 top_from: { match_id: '64-R5-M1', kind: 'winner' },
-                 bot_from: { match_id: '64-R5-M2', kind: 'winner' } });
-  return matches;
-}
-
-function applyTemplateSchedule(md) {
-  for (const m of md) {
-    const sched = (m.bracket === '64' ? TEMPLATE_SCHEDULES.sixtyfour : TEMPLATE_SCHEDULES.twelve)[m.round - 1];
-    if (sched) { m.day = sched.day; m.time = sched.time; m.payout = sched.payout; }
-  }
-}
-
-function assignMatchNumbers(md) {
-  // M# = bracket-position. Byes included. Cross-references stay stable.
-  const bracketOrder = ['A', 'B', '64'];
-  let no = 1;
-  for (const bracket of bracketOrder) {
-    const inBracket = md.filter(m => m.bracket === bracket);
-    if (!inBracket.length) continue;
-    const maxRound = Math.max.apply(null, inBracket.map(m => m.round));
-    for (let r = 1; r <= maxRound; r++) {
-      inBracket.filter(m => m.round === r)
-               .sort((a, b) => a.slot - b.slot)
-               .forEach(m => { m.match_no = no++; });
-    }
-  }
-  // play_order = scheduling sequence, real matches only.
-  const playSeq = [['A',1],['B',1],['A',2],['B',2],['64',1],['A',3],['B',3],['64',2],['64',3],['A',4],['B',4],['64',4],['64',5],['64',6]];
-  let p = 1;
-  for (const pair of playSeq) {
-    md.filter(m => m.bracket === pair[0] && m.round === pair[1] && !m.is_bye)
-      .sort((a, b) => a.slot - b.slot)
-      .forEach(m => { m.play_order = p++; });
-  }
-}
-
-function assignTableNumbers(md) {
-  for (const bracket of ['A', 'B', '64']) {
-    for (let r = 1; r <= 6; r++) {
-      md.filter(m => m.bracket === bracket && m.round === r && !m.is_bye)
-        .sort((a, b) => a.slot - b.slot)
-        .forEach((m, idx) => { m.table_no = idx + 1; });
-    }
-  }
-}
 
 /* ── Init ─────────────────────────────────── */
 async function init() {
@@ -3182,6 +2961,10 @@ async function init() {
   if (staffLink && SB_KEY) staffLink.href = './?role=staff&key=' + encodeURIComponent(SB_KEY);
   try { await loadTeams(); } catch (e) { setStatus('bulkStatus', 'Load failed: ' + e.message, 'err'); return; }
   renderTeams();
+  // Load formats registry → renders Generate buttons. Fire-and-forget;
+  // if the breakout.formats table is empty or unreachable, the buttons
+  // panel shows a "no formats" hint but admin still loads.
+  loadFormats();
   // Await loadTournaments so the active-tournament pointer is resolved
   // (and any stale localStorage id corrected) before the editors load.
   await loadTournaments();
