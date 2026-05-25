@@ -408,11 +408,15 @@
       <h2 style="margin-bottom:0">Tournament</h2>
       <span class="hint" id="tournamentStatus"></span>
       <div style="margin-left:auto" class="actions">
-        <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate tournament</button>
+        <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate 12+12&rarr;64</button>
+        <button class="btn btn-primary btn-sm" onclick="generateMse32To8Tournament()">Generate 32&rarr;8</button>
         <button class="btn btn-outline btn-sm" onclick="clearAllMatchResults()" style="color:var(--danger);border-color:var(--danger)">Clear all results</button>
       </div>
     </div>
-    <p class="hint">Uses the <code>Mod-SE 12+12&rarr;64</code> template and assigns the first 24 teams (by number) to seeds 1&ndash;12 in each 12-team bracket. The viewer auto-loads the active tournament.</p>
+    <p class="hint">
+      <strong>12+12&rarr;64</strong>: two 12-team brackets feeding a 64-team modified single-elim (uses first 24 teams).
+      <strong>32&rarr;8</strong>: 32 teams enter, 8 qualifiers advance &mdash; winners of M41&ndash;M44 (loser arm) and M45&ndash;M48 (winner arm) per the APA Mod-SE 32-1 bracket, truncated at the 8-qualifier line (no M49&ndash;M55). The viewer auto-loads the active tournament.
+    </p>
     <div id="tournamentBody" class="hint">Loading&hellip;</div>
   </div>
 
@@ -911,6 +915,16 @@ document.getElementById('bulkInput').addEventListener('keydown', (ev) => {
 /* ── Tournament management ────────────────── */
 const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
 
+/* 32-team NCAA-style seeding (pairs in match order, M1..M16). Derived
+ * by splitting each 16-team match (seed S vs 17-S) into two 32-team
+ * matches (S vs 33-S, 17-S vs 16+S).                                  */
+const SEED_ORDER_32 = [
+  1, 32, 16, 17,   8, 25,  9, 24,
+  4, 29, 13, 20,   5, 28, 12, 21,
+  2, 31, 15, 18,   7, 26, 10, 23,
+  3, 30, 14, 19,   6, 27, 11, 22
+];
+
 /* ── Active-tournament pointer ─────────────────────────────────────────
  * "Active" = the tournament the structural editors (Matches, Schedule,
  * Capacity) operate on. It is an ADMIN-WORKSPACE selection, independent
@@ -1135,6 +1149,58 @@ async function generateDefaultTournament() {
     okText: 'Generate',
     onOk: doGenerateDefaultTournament
   });
+}
+
+/* ── Mod-SE 32 → 8 Qualifiers ──────────────────────────────────────
+ * 32 teams enter (seeds 1–32). Bracket runs through R1 (M1–M16),
+ * R2W (M17–M24) + R2L (M25–M32), R3L (M33–M40) and the two terminal
+ * rounds: R3W (M45–M48) and R4L (M41–M44). 8 winners advance to
+ * World Qualifiers; the bracket stops there (no M49–M55, no champion).
+ * Mirrors the APA Mod-SE 32-1 reference PDF but cut at the 8-team line.
+ * ──────────────────────────────────────────────────────────────── */
+function generateMse32To8Tournament() {
+  if (_teams.length < 32) {
+    alert('Need at least 32 teams in the database (have ' + _teams.length + '). Paste teams in the Add teams card first.');
+    return;
+  }
+  confirmModal({
+    title: 'Generate Mod-SE 32→8 tournament?',
+    message: 'Creates a Modified Single Elimination 32→8 tournament using the first 32 teams (by number). 48 matches, two terminal arms producing 8 World qualifiers. Status: live. Existing tournaments are left untouched.',
+    okText: 'Generate',
+    onOk: doGenerateMse32To8
+  });
+}
+
+async function doGenerateMse32To8() {
+  try {
+    const matchData = templateMse32To8();
+    const teams = _teams.slice().sort((a, b) => a.number - b.number);
+    const seedAssignments = [];
+    teams.slice(0, 32).forEach((t, i) => seedAssignments.push({ bracket: '32', seed: i + 1, team_number: t.number }));
+    const today = new Date();
+    const ymd = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    const name = 'Mod-SE 32→8  ' + ymd;
+    const slug = await uniqueSlug(slugify(name));
+    const row = {
+      name,
+      slug,
+      status: 'live',
+      format_template: 'mse-32-to-8',
+      config: { bracketChampText: 'Qualifier', championText: '8 World Qualifiers' },
+      seed_assignments: seedAssignments,
+      matches: matchData,
+      start_date: ymd,
+      is_active: true
+    };
+    const created = await sb('POST', 'tournaments', row);
+    const newId = created && created[0] && created[0].id;
+    if (newId != null) { _activeTournamentId = newId; _persistActiveTournamentId(); }
+    await loadTournaments();
+    loadMatchesView();
+    renderCapacityAnalyzer();
+  } catch (e) {
+    alert('Generate failed: ' + e.message);
+  }
 }
 
 async function doGenerateDefaultTournament() {
@@ -2785,6 +2851,148 @@ async function duplicateEditingTournament() {
       }
     }
   });
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Template: Modified Single Elimination, 32 teams → 8 Qualifiers
+   ──────────────────────────────────────────────────────────────────
+   Mirrors the APA Mod-SE 32-1 reference PDF, TRUNCATED at the 8-team
+   advancement line. No M49–M55, no champion match.
+
+   Single bracket '32'. Match-number assignment preserves the PDF's
+   numbering scheme exactly:
+     R1   : M1–M16   (16 matches, 32 teams enter)
+     R2W  : M17–M24  (8 matches, winners of R1 pairs)
+     R2L  : M25–M32  (8 matches, losers of R1 pairs)
+     R3L  : M33–M40  (8 matches: W of R2L vs L of R2W, crossing)
+     R4L  : M41–M44  (4 matches, terminal — ★ qualifiers from loser arm)
+     R3W  : M45–M48  (4 matches, terminal — ★ qualifiers from winner arm)
+
+   Cross-wiring (per the PDF's "L OF X" labels on M33–M40):
+     M33 = W of M25 vs L of M24      (W of R2L[0], L of R2W[7])
+     M34 = W of M26 vs L of M23
+     M35 = W of M27 vs L of M22
+     M36 = W of M28 vs L of M21
+     M37 = W of M29 vs L of M20
+     M38 = W of M30 vs L of M19
+     M39 = W of M31 vs L of M18
+     M40 = W of M32 vs L of M17
+   ══════════════════════════════════════════════════════════════════════ */
+const MSE32_SCHEDULE = {
+  1: { day: 'Saturday', time: '9:00 AM',  payout: null },
+  2: { day: 'Saturday', time: '11:00 AM', payout: null },
+  3: { day: 'Saturday', time: '1:00 PM',  payout: null },
+  4: { day: 'Saturday', time: '3:00 PM',  payout: null }
+};
+
+function templateMse32To8() {
+  const md = [];
+  const b = '32';
+  const id = (r, s) => '32-r' + r + 's' + s;
+
+  // R1 (M1–M16): 32 teams seeded into 16 matches via SEED_ORDER_32.
+  for (let i = 0; i < 16; i++) {
+    md.push({
+      id: id(1, i),
+      bracket: b, round: 1, slot: i, is_bye: false,
+      top_seed: SEED_ORDER_32[i * 2],
+      bot_seed: SEED_ORDER_32[i * 2 + 1]
+    });
+  }
+  // R2 winners (M17–M24): winners of consecutive R1 pairs.
+  for (let i = 0; i < 8; i++) {
+    md.push({
+      id: id(2, i),
+      bracket: b, round: 2, slot: i, is_bye: false,
+      top_from: { match_id: id(1, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(1, i * 2 + 1), kind: 'winner' }
+    });
+  }
+  // R2 losers (M25–M32): losers of those same R1 pairs.
+  for (let i = 0; i < 8; i++) {
+    md.push({
+      id: id(2, i + 8),
+      bracket: b, round: 2, slot: i + 8, is_bye: false,
+      top_from: { match_id: id(1, i * 2),     kind: 'loser' },
+      bot_from: { match_id: id(1, i * 2 + 1), kind: 'loser' }
+    });
+  }
+  // R3 loser-arm (M33–M40): W of R2L[i] vs L of R2W[7-i] (crossing).
+  for (let i = 0; i < 8; i++) {
+    md.push({
+      id: id(3, i),
+      bracket: b, round: 3, slot: i, is_bye: false,
+      top_from: { match_id: id(2, i + 8), kind: 'winner' },
+      bot_from: { match_id: id(2, 7 - i), kind: 'loser'  }
+    });
+  }
+  // R4 loser-arm (M41–M44) — ★ TERMINAL qualifiers.
+  for (let i = 0; i < 4; i++) {
+    md.push({
+      id: id(4, i),
+      bracket: b, round: 4, slot: i, is_bye: false,
+      top_from: { match_id: id(3, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(3, i * 2 + 1), kind: 'winner' },
+      is_qualifier: true
+    });
+  }
+  // R3 winner-arm (M45–M48) — ★ TERMINAL qualifiers. Winners of R2W pairs.
+  for (let i = 0; i < 4; i++) {
+    md.push({
+      id: id(3, i + 8),
+      bracket: b, round: 3, slot: i + 8, is_bye: false,
+      top_from: { match_id: id(2, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(2, i * 2 + 1), kind: 'winner' },
+      is_qualifier: true
+    });
+  }
+
+  applyMse32To8Schedule(md);
+  assignMatchNumbersMse32(md);
+  assignTableNumbersMse32(md);
+  return md;
+}
+
+function applyMse32To8Schedule(md) {
+  for (const m of md) {
+    const s = MSE32_SCHEDULE[m.round];
+    if (s) { m.day = s.day; m.time = s.time; m.payout = s.payout; }
+  }
+}
+
+/* Assign M1..M48 numbering to match the PDF exactly. Six sequential
+ * segments by (round, slot-range) maps R1→1, R2W→17, R2L→25, R3L→33,
+ * R4L→41, R3W→45 — the reference layout's actual numbering.       */
+function assignMatchNumbersMse32(md) {
+  const segments = [
+    { round: 1, smin: 0, smax: 15, start: 1  },
+    { round: 2, smin: 0, smax: 7,  start: 17 },
+    { round: 2, smin: 8, smax: 15, start: 25 },
+    { round: 3, smin: 0, smax: 7,  start: 33 },
+    { round: 4, smin: 0, smax: 3,  start: 41 },
+    { round: 3, smin: 8, smax: 11, start: 45 }
+  ];
+  for (const seg of segments) {
+    md.filter(m => m.round === seg.round && m.slot >= seg.smin && m.slot <= seg.smax)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach((m, i) => { m.match_no = seg.start + i; });
+  }
+  // play_order = the natural play order through the bracket — admin can
+  // tune times per-match later if rounds interleave differently.
+  let p = 1;
+  for (let r = 1; r <= 4; r++) {
+    md.filter(m => m.round === r && !m.is_bye)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach(m => { m.play_order = p++; });
+  }
+}
+
+function assignTableNumbersMse32(md) {
+  for (let r = 1; r <= 4; r++) {
+    md.filter(m => m.round === r && !m.is_bye)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach((m, idx) => { m.table_no = idx + 1; });
+  }
 }
 
 /* ── Template (mirror of viewer's templateModSe12_12To64) ─────────── */

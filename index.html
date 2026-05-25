@@ -1441,6 +1441,14 @@ async function loadTeams() {
  *  is regular while the top 4 seeds get R1 byes. */
 const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
 
+/* 32-team NCAA-style seeding for Mod-SE 32→8 template. Mirror of admin. */
+const SEED_ORDER_32 = [
+  1, 32, 16, 17,   8, 25,  9, 24,
+  4, 29, 13, 20,   5, 28, 12, 21,
+  2, 31, 15, 18,   7, 26, 10, 23,
+  3, 30, 14, 19,   6, 27, 11, 22
+];
+
 const TEMPLATE_SCHEDULES = {
   twelve: [
     { day: 'Saturday', time: '9:00 AM',  payout: null },
@@ -1457,6 +1465,83 @@ const TEMPLATE_SCHEDULES = {
     { day: 'Sunday',   time: '12:00 PM', payout: 600 }
   ]
 };
+
+/* ══════════════════════════════════════════════════════════════════════
+   Template: Mod-SE 32→8 (viewer mirror of the admin generator).
+   Mirrors the APA Mod-SE 32-1 reference PDF truncated at the 8-team
+   advancement line. See admin.html for full per-round documentation.
+   ══════════════════════════════════════════════════════════════════════ */
+const MSE32_SCHEDULE = {
+  1: { day: 'Saturday', time: '9:00 AM',  payout: null },
+  2: { day: 'Saturday', time: '11:00 AM', payout: null },
+  3: { day: 'Saturday', time: '1:00 PM',  payout: null },
+  4: { day: 'Saturday', time: '3:00 PM',  payout: null }
+};
+
+function templateMse32To8() {
+  const md = [];
+  const b = '32';
+  const id = (r, s) => '32-r' + r + 's' + s;
+  for (let i = 0; i < 16; i++) {
+    md.push({ id: id(1, i), bracket: b, round: 1, slot: i, is_bye: false,
+      top_seed: SEED_ORDER_32[i * 2], bot_seed: SEED_ORDER_32[i * 2 + 1] });
+  }
+  for (let i = 0; i < 8; i++) {
+    md.push({ id: id(2, i), bracket: b, round: 2, slot: i, is_bye: false,
+      top_from: { match_id: id(1, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(1, i * 2 + 1), kind: 'winner' } });
+  }
+  for (let i = 0; i < 8; i++) {
+    md.push({ id: id(2, i + 8), bracket: b, round: 2, slot: i + 8, is_bye: false,
+      top_from: { match_id: id(1, i * 2),     kind: 'loser' },
+      bot_from: { match_id: id(1, i * 2 + 1), kind: 'loser' } });
+  }
+  for (let i = 0; i < 8; i++) {
+    md.push({ id: id(3, i), bracket: b, round: 3, slot: i, is_bye: false,
+      top_from: { match_id: id(2, i + 8), kind: 'winner' },
+      bot_from: { match_id: id(2, 7 - i), kind: 'loser'  } });
+  }
+  for (let i = 0; i < 4; i++) {
+    md.push({ id: id(4, i), bracket: b, round: 4, slot: i, is_bye: false,
+      top_from: { match_id: id(3, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(3, i * 2 + 1), kind: 'winner' },
+      is_qualifier: true });
+  }
+  for (let i = 0; i < 4; i++) {
+    md.push({ id: id(3, i + 8), bracket: b, round: 3, slot: i + 8, is_bye: false,
+      top_from: { match_id: id(2, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(2, i * 2 + 1), kind: 'winner' },
+      is_qualifier: true });
+  }
+  for (const m of md) {
+    const s = MSE32_SCHEDULE[m.round];
+    if (s) { m.day = s.day; m.time = s.time; m.payout = s.payout; }
+  }
+  // M numbering (match the PDF) — same segments as admin.
+  const segments = [
+    { round: 1, smin: 0, smax: 15, start: 1  },
+    { round: 2, smin: 0, smax: 7,  start: 17 },
+    { round: 2, smin: 8, smax: 15, start: 25 },
+    { round: 3, smin: 0, smax: 7,  start: 33 },
+    { round: 4, smin: 0, smax: 3,  start: 41 },
+    { round: 3, smin: 8, smax: 11, start: 45 }
+  ];
+  for (const seg of segments) {
+    md.filter(m => m.round === seg.round && m.slot >= seg.smin && m.slot <= seg.smax)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach((m, i) => { m.match_no = seg.start + i; });
+  }
+  let p = 1;
+  for (let r = 1; r <= 4; r++) {
+    md.filter(m => m.round === r).sort((a, b) => a.slot - b.slot)
+      .forEach(m => { m.play_order = p++; });
+  }
+  for (let r = 1; r <= 4; r++) {
+    md.filter(m => m.round === r).sort((a, b) => a.slot - b.slot)
+      .forEach((m, idx) => { m.table_no = idx + 1; });
+  }
+  return md;
+}
 
 function templateModSe12_12To64() {
   const md = [];
