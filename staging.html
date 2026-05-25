@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BreakOut — staging viewer</title>
+<style>
+  :root {
+    --spm-red:  #ea002a;
+    --spm-blue: #0031a1;
+    --bg:       #f5f5f5;
+    --card:     #ffffff;
+    --border:   #d4d4d8;
+    --text:     #111827;
+    --muted:    #6b7280;
+    --win-line: #2563eb;
+    --los-line: #dc2626;
+    --term:     #16a34a;
+    --term-bg:  #d1fae5;
+    --term-edge:#86efac;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+
+  /* ── Banner — explicit "this is staging" so nobody mistakes for prod ── */
+  .banner {
+    background: linear-gradient(90deg, #fde68a, #fcd34d);
+    border-bottom: 1px solid #d97706;
+    padding: 8px 16px; font-size: 0.84rem; font-weight: 700; color: #78350f;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .banner .version { font-size: 0.74rem; color: #92400e; font-weight: 600; }
+  .banner a { color: #78350f; text-decoration: underline; }
+
+  .header { padding: 16px 18px; background: linear-gradient(135deg, var(--spm-red), var(--spm-blue));
+            color: #fff; }
+  .header-inner { max-width: 1400px; margin: 0 auto; }
+  .header h1 { font-size: 1.2rem; font-weight: 900; margin: 0 0 2px; }
+  .header .meta { font-size: 0.84rem; opacity: 0.92; }
+
+  main { max-width: 100%; padding: 14px 16px 40px; overflow-x: auto; }
+
+  .status { padding: 12px 16px; margin: 16px auto; max-width: 1200px;
+            border-radius: 10px; font-size: 0.92rem; }
+  .status.progress { background: #eff6ff; color: var(--spm-blue); border: 1px solid #bfdbfe; }
+  .status.error    { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+
+  /* ── Bracket layout ────────────────────────────────────────────────── */
+  .bracket-svg {
+    display: block; background: #fff; border: 1px solid var(--border);
+    border-radius: 12px; margin: 0 auto;
+  }
+
+  /* SVG style — bracket conventions */
+  .br-box        { fill: #fff; stroke: #111827; stroke-width: 1.2; }
+  .br-box.term   { fill: var(--term-bg); stroke: var(--term); stroke-width: 1.8; }
+  .br-box.bye    { fill: #f4f4f5; stroke: #a1a1aa; stroke-dasharray: 3 3; }
+  .br-wire       { stroke: #111827; stroke-width: 1.2; fill: none; }
+  .br-mnum       { font-size: 11px; font-weight: 700; fill: #111827; }
+  .br-mnum.term  { fill: var(--term); }
+  .br-team       { font-size: 11.5px; font-weight: 500; fill: #111827; }
+  .br-team.tbd   { fill: #9ca3af; font-style: italic; }
+  .br-team.win   { font-weight: 800; }
+  .br-team.los   { fill: #9ca3af; text-decoration: line-through; }
+  .br-divider    { stroke: #e5e7eb; stroke-width: 1; }
+  .br-col-label  { font-size: 11px; font-weight: 800; fill: var(--muted);
+                   text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* "TO" / "OF" cross-arm labels */
+  .br-ref-red    { font-size: 10px; font-weight: 700; fill: #cc0000; }
+  .br-ref-blue   { font-size: 10px; font-weight: 700; fill: #0033aa; }
+
+  .qpill         { fill: var(--term); }
+  .qpill-text    { font-size: 10px; font-weight: 800; fill: #fff; }
+
+  /* Engine-debug overlay (toggle) */
+  .debug-info {
+    position: sticky; bottom: 0;
+    background: #1f2937; color: #fff; padding: 8px 14px;
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    border-top: 1px solid #374151; max-width: 100%;
+  }
+  .debug-info h3 { font-size: 11px; margin: 0 0 4px; color: #fbbf24; text-transform: uppercase; letter-spacing: 0.08em; }
+  .debug-info pre { margin: 0; white-space: pre-wrap; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="banner">
+  <div>⚠️ <strong>STAGING</strong> — wiring-driven bracket renderer.
+    Does NOT modify production. <a href="./" target="_blank">production →</a></div>
+  <div class="version">v0.1 · staging engine</div>
+</div>
+
+<header class="header">
+  <div class="header-inner">
+    <h1 id="tournName">Loading…</h1>
+    <div class="meta" id="tournMeta">&nbsp;</div>
+  </div>
+</header>
+
+<main>
+  <div id="status" class="status progress">Loading tournament…</div>
+  <div id="bracketRoot"></div>
+</main>
+
+<div class="debug-info" id="debug" style="display:none;">
+  <h3>Engine debug</h3>
+  <pre id="debugPre"></pre>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   BreakOut STAGING — wiring-driven bracket render engine
+   ─────────────────────────────────────────────────────────────────
+   Reads the active tournament from Supabase (same data source as
+   production) and renders the bracket by *interpreting the wiring*
+   in each match's top_from/bot_from references — no hardcoded
+   bracket labels (A/B/T64).
+
+   Lane detection: each non-R1 match is classified into one of two
+   "arms" — W (winners) or L (losers) — based on whether its inputs
+   come from W-arm matches with 'winner' kind, or any input is from
+   the L arm / is a 'loser' kind. R1 matches are 'center'.
+
+   Layout:
+     • Center: R1 matches (16 boxes, top-down by slot)
+     • W arm to the right: one column per round
+     • L arm to the left: one column per round
+     • Y position of each non-R1 match is the avg of its inputs' Y
+       (classic bracket centering).
+     • Cross-arm wires (W-arm losers drop into L-arm matches) are
+       drawn as red dashed lines that route around the bracket via
+       a perimeter band.
+
+   Terminal matches (`is_qualifier: true` OR no downstream wiring)
+   are styled green and get qualifier callouts on their outer edge.
+   ════════════════════════════════════════════════════════════════════════ */
+
+const SB_URL  = 'https://dqzbekoaysgaiqljueac.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+const HEADERS_READ = {
+  apikey: SB_ANON,
+  Authorization: 'Bearer ' + SB_ANON,
+  'Accept-Profile': 'breakout'
+};
+
+const URL_PARAMS = new URLSearchParams(location.search);
+const T_SLUG     = URL_PARAMS.get('t') || '';
+const DEBUG      = URL_PARAMS.get('debug') === '1';
+
+/* ── Layout constants ─────────────────────────────────────────────── */
+const LAYOUT = {
+  BOX_W:        88,
+  BOX_H:        38,
+  ROW_H:        46,    // base vertical spacing for R1 cards
+  COL_GAP:      54,    // horizontal gap between rounds
+  TOP_PAD:      80,    // room for round headers
+  SIDE_PAD:     140,   // outer-edge gutter for "QUALIFIER" pills
+  LABEL_OFFSET: 16     // distance from card to cross-arm L OF/L TO labels
+};
+
+let _matches = [];   // raw rows from tournament.matches
+let _seedMap = {};   // seed → team name (if seed_assignments + teams populated)
+let _layout  = null; // computed layout result
+
+/* ── Data load ───────────────────────────────────────────────────── */
+async function loadTournament(slug) {
+  let url = SB_URL + '/rest/v1/tournaments?select=*';
+  if (slug) url += '&slug=eq.' + encodeURIComponent(slug);
+  else      url += '&is_active=eq.true';
+  url += '&limit=1';
+  const r = await fetch(url, { headers: HEADERS_READ });
+  if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + (await r.text()).slice(0, 200));
+  const rows = await r.json();
+  return rows[0] || null;
+}
+
+async function loadTeamsByNumber(numbers) {
+  if (!numbers.length) return {};
+  const r = await fetch(SB_URL + '/rest/v1/teams?select=number,name&number=in.(' + numbers.join(',') + ')',
+    { headers: HEADERS_READ });
+  if (!r.ok) return {};
+  const list = await r.json();
+  const map = {};
+  for (const t of list) map[t.number] = t.name;
+  return map;
+}
+
+/* ── Helpers ─────────────────────────────────────────────────────── */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+function setStatus(msg, kind) {
+  const el = document.getElementById('status');
+  if (!msg) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.className = 'status ' + (kind || 'progress');
+  el.textContent = msg;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   LANE DETECTION
+   ──────────────────────────────────────────────────────────────────
+   For each match, determine which "arm" it belongs to: center (R1),
+   W (winners' bracket), or L (losers' bracket / consolation).
+
+   Rules (applied recursively from R1 outward):
+     • Round 1 matches → arm = 'center'
+     • Round N≥2 match:
+         - If all its inputs come from 'center'-or-'W' arm matches via
+           'winner' kind → arm = 'W'
+         - Otherwise → arm = 'L'  (any 'loser' kind input, or any input
+           from the L arm, drops the match into the L arm)
+   ══════════════════════════════════════════════════════════════════════ */
+function detectArms(matches) {
+  const byId = Object.fromEntries(matches.map(m => [m.id, m]));
+  const arms = {};
+  // Process by round to ensure inputs are classified first.
+  const byRound = {};
+  for (const m of matches) (byRound[m.round] = byRound[m.round] || []).push(m);
+  const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
+  for (const r of rounds) {
+    for (const m of byRound[r]) {
+      if (r === 1) { arms[m.id] = 'center'; continue; }
+      const inputs = [m.top_from, m.bot_from].filter(Boolean);
+      let arm = 'W';
+      for (const inp of inputs) {
+        const src = byId[inp.match_id];
+        const srcArm = src ? arms[src.id] : null;
+        if (inp.kind === 'loser') { arm = 'L'; break; }
+        if (srcArm === 'L')       { arm = 'L'; break; }
+      }
+      arms[m.id] = arm;
+    }
+  }
+  return arms;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   TERMINAL DETECTION
+   ──────────────────────────────────────────────────────────────────
+   A match is "terminal" (qualifier) if either:
+     • is_qualifier: true on the row, OR
+     • no other match references it as top_from / bot_from
+   ══════════════════════════════════════════════════════════════════════ */
+function detectTerminals(matches) {
+  const referenced = new Set();
+  for (const m of matches) {
+    if (m.top_from) referenced.add(m.top_from.match_id);
+    if (m.bot_from) referenced.add(m.bot_from.match_id);
+  }
+  const terminal = {};
+  for (const m of matches) {
+    terminal[m.id] = !!m.is_qualifier || !referenced.has(m.id);
+  }
+  return terminal;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   POSITION CALCULATION
+   ──────────────────────────────────────────────────────────────────
+   X = arm-relative round column position
+     • center R1: x = 0
+     • W arm:  x = +round       (round 2 → col +1, round 3 → +2, ...)
+     • L arm:  x = -round        (round 2 → col -1, round 3 → -2, ...)
+   Y = wiring-centered: average of inputs' Y. R1 matches stack
+       linearly by slot.
+
+   After computing logical positions, we translate to pixel coords
+   shifting so the leftmost column lands at SIDE_PAD.
+   ══════════════════════════════════════════════════════════════════════ */
+function computePositions(matches, arms) {
+  const byId = Object.fromEntries(matches.map(m => [m.id, m]));
+  const pos = {};   // id → { col, row }
+  // R1: stack vertically by slot
+  const r1 = matches.filter(m => m.round === 1).sort((a, b) => a.slot - b.slot);
+  r1.forEach((m, i) => { pos[m.id] = { col: 0, row: i }; });
+
+  // Iterate non-R1 matches in round order
+  const nonR1 = matches.filter(m => m.round !== 1).sort((a, b) => a.round - b.round || a.slot - b.slot);
+  for (const m of nonR1) {
+    const arm = arms[m.id];
+    const col = (arm === 'L' ? -1 : 1) * (m.round - 1);
+    const topSrc = m.top_from && pos[m.top_from.match_id];
+    const botSrc = m.bot_from && pos[m.bot_from.match_id];
+    let row;
+    if (topSrc && botSrc)       row = (topSrc.row + botSrc.row) / 2;
+    else if (topSrc)            row = topSrc.row;
+    else if (botSrc)            row = botSrc.row;
+    else                        row = m.slot;
+    pos[m.id] = { col, row };
+  }
+  return pos;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SEED → DISPLAY NAME RESOLUTION
+   ──────────────────────────────────────────────────────────────────
+   For R1 matches with top_seed/bot_seed, look up via seed_assignments
+   and the team-name map. Returns "Seed N" placeholder for empty slots.
+   ══════════════════════════════════════════════════════════════════════ */
+function seedDisplay(seed, seedMap, teamNameMap) {
+  if (seed == null) return null;
+  const team_number = seedMap[seed];
+  if (team_number != null) {
+    const name = teamNameMap[team_number] || ('#' + team_number);
+    return name + '  (s' + seed + ')';
+  }
+  return 'Seed ' + seed;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SVG RENDER
+   ══════════════════════════════════════════════════════════════════════ */
+function renderBracket(matches, seedMap, teamNameMap) {
+  const arms      = detectArms(matches);
+  const terminals = detectTerminals(matches);
+  const pos       = computePositions(matches, arms);
+
+  // Pixel transform: bounds
+  const rows = Object.values(pos).map(p => p.row);
+  const cols = Object.values(pos).map(p => p.col);
+  const minRow = Math.min(...rows), maxRow = Math.max(...rows);
+  const minCol = Math.min(...cols), maxCol = Math.max(...cols);
+
+  const numCols = maxCol - minCol + 1;
+  const colWidth = LAYOUT.BOX_W + LAYOUT.COL_GAP;
+  const w = LAYOUT.SIDE_PAD * 2 + numCols * colWidth;
+  const h = LAYOUT.TOP_PAD + (maxRow - minRow + 1) * LAYOUT.ROW_H + 80;
+
+  // (col, row) → (x, y) center
+  const xCenter = (col) => LAYOUT.SIDE_PAD + (col - minCol) * colWidth + LAYOUT.BOX_W / 2;
+  const yCenter = (row) => LAYOUT.TOP_PAD + (row - minRow) * LAYOUT.ROW_H + LAYOUT.BOX_H / 2;
+  const xLeft   = (col) => xCenter(col) - LAYOUT.BOX_W / 2;
+  const xRight  = (col) => xCenter(col) + LAYOUT.BOX_W / 2;
+
+  // ── Build SVG ──
+  let svg = '<svg class="bracket-svg" viewBox="0 0 ' + w + ' ' + h +
+            '" width="' + Math.min(w, 1400) + '" xmlns="http://www.w3.org/2000/svg">';
+
+  // Column headers — group matches by col, show round label
+  const colGroups = {};
+  for (const m of matches) {
+    const p = pos[m.id];
+    if (!p) continue;
+    const c = p.col;
+    if (!colGroups[c]) colGroups[c] = [];
+    colGroups[c].push(m);
+  }
+  const colLabels = (col) => {
+    const ms = colGroups[col] || [];
+    if (!ms.length) return '';
+    if (col === 0) return 'R1';
+    const arm = arms[ms[0].id];
+    return (arm === 'W' ? 'W' : 'L') + (Math.abs(col) + 1);
+  };
+  for (let c = minCol; c <= maxCol; c++) {
+    const cx = xCenter(c);
+    svg += '<text class="br-col-label" x="' + cx + '" y="40" text-anchor="middle">' + esc(colLabels(c)) + '</text>';
+  }
+
+  // ── Wires ────────────────────────────────────────────────────────
+  // Same-arm winner-path wires (R1 → R2 → ... within an arm)
+  for (const m of matches) {
+    if (m.round === 1) continue;
+    const myArm = arms[m.id];
+    const inputs = [m.top_from, m.bot_from].filter(Boolean);
+    for (const inp of inputs) {
+      const src = matches.find(x => x.id === inp.match_id);
+      if (!src) continue;
+      const srcArm = arms[src.id];
+      const sP = pos[src.id], dP = pos[m.id];
+      if (!sP || !dP) continue;
+      const x1 = xRight(sP.col), y1 = yCenter(sP.row);
+      const x2 = xLeft(dP.col),  y2 = yCenter(dP.row);
+      // Same-arm winner wires: simple right-angle.
+      // Cross-arm wires (L arm pulling from W arm losers, kind='loser'): just label, don't draw long line.
+      const isCross = (myArm !== srcArm) && (myArm === 'L' && srcArm !== 'L');
+      if (isCross) continue;
+      // Same-arm: right-angled connector (W arm goes right; L arm goes left)
+      if (myArm === 'L' || (myArm === 'center' && srcArm === 'W')) {
+        // L arm: wires go from src.right to dst.left, RIGHT-TO-LEFT visually
+        // src is at higher col (more central), dst is at lower col (more leftward)
+        const xMid = (x2 + (sP.col > dP.col ? xLeft(sP.col) : x1)) / 2;
+        svg += '<path class="br-wire" d="M ' + xLeft(sP.col) + ' ' + y1 +
+               ' L ' + xMid + ' ' + y1 + ' L ' + xMid + ' ' + y2 +
+               ' L ' + x2  + ' ' + y2 + '"/>';
+      } else {
+        const xMid = (x1 + x2) / 2;
+        svg += '<path class="br-wire" d="M ' + x1 + ' ' + y1 +
+               ' L ' + xMid + ' ' + y1 + ' L ' + xMid + ' ' + y2 +
+               ' L ' + x2  + ' ' + y2 + '"/>';
+      }
+    }
+  }
+
+  // ── Match boxes ──────────────────────────────────────────────────
+  for (const m of matches) {
+    const p = pos[m.id];
+    if (!p) continue;
+    const cx = xCenter(p.col);
+    const cy = yCenter(p.row);
+    const tx = xLeft(p.col);
+    const ty = cy - LAYOUT.BOX_H / 2;
+    const isTerm = terminals[m.id];
+    const boxCls = 'br-box' + (isTerm ? ' term' : '') + (m.is_bye ? ' bye' : '');
+    svg += '<rect class="' + boxCls + '" x="' + tx + '" y="' + ty +
+           '" width="' + LAYOUT.BOX_W + '" height="' + LAYOUT.BOX_H + '" rx="3"/>';
+    // Match number
+    const mn = m.match_no != null ? m.match_no : m.id;
+    svg += '<text class="br-mnum' + (isTerm ? ' term' : '') + '" x="' + (tx + 4) + '" y="' + (ty + 11) + '">M' + esc(mn) + '</text>';
+    // Top team line
+    const topName = m.top_seed != null
+      ? (seedDisplay(m.top_seed, seedMap, teamNameMap) || 'Seed ' + m.top_seed)
+      : (m.top_from ? 'W of M' + matchNoFor(m.top_from.match_id, matches) +
+          (m.top_from.kind === 'loser' ? ' (L)' : '') : 'TBD');
+    const botName = m.bot_seed != null
+      ? (seedDisplay(m.bot_seed, seedMap, teamNameMap) || 'Seed ' + m.bot_seed)
+      : (m.bot_from ? 'W of M' + matchNoFor(m.bot_from.match_id, matches) +
+          (m.bot_from.kind === 'loser' ? ' (L)' : '') : 'TBD');
+    svg += '<text class="br-team tbd" x="' + (tx + 4) + '" y="' + (ty + 23) + '">' + esc(topName.slice(0, 18)) + '</text>';
+    svg += '<text class="br-team tbd" x="' + (tx + 4) + '" y="' + (ty + 34) + '">' + esc(botName.slice(0, 18)) + '</text>';
+
+    // Cross-arm loser-drop labels (L OF X): if this match has a 'loser' kind input from W arm, draw a red label
+    const losInputs = [m.top_from, m.bot_from].filter(x => x && x.kind === 'loser');
+    if (losInputs.length) {
+      const lbl = losInputs.map(x => 'L OF M' + matchNoFor(x.match_id, matches)).join(' / ');
+      svg += '<text class="br-ref-blue" x="' + tx + '" y="' + (ty + LAYOUT.BOX_H + 11) + '">' + esc(lbl) + '</text>';
+    }
+  }
+
+  // ── Terminal qualifier pills on outer edges ──────────────────────
+  const termMatches = matches.filter(m => terminals[m.id])
+    .sort((a, b) => {
+      const pa = pos[a.id], pb = pos[b.id];
+      return (pa.col === pb.col ? pa.row - pb.row : pa.col - pb.col);
+    });
+  termMatches.forEach((m, i) => {
+    const p = pos[m.id];
+    if (!p) return;
+    const arm = arms[m.id];
+    if (arm === 'center') return;
+    const isLeft = arm === 'L';
+    const px = isLeft ? (xLeft(p.col) - 105) : (xRight(p.col) + 12);
+    const py = yCenter(p.row) - 9;
+    const pillX = Math.max(2, px);
+    svg += '<rect class="qpill" x="' + pillX + '" y="' + py +
+           '" width="92" height="18" rx="3"/>';
+    svg += '<text class="qpill-text" x="' + (pillX + 46) + '" y="' + (py + 12) +
+           '" text-anchor="middle">QUALIFIER ' + (i + 1) + '</text>';
+    // Connect pill to box
+    const wireX1 = isLeft ? xLeft(p.col) : xRight(p.col);
+    const wireX2 = isLeft ? (pillX + 92) : pillX;
+    svg += '<path class="br-wire" d="M ' + wireX1 + ' ' + yCenter(p.row) +
+           ' L ' + wireX2 + ' ' + yCenter(p.row) + '"/>';
+  });
+
+  svg += '</svg>';
+  _layout = { matches: matches.length, terminals: termMatches.length, w, h, pos, arms };
+  return svg;
+}
+
+function matchNoFor(matchId, matches) {
+  const m = matches.find(x => x.id === matchId);
+  return m && m.match_no != null ? m.match_no : matchId;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   BOOTSTRAP
+   ══════════════════════════════════════════════════════════════════════ */
+async function init() {
+  try {
+    const t = await loadTournament(T_SLUG);
+    if (!t) { setStatus('No tournament found.', 'error'); return; }
+    document.getElementById('tournName').textContent = t.name;
+    document.getElementById('tournMeta').textContent =
+      (t.format_template || '—') + ' · ' + (Array.isArray(t.matches) ? t.matches.length : 0) +
+      ' matches · slug: ' + t.slug;
+
+    _matches = Array.isArray(t.matches) ? t.matches : [];
+
+    // Build seed→team_number map from seed_assignments
+    _seedMap = {};
+    if (Array.isArray(t.seed_assignments)) {
+      for (const sa of t.seed_assignments) {
+        _seedMap[sa.seed] = sa.team_number;
+      }
+    }
+    const teamNumbers = [...new Set(Object.values(_seedMap))];
+    const teamNameMap = await loadTeamsByNumber(teamNumbers);
+
+    const root = document.getElementById('bracketRoot');
+    root.innerHTML = renderBracket(_matches, _seedMap, teamNameMap);
+    setStatus('');
+
+    if (DEBUG && _layout) {
+      const dbg = document.getElementById('debug');
+      dbg.style.display = 'block';
+      document.getElementById('debugPre').textContent = JSON.stringify({
+        ...{ matches: _layout.matches, terminals: _layout.terminals, w: _layout.w, h: _layout.h }
+      }, null, 2);
+    }
+  } catch (e) {
+    setStatus('Load failed: ' + e.message, 'error');
+    console.error(e);
+  }
+}
+init();
+</script>
+
+</body>
+</html>
