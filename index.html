@@ -919,9 +919,11 @@
   /* ── PREPROD banner ──────────────────────────────────────────────
      Yellow strip pinned above the header so no human (and no agent
      reading a screenshot) can confuse the preprod URL with the live
-     production URL. Removed by promote.sh when the preprod folder
-     is collapsed back into the production root. */
-  .preprod-banner {
+     production URL. Visible ONLY when the page is served from a
+     /preprod/ path — JS toggles a body class on load (see end of
+     <script> in this file). On production the banner stays display:none. */
+  .preprod-banner { display: none; }
+  body.is-preprod .preprod-banner {
     background: linear-gradient(90deg, #fde68a, #fcd34d);
     border-bottom: 1px solid #d97706;
     color: #78350f;
@@ -1134,6 +1136,11 @@ const TOURNAMENT_TEXT = {
    short-circuit the whole version-watch — preprod versioning is driven
    by manual file edits + smoke test, not by the apa_core.apps row. */
 const IS_PREPROD = location.pathname.indexOf('/preprod/') !== -1;
+// Toggle preprod banner visibility based on URL — CSS gates display on this class.
+if (IS_PREPROD) document.documentElement.parentElement && document.body && document.body.classList.add('is-preprod');
+document.addEventListener('DOMContentLoaded', () => {
+  if (IS_PREPROD) document.body.classList.add('is-preprod');
+});
 async function checkVersion() {
   if (IS_PREPROD) return;            // preprod doesn't track apa_core.apps
   if (_versionMismatch) return;

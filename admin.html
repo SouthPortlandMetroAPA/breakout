@@ -346,8 +346,10 @@
 
   .hidden { display: none !important; }
 
-  /* PREPROD banner — mirror of preprod/index.html. */
-  .preprod-banner {
+  /* PREPROD banner — visible ONLY on /preprod/ URLs. JS at the top of
+     <script> toggles `body.is-preprod` based on the URL; CSS gates display. */
+  .preprod-banner { display: none; }
+  body.is-preprod .preprod-banner {
     background: linear-gradient(90deg, #fde68a, #fcd34d);
     border-bottom: 1px solid #d97706;
     color: #78350f;
@@ -695,6 +697,10 @@ function validNumber(n) { return Number.isInteger(n) && n >= 101 && n <= 9916 &&
 /* ── Auto-update ──────────────────────────── */
 /* PREPROD guard — see index.html for rationale. */
 const IS_PREPROD = location.pathname.indexOf('/preprod/') !== -1;
+// Toggle preprod banner visibility based on URL — CSS gates display on body.is-preprod.
+document.addEventListener('DOMContentLoaded', () => {
+  if (IS_PREPROD) document.body.classList.add('is-preprod');
+});
 async function checkVersion() {
   if (IS_PREPROD) return;            // preprod doesn't track apa_core.apps
   if (_versionMismatch) return;
