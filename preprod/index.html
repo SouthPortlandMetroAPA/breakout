@@ -1117,7 +1117,7 @@ const STAFF_KEY  = URL_PARAMS.get('key') || '';
 /* ── PREPROD feature flag: wiring-driven engine ─────────────────────
    When ?engine=wiring is passed, render uses the new wiring-driven
    detectArms/detectTerminals/computePositions pipeline (ported from
-   staging.html v0.4) instead of the hardcoded A/B/T64 round-by-round
+   wiring engine v0.4) instead of the hardcoded A/B/T64 round-by-round
    filter. This lets us smoke-test the new engine against the same
    tournaments production already supports, side-by-side, before
    promoting. Default off so the preprod URL looks identical to prod
@@ -2496,9 +2496,12 @@ function renderHero() {
 /* ════════════════════════════════════════════════════════════════════════
    WIRING-DRIVEN ENGINE (preprod, ?engine=wiring opt-in)
    ─────────────────────────────────────────────────────────────────
-   Ported from Apps/BreakOut/site/staging.html v0.4 (validated against
-   mse-32-to-8 and mod-se-12-12-to-64 templates — see tools/claude/
-   breakout/validate-engine.mjs). These three pure functions are the
+   Engine v0.4 — validated against mse-32-to-8 and mod-se-12-12-to-64
+   templates (see tools/claude/breakout/validate-engine.mjs). Originated
+   as a parallel-file at Apps/BreakOut/site/staging.html during the
+   overnight 2026-05-24 build; that file was deleted 2026-05-25 once the
+   preprod policy gave the engine a proper home here. These pure
+   functions are the
    replacement layout brain. They do NOT render — render still goes
    through bracketSectionHtml + drawConnectorsFor — but they SUPPLY
    the per-match (column, row) positions, arm classification, and
