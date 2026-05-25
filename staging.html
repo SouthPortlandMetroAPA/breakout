@@ -90,7 +90,7 @@
 <div class="banner">
   <div>⚠️ <strong>STAGING</strong> — wiring-driven bracket renderer.
     Does NOT modify production. <a href="./" target="_blank">production →</a></div>
-  <div class="version">v0.1 · staging engine</div>
+  <div class="version">v0.2 · staging engine</div>
 </div>
 
 <header class="header">
@@ -279,18 +279,31 @@ function computePositions(matches, arms) {
   const r1 = matches.filter(m => m.round === 1).sort((a, b) => a.slot - b.slot);
   r1.forEach((m, i) => { pos[m.id] = { col: 0, row: i }; });
 
-  // Iterate non-R1 matches in round order
+  // Iterate non-R1 matches in round order. Y position uses SAME-ARM
+  // inputs only — cross-arm inputs (loser drops) are shown via labels
+  // and don't pull the card toward the other arm's vertical center.
   const nonR1 = matches.filter(m => m.round !== 1).sort((a, b) => a.round - b.round || a.slot - b.slot);
   for (const m of nonR1) {
     const arm = arms[m.id];
     const col = (arm === 'L' ? -1 : 1) * (m.round - 1);
-    const topSrc = m.top_from && pos[m.top_from.match_id];
-    const botSrc = m.bot_from && pos[m.bot_from.match_id];
+    const inputs = [m.top_from, m.bot_from].filter(Boolean);
+    const sameArmRows = inputs
+      .map(inp => {
+        const src = byId[inp.match_id];
+        if (!src) return null;
+        const srcArm = arms[src.id];
+        // R1 is 'center' — count as same-arm for both W and L.
+        if (srcArm === 'center' || srcArm === arm) {
+          return pos[src.id] ? pos[src.id].row : null;
+        }
+        return null;
+      })
+      .filter(r => r !== null);
+
     let row;
-    if (topSrc && botSrc)       row = (topSrc.row + botSrc.row) / 2;
-    else if (topSrc)            row = topSrc.row;
-    else if (botSrc)            row = botSrc.row;
-    else                        row = m.slot;
+    if (sameArmRows.length === 2)      row = (sameArmRows[0] + sameArmRows[1]) / 2;
+    else if (sameArmRows.length === 1) row = sameArmRows[0];
+    else                               row = m.slot;
     pos[m.id] = { col, row };
   }
   return pos;
@@ -363,7 +376,14 @@ function renderBracket(matches, seedMap, teamNameMap) {
   }
 
   // ── Wires ────────────────────────────────────────────────────────
-  // Same-arm winner-path wires (R1 → R2 → ... within an arm)
+  // Direction is determined by dst arm:
+  //   • W arm dst (col > 0): wire flows left→right
+  //       — exit src's right edge, enter dst's left edge
+  //   • L arm dst (col < 0): wire flows right→left
+  //       — exit src's left edge, enter dst's right edge
+  // Cross-arm wires (L-arm match consuming a W-arm match's loser) are
+  // NOT drawn as long lines — they'd clutter; we use 'L OF M' labels
+  // beneath the dst box instead.
   for (const m of matches) {
     if (m.round === 1) continue;
     const myArm = arms[m.id];
@@ -374,26 +394,18 @@ function renderBracket(matches, seedMap, teamNameMap) {
       const srcArm = arms[src.id];
       const sP = pos[src.id], dP = pos[m.id];
       if (!sP || !dP) continue;
-      const x1 = xRight(sP.col), y1 = yCenter(sP.row);
-      const x2 = xLeft(dP.col),  y2 = yCenter(dP.row);
-      // Same-arm winner wires: simple right-angle.
-      // Cross-arm wires (L arm pulling from W arm losers, kind='loser'): just label, don't draw long line.
-      const isCross = (myArm !== srcArm) && (myArm === 'L' && srcArm !== 'L');
+      // Cross-arm? Skip drawing.
+      const isCross = (myArm !== srcArm) && srcArm !== 'center';
       if (isCross) continue;
-      // Same-arm: right-angled connector (W arm goes right; L arm goes left)
-      if (myArm === 'L' || (myArm === 'center' && srcArm === 'W')) {
-        // L arm: wires go from src.right to dst.left, RIGHT-TO-LEFT visually
-        // src is at higher col (more central), dst is at lower col (more leftward)
-        const xMid = (x2 + (sP.col > dP.col ? xLeft(sP.col) : x1)) / 2;
-        svg += '<path class="br-wire" d="M ' + xLeft(sP.col) + ' ' + y1 +
-               ' L ' + xMid + ' ' + y1 + ' L ' + xMid + ' ' + y2 +
-               ' L ' + x2  + ' ' + y2 + '"/>';
-      } else {
-        const xMid = (x1 + x2) / 2;
-        svg += '<path class="br-wire" d="M ' + x1 + ' ' + y1 +
-               ' L ' + xMid + ' ' + y1 + ' L ' + xMid + ' ' + y2 +
-               ' L ' + x2  + ' ' + y2 + '"/>';
-      }
+      const dstGoesLeft = myArm === 'L';
+      const x1 = dstGoesLeft ? xLeft(sP.col)  : xRight(sP.col);
+      const x2 = dstGoesLeft ? xRight(dP.col) : xLeft(dP.col);
+      const y1 = yCenter(sP.row), y2 = yCenter(dP.row);
+      const xMid = (x1 + x2) / 2;
+      svg += '<path class="br-wire" d="M ' + x1 + ' ' + y1 +
+             ' L ' + xMid + ' ' + y1 +
+             ' L ' + xMid + ' ' + y2 +
+             ' L ' + x2  + ' ' + y2 + '"/>';
     }
   }
 
