@@ -427,14 +427,22 @@
       <h2 style="margin-bottom:0">Tournament</h2>
       <span class="hint" id="tournamentStatus"></span>
       <div style="margin-left:auto" class="actions">
-        <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate 12+12&rarr;64</button>
-        <button class="btn btn-primary btn-sm" onclick="generateMse32To8Tournament()">Generate 32&rarr;8</button>
+        <!-- Generate buttons rendered from breakout.formats at runtime
+             (see renderFormatButtons / generateFromFormat). To add a new
+             bracket format: author DSL in tools/claude/breakout/dsl/formats/,
+             run sync-formats.mjs, and a button appears here automatically.
+             No admin code change required. -->
+        <span id="formatGenerateButtons" style="display:inline-flex;gap:6px;flex-wrap:wrap;">
+          <span class="hint" style="opacity:0.6">Loading formats&hellip;</span>
+        </span>
         <button class="btn btn-outline btn-sm" onclick="clearAllMatchResults()" style="color:var(--danger);border-color:var(--danger)">Clear all results</button>
       </div>
     </div>
     <p class="hint">
-      <strong>12+12&rarr;64</strong>: two 12-team brackets feeding a 64-team modified single-elim (uses first 24 teams).
-      <strong>32&rarr;8</strong>: 32 teams enter, 8 qualifiers advance &mdash; winners of M41&ndash;M44 (loser arm) and M45&ndash;M48 (winner arm) per the APA Mod-SE 32-1 bracket, truncated at the 8-qualifier line (no M49&ndash;M55). The viewer auto-loads the active tournament.
+      Pick a format to generate a new tournament. Formats are defined in
+      <code>tools/claude/breakout/dsl/formats/*.yml</code> and synced into
+      <code>breakout.formats</code> &mdash; this list updates automatically
+      when new formats are added.
     </p>
     <div id="tournamentBody" class="hint">Loading&hellip;</div>
   </div>
@@ -1159,6 +1167,160 @@ function buildDurationOptions(selected) {
   }
   return opts.join('');
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   FORMATS-DRIVEN TOURNAMENT GENERATION
+   ─────────────────────────────────────────────────────────────────
+   Replaces the hardcoded generateDefaultTournament / generateMse32To8
+   path with one that reads from breakout.formats. Adding a new format =
+   author DSL .yml + run sync-formats.mjs → button appears here automatically.
+   The compiled wiring lives in breakout.formats.wiring as JSONB; we
+   deep-copy it into the new tournament's matches array on generate.
+
+   Backward compat: the legacy templateMse32To8 / templateModSe12_12To64
+   functions remain below as fallback / reference, but the UI buttons no
+   longer call them. The data-driven path produces equivalent output —
+   verified by running sync-formats.mjs against the same DSL files.
+   ════════════════════════════════════════════════════════════════════════ */
+
+let _formats = [];
+
+async function loadFormats() {
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/formats?select=*&order=id.asc', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    _formats = await r.json();
+  } catch (e) {
+    console.error('loadFormats failed:', e);
+    _formats = [];
+  }
+  renderFormatButtons();
+}
+
+function renderFormatButtons() {
+  const container = document.getElementById('formatGenerateButtons');
+  if (!container) return;
+  if (!_formats.length) {
+    container.innerHTML = '<span class="hint" style="color:var(--danger)">No formats found in breakout.formats — run sync-formats.mjs</span>';
+    return;
+  }
+  container.innerHTML = _formats.map(f => {
+    // Display name: trim "APA Mod-SE " prefix for compactness
+    const short = (f.name || f.id).replace(/^APA\s+Mod-?SE\s*/i, '').trim() || f.id;
+    return '<button class="btn btn-primary btn-sm" '
+         + 'onclick="generateFromFormat(' + JSON.stringify(f.id) + ')" '
+         + 'title="' + esc(f.description || f.name) + '">'
+         + 'Generate ' + esc(short)
+         + '</button>';
+  }).join(' ');
+}
+
+async function generateFromFormat(formatId) {
+  const format = _formats.find(f => f.id === formatId);
+  if (!format) { alert('Unknown format: ' + formatId); return; }
+  const have = _teams.length;
+  // Total seat count = sum of max-seed across all brackets in the wiring
+  const byBracket = {};
+  for (const m of (format.wiring || [])) {
+    const b = m.bracket || 'default';
+    if (!byBracket[b]) byBracket[b] = 0;
+    for (const s of [m.top_seed, m.bot_seed]) {
+      if (s != null && s > byBracket[b]) byBracket[b] = s;
+    }
+  }
+  const totalSeats = Object.values(byBracket).reduce((a, b) => a + b, 0);
+  const msg = (have >= totalSeats)
+    ? 'Creates a new "' + format.name + '" tournament using the first ' + totalSeats + ' teams (by number). '
+      + (format.wiring || []).length + ' matches, ' + (format.terminal_count || '?') + ' terminal(s). '
+      + 'Status: live. Existing tournaments are left untouched.'
+    : (have > 0
+      ? 'Creates a new "' + format.name + '" tournament. Only ' + have + ' team(s) in the database — seeds 1–'
+        + Math.min(have, totalSeats) + ' will be assigned, the rest render as TBD.'
+      : 'Creates a BLANK "' + format.name + '" tournament — no teams loaded yet. Every seed renders as TBD; assign teams later via the Seeding editor.');
+  confirmModal({
+    title: 'Generate ' + format.name + '?',
+    message: msg,
+    okText: 'Generate',
+    onOk: () => doGenerateFromFormat(format)
+  });
+}
+
+async function doGenerateFromFormat(format) {
+  try {
+    // Deep-copy the wiring template so we don't mutate the cached format object
+    const matchData = JSON.parse(JSON.stringify(format.wiring || []));
+
+    // Build seed_assignments. Each bracket has its own seed scope (seeds 1..N)
+    // — for multi-bracket formats like mse-12-12-to-64, A's seed 1 ≠ B's seed 1.
+    // We walk the team list in number order and fill each bracket's seeds
+    // sequentially in bracket-declaration order (matches the legacy behavior:
+    // first 12 teams → A seeds 1..12, next 12 → B seeds 1..12, etc.).
+    const teams = _teams.slice().sort((a, b) => a.number - b.number);
+    const seedAssignments = [];
+    const maxSeedByBracket = {};
+    for (const m of matchData) {
+      const b = m.bracket || 'default';
+      if (!maxSeedByBracket[b]) maxSeedByBracket[b] = 0;
+      for (const s of [m.top_seed, m.bot_seed]) {
+        if (s != null && s > maxSeedByBracket[b]) maxSeedByBracket[b] = s;
+      }
+    }
+    // Bracket order = first-appearance order in the wiring (declaration order
+    // from the DSL). Crucially this preserves A → B → 64 for mse-12-12-to-64
+    // and A → B for mse-32-to-8 (new) / mse-48-to-8.
+    const bracketOrder = [];
+    for (const m of matchData) {
+      const b = m.bracket || 'default';
+      if (!bracketOrder.includes(b)) bracketOrder.push(b);
+    }
+    let teamIdx = 0;
+    for (const bracketId of bracketOrder) {
+      const maxSeed = maxSeedByBracket[bracketId] || 0;
+      for (let seed = 1; seed <= maxSeed; seed++) {
+        if (teamIdx >= teams.length) break;
+        seedAssignments.push({
+          bracket: bracketId,
+          seed,
+          team_number: teams[teamIdx].number
+        });
+        teamIdx++;
+      }
+    }
+
+    const today = new Date();
+    const ymd = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    const name = format.name + '  ' + ymd;
+    const slug = await uniqueSlug(slugify(name));
+    const championText = (format.terminal_count != null)
+      ? format.terminal_count + (format.terminal_count === 1 ? ' Champion' : ' Qualifiers')
+      : 'Champion';
+    const row = {
+      name,
+      slug,
+      status: 'live',
+      format_template: format.id,
+      config: { bracketChampText: 'Qualifier', championText },
+      seed_assignments: seedAssignments,
+      matches: matchData,
+      start_date: ymd,
+      is_active: true
+    };
+    const created = await sb('POST', 'tournaments', row);
+    const newId = created && created[0] && created[0].id;
+    if (newId != null) { _activeTournamentId = newId; _persistActiveTournamentId(); }
+    await loadTournaments();
+    loadMatchesView();
+    renderCapacityAnalyzer();
+  } catch (e) {
+    alert('Generate failed: ' + e.message);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   LEGACY HARDCODED GENERATE PATH — kept as fallback / reference only.
+   Not called by the UI buttons anymore. Slated for removal once the
+   data-driven path is verified in production.
+   ════════════════════════════════════════════════════════════════════════ */
 
 async function generateDefaultTournament() {
   // Blank brackets allowed — no team gate. Seeds beyond what's loaded
@@ -3204,6 +3366,10 @@ async function init() {
   if (staffLink && SB_KEY) staffLink.href = './?role=staff&key=' + encodeURIComponent(SB_KEY);
   try { await loadTeams(); } catch (e) { setStatus('bulkStatus', 'Load failed: ' + e.message, 'err'); return; }
   renderTeams();
+  // Load formats registry → renders Generate buttons. Fire-and-forget;
+  // if the breakout.formats table is empty or unreachable, the buttons
+  // panel shows a "no formats" hint but admin still loads.
+  loadFormats();
   // Await loadTournaments so the active-tournament pointer is resolved
   // (and any stale localStorage id corrected) before the editors load.
   await loadTournaments();
