@@ -90,7 +90,7 @@
 <div class="banner">
   <div>⚠️ <strong>STAGING</strong> — wiring-driven bracket renderer.
     Does NOT modify production. <a href="./" target="_blank">production →</a></div>
-  <div class="version">v0.3 · staging engine</div>
+  <div class="version">v0.4 · staging engine</div>
 </div>
 
 <header class="header">
@@ -152,12 +152,12 @@ const DEBUG      = URL_PARAMS.get('debug') === '1';
 
 /* ── Layout constants ─────────────────────────────────────────────── */
 const LAYOUT = {
-  BOX_W:        88,
-  BOX_H:        38,
-  ROW_H:        46,    // base vertical spacing for R1 cards
-  COL_GAP:      54,    // horizontal gap between rounds
+  BOX_W:        120,
+  BOX_H:        46,
+  ROW_H:        56,    // base vertical spacing for R1 cards
+  COL_GAP:      40,    // horizontal gap between rounds
   TOP_PAD:      80,    // room for round headers
-  SIDE_PAD:     140,   // outer-edge gutter for "QUALIFIER" pills
+  SIDE_PAD:     160,   // outer-edge gutter for "QUALIFIER" pills
   LABEL_OFFSET: 16     // distance from card to cross-arm L OF/L TO labels
 };
 
@@ -424,17 +424,30 @@ function renderBracket(matches, seedMap, teamNameMap) {
     // Match number
     const mn = m.match_no != null ? m.match_no : m.id;
     svg += '<text class="br-mnum' + (isTerm ? ' term' : '') + '" x="' + (tx + 4) + '" y="' + (ty + 11) + '">M' + esc(mn) + '</text>';
-    // Top team line
-    const topName = m.top_seed != null
-      ? (seedDisplay(m.top_seed, seedMap, teamNameMap) || 'Seed ' + m.top_seed)
-      : (m.top_from ? 'W of M' + matchNoFor(m.top_from.match_id, matches) +
-          (m.top_from.kind === 'loser' ? ' (L)' : '') : 'TBD');
-    const botName = m.bot_seed != null
-      ? (seedDisplay(m.bot_seed, seedMap, teamNameMap) || 'Seed ' + m.bot_seed)
-      : (m.bot_from ? 'W of M' + matchNoFor(m.bot_from.match_id, matches) +
-          (m.bot_from.kind === 'loser' ? ' (L)' : '') : 'TBD');
-    svg += '<text class="br-team tbd" x="' + (tx + 4) + '" y="' + (ty + 23) + '">' + esc(topName.slice(0, 18)) + '</text>';
-    svg += '<text class="br-team tbd" x="' + (tx + 4) + '" y="' + (ty + 34) + '">' + esc(botName.slice(0, 18)) + '</text>';
+    // Slot labels for top/bot teams. Real team names when seeds resolve;
+    // 'W of MX' / 'L of MX' references when the slot comes from another
+    // match; 'Seed N' fallback when seed N isn't yet assigned a team.
+    const slotLabel = (which) => {
+      const seed = m[which + '_seed'];
+      const from = m[which + '_from'];
+      if (seed != null) {
+        const resolved = seedDisplay(seed, seedMap, teamNameMap);
+        return resolved || ('Seed ' + seed);
+      }
+      if (from) {
+        const kindShort = from.kind === 'loser' ? 'L' : 'W';
+        return kindShort + ' of M' + matchNoFor(from.match_id, matches);
+      }
+      return 'TBD';
+    };
+    const topName = slotLabel('top');
+    const botName = slotLabel('bot');
+    const topResolved = m.top_seed != null && seedDisplay(m.top_seed, seedMap, teamNameMap) != null;
+    const botResolved = m.bot_seed != null && seedDisplay(m.bot_seed, seedMap, teamNameMap) != null;
+    svg += '<text class="br-team' + (topResolved ? '' : ' tbd') + '" x="' + (tx + 6) + '" y="' + (ty + 26) + '">' + esc(topName.slice(0, 22)) + '</text>';
+    svg += '<text class="br-team' + (botResolved ? '' : ' tbd') + '" x="' + (tx + 6) + '" y="' + (ty + 41) + '">' + esc(botName.slice(0, 22)) + '</text>';
+    // Mid-card divider line
+    svg += '<line x1="' + (tx + 2) + '" y1="' + (ty + 30) + '" x2="' + (tx + LAYOUT.BOX_W - 2) + '" y2="' + (ty + 30) + '" class="br-divider"/>';
 
     // Cross-arm loser-drop labels (L OF X): if this match has a 'loser' kind input from W arm, draw a red label
     const losInputs = [m.top_from, m.bot_from].filter(x => x && x.kind === 'loser');
