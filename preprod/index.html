@@ -934,26 +934,12 @@
   .preprod-banner .pp-meta { font-size: 0.7rem; color: #92400e; font-weight: 600; }
   .preprod-banner a { color: #78350f; text-decoration: underline; }
 
-  /* ── Qualifier badge (per-card, top-right gold corner) ──────────
-     Applied via foreignObject card mark-up on M41–M48 of the 32-bracket
-     (and any other is_qualifier terminal match). The badge is only
-     rendered when WIRING_ENGINE is enabled — see qualifier hooks in the
-     render pipeline. */
-  .match.qualifier-card { position: relative; }
-  .match.qualifier-card::after {
-    content: '🏆 QUALIFIED';
-    position: absolute;
-    top: 4px; right: 4px;
-    background: linear-gradient(135deg, #fbbf24, #d97706);
-    color: #fff;
-    font-size: 0.6rem; font-weight: 800;
-    letter-spacing: 0.04em;
-    padding: 2px 6px;
-    border-radius: 4px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
-    pointer-events: none;
-    z-index: 2;
-  }
+  /* Terminal-match qualifier pill — reuses the existing .bracket-champ-big
+     visual (gradient pill below the card with bounce animation) so the
+     wiring engine's terminal matches look exactly like the production
+     "Bracket Champ" pill on a final. The text is set per-card by
+     wiringRenderBracket: "🏆 <bracketChampText>" by default. No corner-
+     badge / inside-card treatment — pill sits OUTSIDE the box. */
 
   /* Qualifier header band — sits above a bracket's R1 column, reads
      "🏆 N World Qualifiers". Rendered above any bracket whose terminal
@@ -2744,19 +2730,15 @@ function wiringRenderBracket(displayLabel, label, matches, opts) {
     const pos = positions[m.id];
     if (!pos) continue;
     const geom = wiringCellGeom(pos, layout);
-    // Pass isFinalOfBracket=false for wiring-rendered cards — terminals
-    // get the gold QUALIFIED badge via the `.qualifier-card` class hook
-    // instead of the classic "Bracket Champ" pill. The badge is the
-    // 2026-05-25 design decision for the 32→8 case.
+    // Pass isFinalOfBracket=false so matchHtml doesn't add its in-card
+    // "is-final-of-bracket" gradient strip — the wiring engine handles
+    // terminal emphasis via a SEPARATE pill below the card (see below).
     const cardHtml = m.bye ? byeMatchHtml(m, stripeColor) : matchHtml(m, false, stripeColor);
-    // Augment the rendered card with optional classes for terminal +
-    // bracket-specific styling. We need to inject these into the root
-    // .match div. Quick string-rewrite is simplest.
-    let injectedClass = '';
-    if (terminals[m.id]) injectedClass += ' qualifier-card';
-    if (bracketCssClass) injectedClass += ' ' + bracketCssClass;
-    const cardHtmlAdj = injectedClass
-      ? cardHtml.replace('class="match', 'class="match' + injectedClass)
+    // Optional bracket-specific class injection (e.g. .bracket-32 for
+    // the red→blue gradient stripe). The card root is .match — quick
+    // string-rewrite is simplest and avoids cloning matchHtml.
+    const cardHtmlAdj = bracketCssClass
+      ? cardHtml.replace('class="match', 'class="match ' + bracketCssClass)
       : cardHtml;
     svgInner += '<foreignObject class="card-fo" data-match-fo="' + esc(m.id)
               + '" x="' + geom.left + '" y="' + geom.top
@@ -2764,6 +2746,29 @@ function wiringRenderBracket(displayLabel, label, matches, opts) {
               + '<div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%">'
               + cardHtmlAdj
               + '</div></foreignObject>';
+
+    // ── Terminal qualifier pill ──────────────────────────────────────
+    // For each terminal (is_qualifier OR no downstream wiring) match,
+    // render a "🏆 <bracketChampText>" pill BELOW the card using the
+    // same foreignObject pattern + .bracket-champ-big visual the classic
+    // renderer uses for bracket finals. Sits outside the card so it
+    // can be loud — gradient pill with bounce animation.
+    // Same sizing constants as bracketSectionHtml (lines ~2063-2083).
+    if (terminals[m.id] && !m.bye) {
+      const PILL_W = 260;
+      const PILL_VISIBLE_H = 50;
+      const PILL_PAD = 20;
+      const PILL_H = PILL_VISIBLE_H + PILL_PAD * 2;
+      const pillX = geom.cx - PILL_W / 2;
+      const pillY = (geom.cy + SVG.CARD_H / 2 + 6) - PILL_PAD;
+      svgInner += '<foreignObject class="champ-fo" data-match-fo="' + esc(m.id) + '-champ"'
+                + ' x="' + pillX + '" y="' + pillY
+                + '" width="' + PILL_W + '" height="' + PILL_H
+                + '"><div xmlns="http://www.w3.org/1999/xhtml" '
+                + 'style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:visible">'
+                + '<div class="bracket-champ-big">&#x1F3C6; ' + esc(TOURNAMENT_TEXT.bracketChampText) + '</div>'
+                + '</div></foreignObject>';
+    }
   }
 
   // Outer svg.
