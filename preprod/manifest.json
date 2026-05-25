@@ -1,0 +1,19 @@
+{
+  "name": "BreakOut — South Portland Metro APA",
+  "short_name": "BreakOut",
+  "description": "Tournament bracket viewer for South Portland Metro APA",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ea002a",
+  "theme_color": "#ea002a",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}

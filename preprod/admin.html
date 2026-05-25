@@ -1,0 +1,3222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BreakOut Admin</title>
+
+<!-- Match viewer's PWA setup so admins installing the app get a consistent
+     icon/theme. Admin isn't typically used standalone but lives in the
+     same app scope. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0031a1">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<style>
+  :root {
+    --spm-primary: #ea002a;
+    --spm-accent:  #0031a1;
+    --bg: #f3f3f3;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --border-strong: #d1d5db;
+    --success: #16a34a;
+    --warn: #f59e0b;
+    --danger: #dc2626;
+    --radius: 14px;
+    --pill: 999px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  body { padding-bottom: 32px; }
+
+  .header {
+    background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
+    color: #fff; padding: 16px 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .header h1 { font-size: 1.3rem; font-weight: 900; }
+  .header h1 .subpage { font-size: 0.95rem; font-weight: 500; font-style: italic; opacity: 0.85; margin-left: 10px; }
+  .header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .admin-badge {
+    padding: 4px 12px; border-radius: var(--pill);
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.5); color: #fff;
+    white-space: nowrap;
+  }
+  .header-link {
+    color: #fff; text-decoration: none;
+    background: rgba(255,255,255,0.15);
+    border: 1.5px solid rgba(255,255,255,0.45);
+    padding: 4px 12px; border-radius: var(--pill);
+    font-size: 0.78rem; font-weight: 700;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .header-link:hover { background: rgba(255,255,255,0.28); border-color: rgba(255,255,255,0.7); }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 18px 16px 0; }
+
+  .card {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    border: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .card h2 {
+    font-size: 0.78rem; font-weight: 800; color: var(--spm-accent);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 12px;
+  }
+
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 8px; }
+  .row > * { flex: 1; min-width: 120px; }
+  label { display: block; font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+  input[type="text"], input[type="number"] {
+    width: 100%; border: 1.5px solid var(--border-strong); border-radius: 10px;
+    padding: 9px 11px; font-family: inherit; font-size: 0.9rem;
+    background: #fff;
+  }
+  input:focus { outline: none; border-color: var(--spm-accent); }
+  .num-input { font-variant-numeric: tabular-nums; font-family: 'SF Mono', Consolas, Menlo, monospace; }
+
+  .btn { padding: 9px 18px; border-radius: var(--pill); font-size: 0.85rem; font-weight: 700; border: 0; cursor: pointer; font-family: inherit; }
+  .btn-primary { background: var(--spm-accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #0046cc; }
+  .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+  .btn-outline { background: #fff; border: 1.5px solid var(--border-strong); color: var(--text); }
+  .btn-outline:hover { background: #f5f5f5; }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover { opacity: 0.92; }
+  .btn-sm { padding: 5px 12px; font-size: 0.76rem; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+  .table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  .table th { text-align: left; padding: 9px 8px; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .table td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .table tr:hover { background: #fafafa; }
+  .table .num-cell {
+    font-family: 'SF Mono', Consolas, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700; color: var(--spm-accent);
+    min-width: 64px;
+  }
+  .table-wrap { overflow-x: auto; }
+
+  .matches-table td { font-size: 0.82rem; padding: 7px 6px; }
+  .matches-table .src-seed { font-weight: 700; color: var(--spm-accent); }
+  .matches-table .src-win  { font-weight: 800; color: #15803d; font-variant-numeric: tabular-nums; }
+  .matches-table .src-lose { font-weight: 800; color: #b45309; font-variant-numeric: tabular-nums; }
+  .matches-table .src-bye  { font-weight: 700; color: var(--muted); }
+  .matches-table .bye-row  { background: #fafbfc; opacity: 0.78; }
+  .matches-table .bye-row:hover { background: #f4f5f7; }
+  .matches-table .bye-tag-mini {
+    font-size: 0.58rem; font-weight: 800; color: var(--muted);
+    background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px;
+    letter-spacing: 0.1em; margin-left: 4px; vertical-align: middle;
+  }
+  .status-pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 0.66rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .status-pill.status-draft     { background: rgba(0,0,0,0.06); color: var(--muted); }
+  .status-pill.status-live      { background: rgba(22,163,74,0.14); color: #15803d; }
+  .status-pill.status-completed { background: rgba(0,49,161,0.10); color: var(--spm-accent); }
+  .status-pill.status-archived  { background: rgba(0,0,0,0.06); color: var(--muted); text-decoration: line-through; }
+
+  .match-edit-grid { display: flex; flex-direction: column; gap: 12px; }
+  .match-edit-grid fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  .match-edit-grid legend { font-size: 0.74rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 6px; }
+  .match-edit-grid label { font-size: 0.86rem; display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+  .match-edit-grid .bye-row { padding: 6px 10px; background: #fafbfc; border-radius: 6px; }
+  .match-edit-grid .position-row { display: flex; gap: 8px; align-items: center; font-size: 0.86rem; }
+  .match-edit-grid .position-text { font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.84rem; color: var(--spm-accent); font-weight: 700; }
+  .match-edit-grid .schedule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+  .match-edit-grid .schedule-grid label { flex-direction: column; align-items: stretch; gap: 4px; }
+  .match-edit-grid .schedule-grid label.full { grid-column: 1 / -1; }
+  .match-edit-grid .schedule-grid input { padding: 6px 8px; }
+  .match-edit-grid .seed-input { width: 64px; padding: 4px 6px; }
+  .match-edit-grid select { padding: 4px 6px; font-size: 0.84rem; }
+  .match-edit-grid fieldset.disabled { opacity: 0.45; pointer-events: none; }
+
+  .validation-banner {
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(220,38,38,0.08);
+    border-left: 3px solid var(--danger);
+    color: var(--danger);
+    font-size: 0.84rem;
+    margin-bottom: 10px;
+  }
+  .validation-banner.ok {
+    background: rgba(22,163,74,0.06);
+    border-left-color: var(--success);
+    color: var(--success);
+  }
+  .validation-banner ul { margin: 4px 0 0 18px; padding: 0; }
+  .validation-banner li { font-size: 0.78rem; font-weight: 600; margin: 2px 0; }
+
+  .matches-table tbody tr.editable { cursor: pointer; }
+  .matches-table tbody tr.editable:hover { background: rgba(0,49,161,0.04); }
+  .matches-table .edit-btn {
+    border: 1px solid var(--border-strong); background: #fff; color: var(--spm-accent);
+    font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 5px; cursor: pointer;
+  }
+  .matches-table .edit-btn:hover { background: rgba(0,49,161,0.06); }
+
+  /* Tournament edit modal */
+  .t-edit-grid { display: flex; flex-direction: column; gap: 10px; }
+  .t-edit-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 0.86rem; }
+  .t-edit-grid label input, .t-edit-grid label select, .t-edit-grid label textarea {
+    padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 6px;
+    font-size: 0.92rem; font-family: inherit;
+  }
+  .t-edit-grid fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .t-edit-grid legend { font-size: 0.72rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 6px; }
+  .t-edit-grid .t-edit-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .t-edit-grid .t-edit-links {
+    padding: 8px 12px; background: #fafbfc; border-radius: 6px;
+    font-size: 0.82rem;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .t-edit-grid .t-edit-links a {
+    color: var(--spm-accent); font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.78rem;
+    word-break: break-all;
+  }
+
+  .tournaments-table tbody tr.editable { cursor: pointer; }
+  .tournaments-table tbody tr.editable:hover { background: rgba(0,49,161,0.04); }
+  .tournaments-table tbody tr.is-active { background: rgba(0,49,161,0.10); box-shadow: inset 3px 0 0 #0031a1; }
+  .tournaments-table tbody tr.is-active:hover { background: rgba(0,49,161,0.13); }
+  .tournaments-table .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tournaments-table .status-pill { cursor: pointer; transition: opacity 0.15s; }
+  /* Seeding editor */
+  .seed-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .seed-col-head { font-weight: 800; margin-bottom: 6px; font-size: 0.95rem; }
+  .seed-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .seed-lbl { font-weight: 700; width: 36px; font-family: 'SF Mono',Consolas,Menlo,monospace; font-size: 0.82rem; color: #0031a1; }
+  .seed-select { flex: 1; padding: 5px 6px; font: inherit; font-size: 0.86rem; min-width: 0; }
+  @media (max-width: 640px) { .seed-grid { grid-template-columns: 1fr; } }
+  .tournaments-table .status-pill:hover { opacity: 0.8; }
+
+  /* Schedule-by-round editor */
+  .sched-group { margin-bottom: 14px; }
+  .sched-group:last-child { margin-bottom: 0; }
+  .sched-group-label {
+    font-size: 0.74rem; font-weight: 800; color: var(--spm-accent);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+  .sched-row {
+    display: grid;
+    grid-template-columns: 42px 1fr 110px 88px 100px 90px;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 4px;
+    background: #fff;
+  }
+  .tables-toggle {
+    padding: 5px 10px;
+    border: 1px solid var(--border-strong);
+    background: #fff;
+    border-radius: 5px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    color: var(--text);
+    font-family: inherit;
+    text-align: center;
+    transition: background 0.15s, color 0.15s;
+  }
+  .capacity-table .demand-bar {
+    display: inline-block;
+    height: 10px;
+    background: linear-gradient(90deg, #15803d, var(--spm-accent));
+    border-radius: 5px;
+    vertical-align: middle;
+  }
+  .capacity-table .demand-bar.over { background: var(--danger); }
+  .capacity-table tr.over td { background: rgba(220,38,38,0.08); }
+  .capacity-table tr.at-cap td { background: rgba(0,49,161,0.05); }
+  .capacity-table .over-tag {
+    color: var(--danger); font-weight: 800; font-size: 0.74rem;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .capacity-table .ok-tag { color: var(--success); font-weight: 700; font-size: 0.78rem; }
+  .capacity-table .matches-cell { font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.74rem; color: var(--muted); }
+  .capacity-table .day-header td {
+    background: linear-gradient(180deg, #f4f5f7, #fafbfc);
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.8rem;
+    color: var(--spm-accent);
+    padding: 12px 10px 8px;
+    border-top: 2px solid var(--border-strong);
+  }
+  .capacity-table tbody tr.day-header:first-child td { border-top: 0; }
+
+  /* Half-hour datetime + duration pickers — replaces native datetime-local
+     with a date input + a select of explicit half-hour options so the user
+     never has to fight a minute-level spinner. */
+  .dt-pair { display: flex; gap: 4px; align-items: center; }
+  .dt-pair input[type="date"] {
+    flex: 1 1 auto; min-width: 110px;
+    padding: 5px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    font: inherit; font-size: 0.86rem;
+  }
+  .dt-pair select {
+    flex: 0 0 auto; min-width: 100px;
+    padding: 5px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    font: inherit; font-size: 0.86rem;
+    background: #fff;
+  }
+  .dur-select {
+    padding: 5px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    font: inherit; font-size: 0.86rem;
+    background: #fff;
+    width: 100%;
+  }
+
+  .tables-toggle[data-tables="2"] {
+    background: rgba(0,49,161,0.12);
+    border-color: var(--spm-accent);
+    color: var(--spm-accent);
+    font-weight: 800;
+  }
+  .sched-row + .sched-row { margin-top: 0; }
+  .sched-row .rlabel { font-weight: 800; color: var(--muted); font-size: 0.82rem; }
+  .sched-row input {
+    padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: 5px;
+    font-size: 0.86rem; font-family: inherit;
+    width: 100%;
+  }
+  .sched-row input.payout-input { text-align: right; }
+  .sched-row .apply-btn {
+    padding: 5px 10px; border: 1px solid var(--spm-accent); background: #fff; color: var(--spm-accent);
+    font-size: 0.74rem; font-weight: 700; border-radius: 5px; cursor: pointer;
+  }
+  .sched-row .apply-btn:hover { background: rgba(0,49,161,0.06); }
+  .sched-row.applied { background: rgba(22,163,74,0.06); border-color: rgba(22,163,74,0.5); }
+  .sched-row .apply-btn.success { background: var(--success); color: #fff; border-color: var(--success); }
+  code { background: #eef1f7; padding: 2px 6px; border-radius: 4px; font-size: 0.86em; color: var(--spm-accent); font-weight: 700; }
+
+  .status-line { padding: 9px 13px; border-radius: 10px; font-size: 0.84rem; font-weight: 600; margin: 6px 0; display: none; }
+  .status-line.shown { display: block; }
+  .status-line.ok       { background: rgba(22,163,74,0.10); color: var(--success); }
+  .status-line.err      { background: rgba(220,38,38,0.10); color: var(--danger); }
+  .status-line.progress { background: rgba(0,49,161,0.10); color: var(--spm-accent); }
+
+  .key-gate { text-align: center; padding: 60px 20px; }
+  .key-gate .card { max-width: 440px; margin: 0 auto; text-align: center; }
+  .hint { font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+
+  /* Modal */
+  .modal { position: fixed; inset: 0; background: rgba(10,20,40,0.6); z-index: 200; display: none; align-items: center; justify-content: center; padding: 16px; }
+  .modal.shown { display: flex; }
+  .modal-box { background: #fff; border-radius: var(--radius); max-width: 460px; width: 100%; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+  .modal-title { font-size: 1.05rem; font-weight: 800; color: var(--spm-accent); margin-bottom: 12px; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+
+  /* Update overlay */
+  .update-overlay { position: fixed; inset: 0; background: rgba(10,20,40,0.72); z-index: 9999; display: none; align-items: center; justify-content: center; padding: 24px; }
+  .update-overlay.shown { display: flex; }
+  .update-box { background: #fff; border-radius: var(--radius); padding: 32px; max-width: 380px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+  .update-spinner { width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 50%; border: 5px solid rgba(0,49,161,0.15); border-top-color: var(--spm-accent); animation: spin 0.85s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .update-title { font-size: 1.1rem; font-weight: 800; color: var(--spm-accent); margin-bottom: 6px; }
+
+  .hidden { display: none !important; }
+
+  /* PREPROD banner — mirror of preprod/index.html. */
+  .preprod-banner {
+    background: linear-gradient(90deg, #fde68a, #fcd34d);
+    border-bottom: 1px solid #d97706;
+    color: #78350f;
+    font-weight: 700; font-size: 0.78rem;
+    padding: 6px 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .preprod-banner .pp-meta { font-size: 0.7rem; color: #92400e; font-weight: 600; }
+  .preprod-banner a { color: #78350f; text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="preprod-banner">
+  <div>⚠️ <strong>PREPROD</strong> — staging build of BreakOut Admin.
+    Writes go to PRODUCTION data — use a test slug for destructive flows.
+    <a href="../admin.html" target="_blank">production admin →</a></div>
+  <div class="pp-meta">v0.95-preprod</div>
+</div>
+
+<div class="update-overlay" id="updateOverlay">
+  <div class="update-box">
+    <div class="update-spinner"></div>
+    <div class="update-title">Updating BreakOut Admin</div>
+    <div>A new version is being deployed&hellip;</div>
+  </div>
+</div>
+
+<div class="header">
+  <h1>BreakOut <span class="subpage">Teams</span></h1>
+  <div class="header-actions">
+    <a class="header-link" href="./" title="Open the public bracket">View site &rarr;</a>
+    <a class="header-link" id="staffSiteLink" href="#" title="Open the public bracket in staff scoring mode">Staff scoring &rarr;</a>
+    <div class="admin-badge">ADMIN</div>
+  </div>
+</div>
+
+<div id="keyGate" class="key-gate hidden">
+  <div class="card">
+    <h2 id="keyGateTitle">Admin key required</h2>
+    <p class="hint" id="keyGateMsg">Append <code>?key=&lt;service_role&gt;</code> to the URL to enter.</p>
+  </div>
+</div>
+
+<div id="adminMain" class="wrap hidden">
+  <div class="card">
+    <h2>Add teams</h2>
+    <p class="hint" style="margin-top:0">Paste tab-separated rows: <code>number&lt;TAB&gt;name</code>, one team per line. Blank lines are ignored. Last 2 digits of the number must be 01&ndash;16.</p>
+    <textarea id="bulkInput" rows="10" spellcheck="false" placeholder="1503&#9;Avenging Eagles&#10;1504&#9;Greek Villagers&#10;5109&#9;SlopDawg Billard&rsquo;Air"
+              style="width:100%;font-family:'SF Mono',Consolas,Menlo,monospace;font-size:0.85rem;line-height:1.45;padding:8px 10px;border:1px solid var(--border-strong);border-radius:6px;resize:vertical;background:#fafbfc;"></textarea>
+    <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="bulkAddTeams()">Add teams</button>
+      <button class="btn btn-outline btn-sm" onclick="document.getElementById('bulkInput').value=''">Clear</button>
+      <span class="hint" id="bulkPreview"></span>
+    </div>
+    <div id="bulkStatus" class="status-line"></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Teams</h2>
+      <span class="hint" id="teamsCount"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-outline btn-sm" onclick="clearAllTeams()" style="color:var(--danger);border-color:var(--danger)">Clear all</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th style="width:88px">Number</th><th>Name</th><th style="width:140px"></th></tr></thead>
+        <tbody id="teamsBody"><tr><td colspan="3" class="hint">Loading&hellip;</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Tournament</h2>
+      <span class="hint" id="tournamentStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-primary btn-sm" onclick="generateDefaultTournament()">Generate 12+12&rarr;64</button>
+        <button class="btn btn-primary btn-sm" onclick="generateMse32To8Tournament()">Generate 32&rarr;8</button>
+        <button class="btn btn-outline btn-sm" onclick="clearAllMatchResults()" style="color:var(--danger);border-color:var(--danger)">Clear all results</button>
+      </div>
+    </div>
+    <p class="hint">
+      <strong>12+12&rarr;64</strong>: two 12-team brackets feeding a 64-team modified single-elim (uses first 24 teams).
+      <strong>32&rarr;8</strong>: 32 teams enter, 8 qualifiers advance &mdash; winners of M41&ndash;M44 (loser arm) and M45&ndash;M48 (winner arm) per the APA Mod-SE 32-1 bracket, truncated at the 8-qualifier line (no M49&ndash;M55). The viewer auto-loads the active tournament.
+    </p>
+    <div id="tournamentBody" class="hint">Loading&hellip;</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Teams &amp; Seeding</h2>
+      <span class="hint" id="seedingStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-primary btn-sm" onclick="saveSeedingEditor()">Save seeding</button>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:0">Which team sits in each seed of the active tournament's two 12-team brackets. Empty seeds render as TBD in the bracket. Changing a seed only changes who appears where &mdash; match wiring is untouched. A team can hold only one seed.</p>
+    <div id="seedingEditorBody"><p class="hint">Loading&hellip;</p></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Schedule by round</h2>
+      <span class="hint" id="scheduleStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-primary btn-sm" onclick="autoAssignTables()" title="Assigns tables from the tournament's available-tables list so no team plays on the same table twice when possible.">Auto-assign tables</button>
+        <button class="btn btn-outline btn-sm" onclick="renumberAllTables()">Renumber 1,2,3…</button>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:0">Bulk-set Day, Time, and Payout for every match in a round. <strong>Apply</strong> stamps the values onto each match. Individual matches can still be overridden via the per-match edit modal in the table below. <strong>Auto-assign tables</strong> uses the per-tournament available-tables list (set in the tournament edit modal) to assign tables avoiding same-table repeats per team.</p>
+    <div id="scheduleEditorBody"><p class="hint">Loading&hellip;</p></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Capacity analysis</h2>
+      <span class="hint" id="capacityStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-outline btn-sm" onclick="renderCapacityAnalyzer()">Refresh</button>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:0">Hour-by-hour table demand vs venue capacity. A "match" = one APA team match (5 individual matches). <code>duration_min</code> is the wall-clock duration the operator set in the schedule editor — used as-is. On <strong>2 tables</strong> a team match occupies 2 tables at once for that duration. Demand at a slot = sum of tables consumed by every active team match in that slot. Every match in a round shares <code>scheduled_at</code>; no wave-staggering.</p>
+    <div id="capacityBody"><p class="hint">Loading&hellip;</p></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Matches</h2>
+      <span class="hint" id="matchesStatus"></span>
+      <div style="margin-left:auto" class="actions">
+        <button class="btn btn-outline btn-sm" onclick="loadMatchesView()">Refresh</button>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:0">Every match in the active tournament with live validation. Click any row to edit its wiring, schedule, or table assignment. Structural changes (adding rounds, byes, brackets) belong in the bracket template, not here.</p>
+    <div id="matchesBody" class="table-wrap"><p class="hint">Loading&hellip;</p></div>
+  </div>
+</div>
+
+<div class="modal" id="editModal">
+  <div class="modal-box">
+    <div class="modal-title">Edit team</div>
+    <div class="row">
+      <div style="flex:1"><label>Number</label><input type="number" id="editNum" min="101" max="9916" class="num-input"></div>
+      <div style="flex:3"><label>Name</label><input type="text" id="editName"></div>
+    </div>
+    <div id="editStatus" class="status-line"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeEdit()">Cancel</button>
+      <button class="btn btn-danger" onclick="askDelete()">Delete</button>
+      <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="tournamentEditModal">
+  <div class="modal-box" style="max-width:580px;max-height:85vh;overflow-y:auto">
+    <div class="modal-title" id="tournamentEditTitle">Edit tournament</div>
+    <div class="t-edit-grid">
+      <label>Slug <span class="hint" style="font-weight:600">(URL identifier — derived from name)</span>
+        <div style="display:flex;gap:6px;align-items:stretch">
+          <input type="text" id="tEditSlug" readonly style="flex:1 1 auto;background:#fafbfc;font-family:'SF Mono',Consolas,Menlo,monospace;color:var(--spm-accent)">
+          <button type="button" class="btn btn-outline btn-sm" onclick="regenerateSlugFromName()" style="flex:0 0 auto">Regenerate from name</button>
+        </div>
+      </label>
+      <label>Name
+        <input type="text" id="tEditName" placeholder="SPM Spring 2026">
+      </label>
+      <label>Status
+        <select id="tEditStatus">
+          <option value="draft">Draft &mdash; setup, hidden from public</option>
+          <option value="live">Live &mdash; visible, staff can score</option>
+          <option value="completed">Completed &mdash; visible, scoring locked</option>
+          <option value="archived">Archived &mdash; hidden from list, URL works</option>
+        </select>
+      </label>
+
+      <fieldset>
+        <legend>Dates</legend>
+        <div class="t-edit-row2">
+          <label>Start <input type="date" id="tEditStartDate"></label>
+          <label>End   <input type="date" id="tEditEndDate"></label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Venue</legend>
+        <p class="hint" style="margin:0 0 4px;font-size:0.76rem">Type a name &mdash; we&rsquo;ll auto-fill if you&rsquo;ve used it before, or save it for next time.</p>
+        <label>Name <input type="text" id="tEditVenueName" list="venueList" placeholder="Spare Time Recreation"></label>
+        <datalist id="venueList"></datalist>
+        <label>Address <input type="text" id="tEditVenueAddress" placeholder="123 Main St, Westbrook ME"></label>
+        <label>Total tables at this venue <input type="number" id="tEditTotalTables" min="1" max="80" placeholder="8"></label>
+        <label>Primary tables (numbers / ranges) <input type="text" id="tEditAvailableTables" placeholder="1,2,4-6,8-9,11"></label>
+        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">Use <code>-</code> for ranges and <code>,</code> to separate, e.g. <code>1,2,4-6,8-9,11</code>. These are the preferred tables (e.g. main room). Auto-assign uses ONLY these tables for a time slot when the slot's concurrent match demand fits within them.</p>
+        <p id="tEditAvailableTablesPreview" class="hint" style="margin:2px 0 0;font-size:0.74rem;color:var(--spm-accent)"></p>
+        <label>Secondary tables (overflow only) <input type="text" id="tEditSecondaryTables" placeholder="12-15,17"></label>
+        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">Optional overflow tables (e.g. second room). <strong>HARD rule:</strong> these are only used at a time slot when the slot's concurrent match demand exceeds the primary list — never otherwise.</p>
+        <p id="tEditSecondaryTablesPreview" class="hint" style="margin:2px 0 0;font-size:0.74rem;color:var(--spm-accent)"></p>
+        <label>Adjacent tables (pairs) <input type="text" id="tEditAdjacentTables" placeholder="2-6,9-6,7-10,8-11"></label>
+        <p class="hint" style="margin:-2px 0 0;font-size:0.74rem">CSV of <code>A-B</code> pairs listing physically adjacent tables (works across primary + secondary). Auto-assign uses this for 2-table matches — both tables in a pair must be physically next to each other. Bidirectional.</p>
+        <p id="tEditAdjacentTablesPreview" class="hint" style="margin:2px 0 0;font-size:0.74rem;color:var(--spm-accent)"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Tournament Director</legend>
+        <label>Name <input type="text" id="tEditDirectorName" placeholder="TD name"></label>
+        <label>Contact <input type="text" id="tEditDirectorContact" placeholder="email@example.com"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Description &amp; branding</legend>
+        <label>Description <textarea id="tEditDescription" rows="4" placeholder="Markdown OK"></textarea></label>
+        <label>Logo URL <input type="text" id="tEditLogoUrl" placeholder="https://..."></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Display text overrides</legend>
+        <label>Bracket Champ label <input type="text" id="tEditBracketChamp" placeholder="Bracket Champ"></label>
+        <label>Champion label <input type="text" id="tEditChampion" placeholder="Champion"></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Bracket names</legend>
+        <p class="hint" style="margin:0 0 6px;font-size:0.74rem">Override the section label pill at the top of each bracket. Leave blank to keep the default.</p>
+        <label>Bracket A name <input type="text" id="tEditBracketNameA" placeholder="Bracket A"></label>
+        <label>Bracket B name <input type="text" id="tEditBracketNameB" placeholder="Bracket B"></label>
+        <label>64-Team name <input type="text" id="tEditBracketNameT64" placeholder="64-Team"></label>
+      </fieldset>
+
+      <div class="t-edit-links">
+        <div><span class="hint">Public:</span> <a id="tEditPublicUrl" href="#" target="_blank" rel="noopener"></a></div>
+        <div><span class="hint">Staff:</span> <a id="tEditStaffUrl" href="#" target="_blank" rel="noopener"></a></div>
+      </div>
+    </div>
+    <div id="tournamentEditStatus" class="status-line"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeTournamentEditModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="deleteEditingTournament()">Delete tournament</button>
+      <button class="btn btn-outline" onclick="duplicateEditingTournament()">Duplicate</button>
+      <button class="btn btn-primary" onclick="saveTournamentEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="matchEditModal">
+  <div class="modal-box" style="max-width:560px">
+    <div class="modal-title" id="matchEditTitle">Edit match</div>
+    <div class="match-edit-grid">
+      <div class="position-row">
+        <span class="hint">Position:</span>
+        <span id="matchEditPosition" class="position-text"></span>
+        <span class="hint">·</span>
+        <span class="hint">M#:</span>
+        <strong id="matchEditMno"></strong>
+      </div>
+
+      <label class="bye-row"><input type="checkbox" id="matchEditIsBye"> This is a bye (top seed auto-advances)</label>
+
+      <fieldset id="matchEditTopFieldset">
+        <legend>Top entrant</legend>
+        <label><input type="radio" name="match-edit-top-kind" value="seed"> Seed <input type="number" id="matchEditTopSeed" min="1" max="16" class="seed-input"></label>
+        <label><input type="radio" name="match-edit-top-kind" value="winner"> W of <select id="matchEditTopWinnerSel"></select></label>
+        <label><input type="radio" name="match-edit-top-kind" value="loser"> L of <select id="matchEditTopLoserSel"></select></label>
+      </fieldset>
+
+      <fieldset id="matchEditBotFieldset">
+        <legend>Bot entrant</legend>
+        <label><input type="radio" name="match-edit-bot-kind" value="seed"> Seed <input type="number" id="matchEditBotSeed" min="1" max="16" class="seed-input"></label>
+        <label><input type="radio" name="match-edit-bot-kind" value="winner"> W of <select id="matchEditBotWinnerSel"></select></label>
+        <label><input type="radio" name="match-edit-bot-kind" value="loser"> L of <select id="matchEditBotLoserSel"></select></label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Schedule</legend>
+        <div class="schedule-grid">
+          <label class="full">Start
+            <div class="dt-pair">
+              <input type="date" id="matchEditScheduledDate">
+              <select id="matchEditScheduledTime"></select>
+            </div>
+          </label>
+          <label>Payout <input type="number" id="matchEditPayout" min="0" step="1" placeholder="0"></label>
+          <label>Table(s) <input type="text" id="matchEditTable" placeholder="1 or 5,6" pattern="^\s*\d+(\s*,\s*\d+)*\s*$"></label>
+        </div>
+      </fieldset>
+    </div>
+    <div id="matchEditStatus" class="status-line"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeMatchEditModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="deleteEditingMatch()">Delete match</button>
+      <button class="btn btn-primary" onclick="saveMatchEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="confirmModal">
+  <div class="modal-box">
+    <div class="modal-title" id="confirmTitle">Confirm</div>
+    <div id="confirmMsg" style="font-size:0.92rem;color:var(--muted);line-height:1.5"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeConfirm(false)">Cancel</button>
+      <button class="btn btn-danger" id="confirmOkBtn" onclick="closeConfirm(true)">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script>
+document.write('<script src="version.js?_=' + Date.now() + '"><\/script>');
+</script>
+<script>
+const APP_NAME = 'BreakOut';
+const SB_URL  = 'https://dqzbekoaysgaiqljueac.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+const SCHEMA = 'breakout';
+
+const params = new URLSearchParams(location.search);
+const SB_KEY = params.get('key') || '';
+
+const HEADERS_READ = SB_KEY
+  ? { apikey: SB_KEY,  Authorization: 'Bearer ' + SB_KEY,  'Accept-Profile': SCHEMA }
+  : { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': SCHEMA };
+const HEADERS_WRITE = { ...HEADERS_READ, 'Content-Type': 'application/json', 'Content-Profile': SCHEMA, Prefer: 'return=representation' };
+const HEADERS_APA   = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': 'apa_core' };
+
+let _teams = [];
+let _versionMismatch = false;
+let _editingId = null;
+
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function pad4(n) { return String(n).padStart(4, '0'); }
+function setStatus(id, msg, kind) { const el = document.getElementById(id); el.className = 'status-line shown ' + (kind || ''); el.textContent = msg; }
+function hideStatus(id) { const el = document.getElementById(id); el.className = 'status-line'; el.textContent = ''; }
+function validNumber(n) { return Number.isInteger(n) && n >= 101 && n <= 9916 && (n % 100) >= 1 && (n % 100) <= 16; }
+
+/* ── Auto-update ──────────────────────────── */
+/* PREPROD guard — see index.html for rationale. */
+const IS_PREPROD = location.pathname.indexOf('/preprod/') !== -1;
+async function checkVersion() {
+  if (IS_PREPROD) return;            // preprod doesn't track apa_core.apps
+  if (_versionMismatch) return;
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/apps?app_name=eq.' + APP_NAME + '&select=version', { headers: HEADERS_APA });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d && d[0] && d[0].version && d[0].version !== window.APP_VERSION) {
+      _versionMismatch = true;
+      document.getElementById('updateOverlay').classList.add('shown');
+      pollForDeploy(d[0].version);
+    }
+  } catch (_) {}
+}
+function pollForDeploy(target) {
+  setTimeout(async () => {
+    try {
+      const r = await fetch('version.js?_=' + Date.now());
+      if (r.ok && (await r.text()).indexOf("APP_VERSION = '" + target + "'") !== -1) {
+        const u = new URL(location.href);
+        u.searchParams.set('_', String(Date.now()));
+        location.replace(u.toString());
+        return;
+      }
+    } catch (_) {}
+    pollForDeploy(target);
+  }, 3000);
+}
+
+/* ── Supabase ─────────────────────────────── */
+async function sb(method, path, body, extra) {
+  const opts = { method, headers: method === 'GET' ? { ...HEADERS_READ } : { ...HEADERS_WRITE } };
+  if (extra) opts.headers = { ...opts.headers, ...extra };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(SB_URL + '/rest/v1/' + path, opts);
+  if (!r.ok) throw new Error('Supabase ' + r.status + ': ' + (await r.text()).substring(0, 300));
+  if (r.status === 204) return null;
+  const ct = r.headers.get('Content-Type') || '';
+  if (!ct.includes('json')) return null;
+  const text = await r.text();
+  return text ? JSON.parse(text) : null;
+}
+async function loadTeams() {
+  _teams = await sb('GET', 'teams?order=number.asc') || [];
+}
+
+/* ── Teams CRUD ─────────────────────────────
+ * Bulk add via tab-separated paste: `number<TAB>name` per line. Blank
+ * lines are skipped. Validates ALL rows before INSERTing any of them
+ * (atomic — either every row inserts or none do). */
+function parseBulkTsv(text) {
+  const lines = text.split(/\r?\n/);
+  const rows = [];
+  const errors = [];
+  const seenNumbers = new Set();
+  lines.forEach((line, idx) => {
+    if (!line.trim()) return;
+    const parts = line.split('\t');
+    const lineNo = idx + 1;
+    if (parts.length < 2) {
+      errors.push('Line ' + lineNo + ': expected <number><TAB><name>');
+      return;
+    }
+    const numStr = parts[0].trim();
+    const name = parts.slice(1).join('\t').trim();
+    const num = parseInt(numStr, 10);
+    if (!Number.isInteger(num) || numStr === '' || !/^\d+$/.test(numStr)) {
+      errors.push('Line ' + lineNo + ': "' + numStr + '" is not a number');
+      return;
+    }
+    if (!validNumber(num)) {
+      errors.push('Line ' + lineNo + ': ' + pad4(num) + ' must have last 2 digits 01-16');
+      return;
+    }
+    if (!name) {
+      errors.push('Line ' + lineNo + ': missing team name');
+      return;
+    }
+    if (seenNumbers.has(num)) {
+      errors.push('Line ' + lineNo + ': ' + pad4(num) + ' appears twice in the paste');
+      return;
+    }
+    if (_teams.some(t => t.number === num)) {
+      errors.push('Line ' + lineNo + ': ' + pad4(num) + ' already exists in the database');
+      return;
+    }
+    seenNumbers.add(num);
+    rows.push({ number: num, name });
+  });
+  return { rows, errors };
+}
+
+async function bulkAddTeams() {
+  hideStatus('bulkStatus');
+  const text = document.getElementById('bulkInput').value;
+  const { rows, errors } = parseBulkTsv(text);
+  if (errors.length) {
+    setStatus('bulkStatus', errors.slice(0, 6).join(' · ') + (errors.length > 6 ? ' (+ ' + (errors.length - 6) + ' more)' : ''), 'err');
+    return;
+  }
+  if (!rows.length) {
+    setStatus('bulkStatus', 'Nothing to add. Paste at least one row.', 'hint');
+    return;
+  }
+  try {
+    const created = await sb('POST', 'teams', rows);
+    const list = Array.isArray(created) ? created : [created];
+    _teams.push(...list);
+    _teams.sort((a, b) => a.number - b.number);
+    document.getElementById('bulkInput').value = '';
+    setStatus('bulkStatus', 'Added ' + list.length + ' team' + (list.length === 1 ? '' : 's') + '.', 'ok');
+    renderTeams();
+  } catch (e) {
+    setStatus('bulkStatus', 'Add failed: ' + e.message, 'err');
+  }
+}
+
+/* Live preview of paste-parse counts. */
+function refreshBulkPreview() {
+  const text = document.getElementById('bulkInput').value;
+  const preview = document.getElementById('bulkPreview');
+  if (!text.trim()) { preview.textContent = ''; return; }
+  const { rows, errors } = parseBulkTsv(text);
+  let parts = [];
+  if (rows.length)   parts.push(rows.length + ' valid');
+  if (errors.length) parts.push(errors.length + ' error' + (errors.length === 1 ? '' : 's'));
+  preview.textContent = parts.join(' · ');
+}
+
+function renderTeams() {
+  const body = document.getElementById('teamsBody');
+  document.getElementById('teamsCount').textContent = _teams.length + ' team' + (_teams.length === 1 ? '' : 's');
+  if (!_teams.length) {
+    body.innerHTML = '<tr><td colspan="3" class="hint">No teams yet. Paste tab-separated rows in the Add teams card above.</td></tr>';
+    return;
+  }
+  body.innerHTML = _teams.map(t => '<tr>'
+    + '<td class="num-cell">' + pad4(t.number) + '</td>'
+    + '<td><strong>' + esc(t.name) + '</strong></td>'
+    + '<td><div class="actions"><button class="btn btn-primary btn-sm" onclick="openEdit(' + t.id + ')">Edit</button></div></td>'
+    + '</tr>').join('');
+}
+
+function openEdit(id) {
+  const t = _teams.find(x => x.id === id);
+  if (!t) return;
+  _editingId = id;
+  document.getElementById('editNum').value = t.number;
+  document.getElementById('editName').value = t.name;
+  hideStatus('editStatus');
+  document.getElementById('editModal').classList.add('shown');
+}
+function closeEdit() { document.getElementById('editModal').classList.remove('shown'); _editingId = null; }
+async function saveEdit() {
+  if (_editingId == null) return;
+  hideStatus('editStatus');
+  const t = _teams.find(x => x.id === _editingId);
+  const num = parseInt(document.getElementById('editNum').value, 10);
+  const name = document.getElementById('editName').value.trim();
+  if (!validNumber(num)) return setStatus('editStatus', 'Team number must be 4 digits with last 2 digits 01–16.', 'err');
+  if (!name) return setStatus('editStatus', 'Name required.', 'err');
+  if (num !== t.number && _teams.some(x => x.number === num && x.id !== _editingId)) {
+    return setStatus('editStatus', 'Number already used by another team.', 'err');
+  }
+  try {
+    await sb('PATCH', 'teams?id=eq.' + _editingId, { number: num, name, updated_at: new Date().toISOString() });
+    t.number = num; t.name = name;
+    _teams.sort((a, b) => a.number - b.number);
+    closeEdit();
+    renderTeams();
+  } catch (e) {
+    const msg = String(e.message || '').toLowerCase();
+    if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('23505')) {
+      setStatus('editStatus', 'That team number is already in use.', 'err');
+    } else if (msg.includes('check') || msg.includes('23514')) {
+      setStatus('editStatus', 'Number violates the 4-digit / last-two-01-16 rule.', 'err');
+    } else {
+      setStatus('editStatus', 'Save failed: ' + e.message, 'err');
+    }
+  }
+}
+function askDelete() {
+  const t = _teams.find(x => x.id === _editingId);
+  if (!t) return;
+  confirmModal({
+    title: 'Delete team?',
+    message: 'Remove ' + pad4(t.number) + ' "' + t.name + '"? Can’t be undone.',
+    okText: 'Delete',
+    onOk: async () => {
+      try {
+        await sb('DELETE', 'teams?id=eq.' + _editingId);
+        _teams = _teams.filter(x => x.id !== _editingId);
+        closeEdit();
+        renderTeams();
+      } catch (e) { setStatus('editStatus', 'Delete failed: ' + e.message, 'err'); }
+    }
+  });
+}
+
+/* ── Clear all teams ──────────────────────── */
+function clearAllTeams() {
+  if (!_teams.length) {
+    alert('No teams to clear.');
+    return;
+  }
+  confirmModal({
+    title: 'Clear all teams?',
+    message: 'Permanently delete all ' + _teams.length + ' team' + (_teams.length === 1 ? '' : 's')
+           + '. This cannot be undone.',
+    okText: 'Clear all',
+    onOk: doClearAllTeams
+  });
+}
+async function doClearAllTeams() {
+  try {
+    await sb('DELETE', 'teams?id=gte.0');
+    _teams = [];
+    renderTeams();
+  } catch (e) {
+    alert('Clear failed: ' + e.message);
+  }
+}
+
+
+/* ── Confirm modal ────────────────────────── */
+function confirmModal(opts) {
+  const m = document.getElementById('confirmModal');
+  document.getElementById('confirmTitle').textContent = opts.title || 'Confirm';
+  document.getElementById('confirmMsg').textContent = opts.message || '';
+  document.getElementById('confirmOkBtn').textContent = opts.okText || 'Confirm';
+  m._onOk = opts.onOk || null;
+  m.classList.add('shown');
+}
+function closeConfirm(ok) {
+  const m = document.getElementById('confirmModal');
+  m.classList.remove('shown');
+  if (ok && typeof m._onOk === 'function') m._onOk();
+  m._onOk = null;
+}
+
+/* ── Form helpers ─────────────────────────── */
+document.getElementById('bulkInput').addEventListener('input', refreshBulkPreview);
+document.getElementById('bulkInput').addEventListener('keydown', (ev) => {
+  // Ctrl/Cmd+Enter submits the bulk add.
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); bulkAddTeams(); }
+});
+
+/* ── Tournament management ────────────────── */
+const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
+
+/* 32-team NCAA-style seeding (pairs in match order, M1..M16). Derived
+ * by splitting each 16-team match (seed S vs 17-S) into two 32-team
+ * matches (S vs 33-S, 17-S vs 16+S).                                  */
+const SEED_ORDER_32 = [
+  1, 32, 16, 17,   8, 25,  9, 24,
+  4, 29, 13, 20,   5, 28, 12, 21,
+  2, 31, 15, 18,   7, 26, 10, 23,
+  3, 30, 14, 19,   6, 27, 11, 22
+];
+
+/* ── Active-tournament pointer ─────────────────────────────────────────
+ * "Active" = the tournament the structural editors (Matches, Schedule,
+ * Capacity) operate on. It is an ADMIN-WORKSPACE selection, independent
+ * of `status` (which controls the public viewer). Persisted in
+ * localStorage so it survives a reload; falls back to newest-live →
+ * newest-created when unset or stale (pointed at a deleted tournament).
+ * ───────────────────────────────────────────────────────────────────── */
+const ACTIVE_TOURNAMENT_LS = 'breakout.activeTournamentId.v1';
+let _tournamentsCache = [];
+let _activeTournamentId = (() => {
+  try { const v = localStorage.getItem(ACTIVE_TOURNAMENT_LS); return v ? parseInt(v, 10) : null; }
+  catch (e) { return null; }
+})();
+function _persistActiveTournamentId() {
+  try {
+    if (_activeTournamentId == null) localStorage.removeItem(ACTIVE_TOURNAMENT_LS);
+    else localStorage.setItem(ACTIVE_TOURNAMENT_LS, String(_activeTournamentId));
+  } catch (e) { /* private mode — in-memory only */ }
+}
+/* Given the freshly-loaded list, confirm _activeTournamentId still points
+ * at a real row; if not, pick the default (newest live → newest created,
+ * list is created_at desc). Returns the resolved id (or null if empty). */
+function resolveActiveTournamentId(list) {
+  if (!list || !list.length) { _activeTournamentId = null; _persistActiveTournamentId(); return null; }
+  if (_activeTournamentId != null && list.some(t => t.id === _activeTournamentId)) {
+    return _activeTournamentId;
+  }
+  const live = list.find(t => t.status === 'live');
+  _activeTournamentId = (live || list[0]).id;
+  _persistActiveTournamentId();
+  return _activeTournamentId;
+}
+/* Query string targeting the active tournament — or the default
+ * (newest live) when nothing is selected yet. Shared by every editor
+ * that used to hardcode `status=eq.live`. */
+function activeTournamentQuery(selectCols) {
+  if (_activeTournamentId != null) {
+    return 'tournaments?id=eq.' + _activeTournamentId + '&select=' + selectCols + '&limit=1';
+  }
+  return 'tournaments?status=eq.live&order=created_at.desc&limit=1&select=' + selectCols;
+}
+
+async function loadTournaments() {
+  const body = document.getElementById('tournamentBody');
+  const status = document.getElementById('tournamentStatus');
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?order=created_at.desc&select=id,slug,name,format_template,status,start_date,end_date,created_at', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    _tournamentsCache = list;
+    if (!list.length) {
+      body.innerHTML = '<p class="hint">No tournaments yet. Click <strong>Generate tournament</strong> to create one.</p>';
+      status.textContent = '';
+      _activeTournamentId = null; _persistActiveTournamentId();
+      return;
+    }
+    const activeId = resolveActiveTournamentId(list);
+    const live = list.filter(t => t.status === 'live').length;
+    const activeName = (list.find(t => t.id === activeId) || {}).name || '—';
+    status.textContent = list.length + ' total · ' + live + ' live · editing: ' + activeName;
+    body.innerHTML = '<table class="table tournaments-table"><thead><tr>'
+      + '<th>Slug</th><th>Name</th><th>Status</th><th>Dates</th><th>Created</th><th>Actions</th>'
+      + '</tr></thead><tbody>'
+      + list.map(t => {
+          const isActive = t.id === activeId;
+          const slugCell = '<span style="font-family:\'SF Mono\',Consolas,Menlo,monospace;color:var(--spm-accent);font-weight:700">' + escapeHtml(t.slug) + '</span>';
+          const statusCell = '<span class="status-pill status-' + escapeHtml(t.status) + '" data-tournament-id="' + t.id + '" onclick="event.stopPropagation(); openTournamentEditModal(' + t.id + ', true)" title="Click to change status">' + escapeHtml(t.status) + '</span>';
+          const dates = (t.start_date || t.end_date)
+            ? (escapeHtml(t.start_date || '?') + ' &rarr; ' + escapeHtml(t.end_date || '?'))
+            : '<span class="hint">—</span>';
+          const activeBtn = isActive
+            ? '<button class="btn btn-sm" disabled style="opacity:0.7">Active &#10003;</button>'
+            : '<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); setActiveTournament(' + t.id + ')">Make Active</button>';
+          const delBtn = '<button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteTournamentRow(' + t.id + ')">Delete</button>';
+          return '<tr class="editable' + (isActive ? ' is-active' : '') + '" data-tournament-id="' + t.id + '" onclick="openTournamentEditModal(' + t.id + ')">'
+            + '<td>' + slugCell + '</td>'
+            + '<td>' + escapeHtml(t.name) + '</td>'
+            + '<td>' + statusCell + '</td>'
+            + '<td class="hint">' + dates + '</td>'
+            + '<td class="hint">' + new Date(t.created_at).toLocaleString() + '</td>'
+            + '<td><div class="row-actions">' + activeBtn + delBtn + '</div></td>'
+            + '</tr>';
+        }).join('') + '</tbody></table>';
+  } catch (e) {
+    body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
+  }
+}
+
+/* Make a tournament the admin's active workspace. Re-points the
+ * Matches / Schedule / Capacity editors at it and scrolls them into
+ * view. Does NOT touch `status` — the public viewer is unaffected. */
+async function setActiveTournament(id) {
+  _activeTournamentId = id;
+  _persistActiveTournamentId();
+  await loadTournaments();      // re-render list: move highlight + status line
+  await loadMatchesView();      // retargets Matches + Schedule editors
+  renderCapacityAnalyzer();     // retargets Capacity
+  const card = document.getElementById('scheduleEditorBody');
+  if (card && card.closest('.card')) {
+    card.closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+/* Permanent per-row delete with an are-you-sure confirm. */
+function deleteTournamentRow(id) {
+  const t = _tournamentsCache.find(x => x.id === id);
+  if (!t) return;
+  confirmModal({
+    title: 'Delete tournament?',
+    message: 'Permanently deletes "' + (t.name || 'this tournament') + '" (' + (t.slug || '') + '), '
+      + 'including all match wiring, schedule, and staff-recorded results. This cannot be undone.',
+    okText: 'Delete permanently',
+    onOk: async () => {
+      try {
+        await sb('DELETE', 'tournaments?id=eq.' + id);
+        if (_activeTournamentId === id) { _activeTournamentId = null; _persistActiveTournamentId(); }
+        await loadTournaments();
+        await loadMatchesView();
+        renderCapacityAnalyzer();
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      }
+    }
+  });
+}
+
+/* Slugify a human-readable string into a URL-safe id. Lowercase, non-alnum
+ * to hyphens, accents stripped, collapse and trim. Caps at 50 chars. */
+function slugify(s) {
+  return String(s || '').toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50)
+    || 'tournament';
+}
+
+async function uniqueSlug(base, excludeId) {
+  for (let i = 0; i < 100; i++) {
+    const candidate = i === 0 ? base : base + '-' + i;
+    let q = 'tournaments?slug=eq.' + encodeURIComponent(candidate) + '&select=id&limit=1';
+    if (excludeId != null) q += '&id=not.eq.' + excludeId;
+    const r = await fetch(SB_URL + '/rest/v1/' + q, { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('Slug check failed: HTTP ' + r.status);
+    const arr = await r.json();
+    if (!arr.length) return candidate;
+  }
+  throw new Error('Could not find a unique slug from "' + base + '"');
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/* ── Picker helpers ──────────────────────── */
+function splitDateTime(iso) {
+  if (!iso || iso.length < 16) return { date: '', time: '' };
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+}
+function combineDateTime(date, time) {
+  if (!date || !time) return '';
+  return date + 'T' + time;
+}
+function buildTimeOptions(selected, startHour, endHour) {
+  // Default range matches tournament-typical play hours (9 AM to 9 PM).
+  // Out-of-range saved times are preserved as a "(out of range)" option.
+  const sH = startHour != null ? startHour : 9;
+  const eH = endHour   != null ? endHour   : 21;
+  const inRange = [];
+  let foundSelected = !selected;
+  for (let totalMin = sH * 60; totalMin <= eH * 60; totalMin += 30) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    const val = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    let dh = h % 12; if (dh === 0) dh = 12;
+    const display = dh + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+    if (val === selected) foundSelected = true;
+    inRange.push('<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + display + '</option>');
+  }
+  const result = ['<option value="">—</option>'];
+  if (!foundSelected && selected) {
+    const parts = selected.split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    let dh = h % 12; if (dh === 0) dh = 12;
+    const display = dh + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+    result.push('<option value="' + selected + '" selected>' + display + ' (out of range)</option>');
+  }
+  result.push(...inRange);
+  return result.join('');
+}
+function buildDurationOptions(selected) {
+  const opts = [];
+  let foundSelected = false;
+  for (let mins = 30; mins <= 300; mins += 30) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    let label;
+    if (h === 0)      label = m + ' min';
+    else if (m === 0) label = h + ' hr';
+    else              label = h + ' hr ' + m;
+    const isSel = mins === selected;
+    if (isSel) foundSelected = true;
+    opts.push('<option value="' + mins + '"' + (isSel ? ' selected' : '') + '>' + label + '</option>');
+  }
+  if (selected != null && !foundSelected) {
+    opts.unshift('<option value="' + selected + '" selected>' + selected + ' min (custom)</option>');
+  }
+  return opts.join('');
+}
+
+async function generateDefaultTournament() {
+  // Blank brackets allowed — no team gate. Seeds beyond what's loaded
+  // render as TBD and can be assigned later via the Seeding editor.
+  const have = _teams.length;
+  const cap  = Math.min(have, 24);
+  const msg  = (have >= 24)
+    ? 'Creates a new Modified-SE 12+12→64 tournament using the first 24 teams (by number), wired and ready. Status: live. Existing tournaments are left untouched.'
+    : (have > 0
+      ? 'Creates a new Modified-SE 12+12→64 tournament. Only ' + have + ' team' + (have === 1 ? '' : 's') + ' in the database — seeds 1–' + cap + ' will be assigned, the rest render as TBD. Fill them in later via the Seeding editor.'
+      : 'Creates a BLANK Modified-SE 12+12→64 tournament — no teams loaded yet. Every seed renders as TBD; assign teams later via the Seeding editor.');
+  confirmModal({
+    title: 'Generate tournament?',
+    message: msg,
+    okText: 'Generate',
+    onOk: doGenerateDefaultTournament
+  });
+}
+
+/* ── Mod-SE 32 → 8 Qualifiers ──────────────────────────────────────
+ * 32 teams enter (seeds 1–32). Bracket runs through R1 (M1–M16),
+ * R2W (M17–M24) + R2L (M25–M32), R3L (M33–M40) and the two terminal
+ * rounds: R3W (M45–M48) and R4L (M41–M44). 8 winners advance to
+ * World Qualifiers; the bracket stops there (no M49–M55, no champion).
+ * Mirrors the APA Mod-SE 32-1 reference PDF but cut at the 8-team line.
+ * ──────────────────────────────────────────────────────────────── */
+function generateMse32To8Tournament() {
+  // Blank brackets allowed — no team gate.
+  const have = _teams.length;
+  const msg  = (have >= 32)
+    ? 'Creates a Modified Single Elimination 32→8 tournament using the first 32 teams (by number). 48 matches, two terminal arms producing 8 World qualifiers. Status: live. Existing tournaments are left untouched.'
+    : (have > 0
+      ? 'Creates a Modified Single Elimination 32→8 tournament. Only ' + have + ' team' + (have === 1 ? '' : 's') + ' in the database — seeds 1–' + have + ' will be assigned, the rest render as TBD. 48 matches, 8 qualifiers. Fill remaining seeds via the Seeding editor.'
+      : 'Creates a BLANK Modified Single Elimination 32→8 tournament — no teams loaded yet. 48 matches, 8 qualifiers. Every seed renders as TBD; assign teams later via the Seeding editor.');
+  confirmModal({
+    title: 'Generate Mod-SE 32→8 tournament?',
+    message: msg,
+    okText: 'Generate',
+    onOk: doGenerateMse32To8
+  });
+}
+
+async function doGenerateMse32To8() {
+  try {
+    const matchData = templateMse32To8();
+    const teams = _teams.slice().sort((a, b) => a.number - b.number);
+    const seedAssignments = [];
+    teams.slice(0, 32).forEach((t, i) => seedAssignments.push({ bracket: '32', seed: i + 1, team_number: t.number }));
+    const today = new Date();
+    const ymd = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    const name = 'Mod-SE 32→8  ' + ymd;
+    const slug = await uniqueSlug(slugify(name));
+    const row = {
+      name,
+      slug,
+      status: 'live',
+      format_template: 'mse-32-to-8',
+      config: { bracketChampText: 'Qualifier', championText: '8 World Qualifiers' },
+      seed_assignments: seedAssignments,
+      matches: matchData,
+      start_date: ymd,
+      is_active: true
+    };
+    const created = await sb('POST', 'tournaments', row);
+    const newId = created && created[0] && created[0].id;
+    if (newId != null) { _activeTournamentId = newId; _persistActiveTournamentId(); }
+    await loadTournaments();
+    loadMatchesView();
+    renderCapacityAnalyzer();
+  } catch (e) {
+    alert('Generate failed: ' + e.message);
+  }
+}
+
+async function doGenerateDefaultTournament() {
+  try {
+    const matchData = templateModSe12_12To64();
+    const teams = _teams.slice().sort((a, b) => a.number - b.number);
+    const seedAssignments = [];
+    teams.slice(0, 12).forEach((t, i)  => seedAssignments.push({ bracket: 'A', seed: i + 1, team_number: t.number }));
+    teams.slice(12, 24).forEach((t, i) => seedAssignments.push({ bracket: 'B', seed: i + 1, team_number: t.number }));
+    const today = new Date();
+    const ymd = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    const name = 'Tournament ' + ymd;
+    const slug = await uniqueSlug(slugify(name));
+    const row = {
+      name,
+      slug,
+      status: 'live',
+      format_template: 'mod-se-12-12-to-64',
+      config: { bracketChampText: 'Bracket Champ', championText: 'Champion' },
+      seed_assignments: seedAssignments,
+      matches: matchData,
+      start_date: ymd,
+      is_active: true   // kept temporarily for backward compat; will be retired
+    };
+    const created = await sb('POST', 'tournaments', row);
+    // Make the tournament you just generated the active workspace.
+    const newId = created && created[0] && created[0].id;
+    if (newId != null) { _activeTournamentId = newId; _persistActiveTournamentId(); }
+    await loadTournaments();
+    loadMatchesView();
+    renderCapacityAnalyzer();
+  } catch (e) {
+    alert('Generate failed: ' + e.message);
+  }
+}
+
+/* ── Matches editor (Stages 1/2/3) ──────────
+ *  Stage 1: read-only table of every match in the most-recently-live tournament.
+ *  Stage 2: click any row to edit — change top/bot source, schedule, table.
+ *  Stage 3: validation banner above table; Add-match / Delete-match. */
+let _activeMatchTournament = null;   // { id, slug, name, matches: [...] }
+let _editingMatchId = null;
+
+async function loadMatchesView() {
+  const body = document.getElementById('matchesBody');
+  const status = document.getElementById('matchesStatus');
+  body.innerHTML = '<p class="hint">Loading&hellip;</p>';
+  try {
+    const sel = 'id,slug,name,start_date,end_date,matches,config,total_tables,venue_name,seed_assignments';
+    const r = await fetch(SB_URL + '/rest/v1/' + activeTournamentQuery(sel), { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    if (!list.length) {
+      // The selected tournament is gone (deleted in another tab, etc.) —
+      // drop the stale pointer and retry once against the default.
+      if (_activeTournamentId != null) {
+        _activeTournamentId = null; _persistActiveTournamentId();
+        return loadMatchesView();
+      }
+      body.innerHTML = '<p class="hint">No tournament. Hit <strong>Generate tournament</strong> above to create one.</p>';
+      status.textContent = '';
+      _activeMatchTournament = null;
+      return;
+    }
+    _activeMatchTournament = list[0];
+    // Lock in the resolved id when we fell back to the default.
+    if (_activeTournamentId == null) {
+      _activeTournamentId = _activeMatchTournament.id;
+      _persistActiveTournamentId();
+    }
+    if (!Array.isArray(_activeMatchTournament.matches)) _activeMatchTournament.matches = [];
+    if (!Array.isArray(_activeMatchTournament.seed_assignments)) _activeMatchTournament.seed_assignments = [];
+    renderMatchesEditor();
+    renderScheduleEditor();
+    renderSeedingEditor();
+    const matches = _activeMatchTournament.matches;
+    const real = matches.filter(m => !m.is_bye).length;
+    const byes = matches.length - real;
+    status.textContent = real + ' real · ' + byes + ' byes · ' + _activeMatchTournament.name + ' (' + _activeMatchTournament.slug + ')';
+  } catch (e) {
+    body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
+    status.textContent = '';
+  }
+}
+
+/* ── Seeding editor ─────────────────────────
+ *  Edits the active tournament's seed_assignments — which team sits in
+ *  each of the 24 seeds (Bracket A 1-12, Bracket B 1-12). One <select>
+ *  per seed, populated from the global teams catalog. Save rebuilds the
+ *  seed_assignments array and PATCHes it; empty seeds are simply omitted
+ *  (the viewer renders any unassigned seed as TBD). Matches reference
+ *  seeds abstractly, so re-seeding never touches the wiring. */
+function renderSeedingEditor() {
+  const body = document.getElementById('seedingEditorBody');
+  if (!body) return;
+  if (!_activeMatchTournament) {
+    body.innerHTML = '<p class="hint">No tournament selected.</p>';
+    return;
+  }
+  const sa = Array.isArray(_activeMatchTournament.seed_assignments)
+    ? _activeMatchTournament.seed_assignments : [];
+  const cur = {};   // "A.3" → team_number
+  for (const a of sa) cur[a.bracket + '.' + a.seed] = a.team_number;
+
+  const optionsFor = (selectedNum) => {
+    let html = '<option value="">— empty (TBD) —</option>';
+    for (const t of _teams) {
+      const sel = (selectedNum != null && String(t.number) === String(selectedNum)) ? ' selected' : '';
+      html += '<option value="' + escapeHtml(String(t.number)) + '"' + sel + '>'
+            + escapeHtml(String(t.number) + ' — ' + (t.name || '')) + '</option>';
+    }
+    return html;
+  };
+  const colFor = (bracket) => {
+    let rows = '<div class="seed-col"><div class="seed-col-head">Bracket ' + bracket + '</div>';
+    for (let s = 1; s <= 12; s++) {
+      rows += '<div class="seed-row">'
+        + '<span class="seed-lbl">' + bracket + s + '</span>'
+        + '<select class="seed-select" data-bracket="' + bracket + '" data-seed="' + s + '">'
+        +   optionsFor(cur[bracket + '.' + s])
+        + '</select>'
+        + '</div>';
+    }
+    return rows + '</div>';
+  };
+  if (!_teams.length) {
+    body.innerHTML = '<p class="hint">No teams in the database yet — add teams in the Teams card above, then re-open this tournament.</p>';
+    return;
+  }
+  body.innerHTML = '<div class="seed-grid">' + colFor('A') + colFor('B') + '</div>';
+  const st = document.getElementById('seedingStatus');
+  if (st) st.textContent = '';
+}
+
+async function saveSeedingEditor() {
+  if (!_activeMatchTournament) { alert('No tournament selected.'); return; }
+  const selects = document.querySelectorAll('#seedingEditorBody .seed-select');
+  if (!selects.length) { alert('Nothing to save.'); return; }
+  const assignments = [];
+  const usedTeam = new Map();   // team_number string → "A3"
+  const dups = [];
+  for (const sel of selects) {
+    const val = sel.value;
+    if (!val) continue;   // empty seed — omit
+    const bracket = sel.dataset.bracket;
+    const seed    = parseInt(sel.dataset.seed, 10);
+    const team    = _teams.find(t => String(t.number) === val);
+    if (!team) continue;
+    const slot = bracket + seed;
+    if (usedTeam.has(val)) {
+      dups.push(team.number + ' "' + (team.name || '') + '" — ' + usedTeam.get(val) + ' and ' + slot);
+    } else {
+      usedTeam.set(val, slot);
+    }
+    // Store team_number in the catalog's native type for a clean join.
+    assignments.push({ bracket: bracket, seed: seed, team_number: team.number });
+  }
+  if (dups.length) {
+    alert('A team is assigned to more than one seed:\n\n  ' + dups.join('\n  ')
+      + '\n\nEach team can hold only one seed. Fix the duplicates, then Save again.');
+    return;
+  }
+  const st = document.getElementById('seedingStatus');
+  if (st) st.textContent = 'Saving…';
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id,
+      { seed_assignments: assignments });
+    _activeMatchTournament.seed_assignments = assignments;
+    if (st) st.textContent = 'Saved — ' + assignments.length + ' seed'
+      + (assignments.length === 1 ? '' : 's') + ' assigned.';
+  } catch (e) {
+    if (st) st.textContent = '';
+    alert('Save failed: ' + e.message);
+  }
+}
+
+/* ── Schedule-by-round bulk editor ─────────
+ *  Lists every (bracket, round) present in the active tournament. Each
+ *  row's inputs auto-populate from the first non-bye match in that round.
+ *  Clicking Apply stamps the entered values onto every (non-bye) match in
+ *  that round and PATCHes the matches JSONB. The matches table refreshes
+ *  to reflect the new values. */
+function bracketOrderRank(b) {
+  if (b === 'A') return 1;
+  if (b === 'B') return 2;
+  if (b === '64') return 3;
+  return 99;
+}
+
+function bracketLabel(b) {
+  return b === '64' ? '64-Team' : 'Bracket ' + b;
+}
+
+function listRounds(matches) {
+  const seen = {};
+  const out = [];
+  for (const m of matches) {
+    const key = m.bracket + '/' + m.round;
+    if (seen[key]) continue;
+    seen[key] = true;
+    out.push({ bracket: m.bracket, round: m.round, key });
+  }
+  return out.sort((a, b) => bracketOrderRank(a.bracket) - bracketOrderRank(b.bracket) || a.round - b.round);
+}
+
+function firstRealMatchInRound(bracket, round) {
+  if (!_activeMatchTournament) return null;
+  return _activeMatchTournament.matches.find(m => m.bracket === bracket && m.round === round && !m.is_bye) || null;
+}
+
+function renderScheduleEditor() {
+  const body = document.getElementById('scheduleEditorBody');
+  if (!_activeMatchTournament) { body.innerHTML = '<p class="hint">No live tournament loaded.</p>'; return; }
+  const rounds = listRounds(_activeMatchTournament.matches);
+  if (!rounds.length) { body.innerHTML = '<p class="hint">No matches to schedule.</p>'; return; }
+
+  let html = '';
+  let currentBracket = null;
+  for (const r of rounds) {
+    if (r.bracket !== currentBracket) {
+      if (currentBracket !== null) html += '</div>';
+      html += '<div class="sched-group"><div class="sched-group-label">' + escapeHtml(bracketLabel(r.bracket)) + '</div>';
+      currentBracket = r.bracket;
+    }
+    const sample = firstRealMatchInRound(r.bracket, r.round);
+    const dt = splitDateTime(sample && sample.scheduled_at ? sample.scheduled_at : '');
+    // Default the date picker to the tournament's start date if this round
+    // hasn't been scheduled yet — saves admins from typing dates twice.
+    if (!dt.date && _activeMatchTournament && _activeMatchTournament.start_date) {
+      dt.date = _activeMatchTournament.start_date;
+    }
+    const payout = sample && sample.payout != null ? sample.payout : '';
+    const tip = sample && sample.tables_in_parallel ? sample.tables_in_parallel : 1;
+    const durMin = sample && sample.duration_min != null ? sample.duration_min : 240;
+    const id = 'sched-' + r.bracket + '-' + r.round;
+    html += '<div class="sched-row" id="' + id + '">'
+      + '<span class="rlabel">R' + r.round + '</span>'
+      + '<div class="dt-pair">'
+      +   '<input type="date" data-field="date" value="' + escapeHtml(dt.date) + '">'
+      +   '<select data-field="time">' + buildTimeOptions(dt.time) + '</select>'
+      + '</div>'
+      + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="How many tables EACH team match in this round occupies. 1 table = 5 individuals play sequentially. 2 tables = individuals 1 & 2 start together and fill in as tables free. Set the duration to the wall-clock you expect for that table count — capacity uses it as-is.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
+      + '<select class="dur-select" data-field="duration_min" title="Total expected duration for this round.">' + buildDurationOptions(durMin) + '</select>'
+      + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
+      + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
+      + '</div>';
+  }
+  if (currentBracket !== null) html += '</div>';
+  body.innerHTML = html;
+}
+
+function toggleTablesInParallel(btn) {
+  // Flipping 1→2 halves the duration; 2→1 doubles it. duration_min is the
+  // wall-clock the operator wants for the CURRENT toggle state — capacity
+  // math reads it as-is. Auto-scaling here keeps wall-clock realistic so the
+  // operator doesn't have to retype it on every toggle.
+  const cur = parseInt(btn.dataset.tables, 10) || 1;
+  const next = cur === 1 ? 2 : 1;
+  btn.dataset.tables = next;
+  btn.textContent = next + ' table' + (next === 1 ? '' : 's');
+
+  const row = btn.parentElement;
+  const durSel = row && row.querySelector('select[data-field="duration_min"]');
+  if (durSel && durSel.value !== '') {
+    const curDur = parseInt(durSel.value, 10);
+    if (Number.isInteger(curDur) && curDur > 0) {
+      const newDur = next === 2 ? Math.round(curDur / 2) : curDur * 2;
+      const opt = Array.from(durSel.options).find(o => parseInt(o.value, 10) === newDur);
+      if (opt) durSel.value = String(newDur);
+      else durSel.innerHTML = buildDurationOptions(newDur);
+    }
+  }
+}
+
+async function applyRoundSchedule(bracket, round) {
+  if (!_activeMatchTournament) return;
+  const rowEl = document.getElementById('sched-' + bracket + '-' + round);
+  if (!rowEl) return;
+  const dateV   = rowEl.querySelector('input[data-field="date"]').value;
+  const timeV   = rowEl.querySelector('select[data-field="time"]').value;
+  const dtV     = combineDateTime(dateV, timeV);
+  const payoutV = rowEl.querySelector('input[data-field="payout"]').value.trim();
+  const payout  = payoutV === '' ? null : parseInt(payoutV, 10);
+  const tipV    = parseInt(rowEl.querySelector('.tables-toggle').dataset.tables, 10) || 1;
+  const durV    = rowEl.querySelector('select[data-field="duration_min"]').value;
+  const dur     = durV === '' ? 240 : parseInt(durV, 10);
+
+  // Snapshot to roll back on failure.
+  const snapshot = JSON.stringify(_activeMatchTournament.matches);
+  let touched = 0;
+  for (const m of _activeMatchTournament.matches) {
+    if (m.bracket !== bracket || m.round !== round) continue;
+    if (m.is_bye) continue;
+    m.scheduled_at = dtV || null;
+    // Clear legacy day/time so the renderer reads from scheduled_at only.
+    if (dtV) { m.day = null; m.time = null; }
+    m.payout = payout;
+    m.tables_in_parallel = tipV;
+    m.duration_min = dur;
+    touched++;
+  }
+
+  const applyBtn = rowEl.querySelector('.apply-btn');
+  applyBtn.disabled = true;
+  applyBtn.textContent = 'Saving…';
+
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+    rowEl.classList.add('applied');
+    applyBtn.classList.add('success');
+    applyBtn.textContent = 'Applied ✓ (' + touched + ')';
+    setTimeout(() => {
+      rowEl.classList.remove('applied');
+      applyBtn.classList.remove('success');
+      applyBtn.textContent = 'Apply';
+      applyBtn.disabled = false;
+    }, 1800);
+    renderMatchesEditor();
+    renderCapacityAnalyzer();
+  } catch (e) {
+    _activeMatchTournament.matches = JSON.parse(snapshot);
+    applyBtn.textContent = 'Apply';
+    applyBtn.disabled = false;
+    alert('Apply failed: ' + e.message);
+  }
+}
+
+/* ── Table assignment ─────────────────────────
+ *  parseTableSpec("1,2,4-6,8-9,11") → [1,2,4,5,6,8,9,11]
+ *  Returns null when the spec is empty so callers can fall back to
+ *  defaults (e.g. 1..total_tables). Throws on syntax errors. */
+function parseTableSpec(spec) {
+  if (spec == null) return null;
+  const s = String(spec).trim();
+  if (!s) return null;
+  const out = new Set();
+  for (const part of s.split(',')) {
+    const p = part.trim();
+    if (!p) continue;
+    const range = p.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      const a = parseInt(range[1], 10), b = parseInt(range[2], 10);
+      if (!Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b < a) {
+        throw new Error('bad range "' + p + '" — expected low-high with low ≤ high');
+      }
+      for (let i = a; i <= b; i++) out.add(i);
+    } else {
+      if (!/^\d+$/.test(p)) throw new Error('bad token "' + p + '" — expected a number or low-high range');
+      const n = parseInt(p, 10);
+      if (n < 1) throw new Error('bad number "' + p + '" — must be ≥ 1');
+      out.add(n);
+    }
+  }
+  return Array.from(out).sort((a, b) => a - b);
+}
+
+/* parseAdjacencySpec("2-6,9-6,7-10,8-11") → Map { 2 → Set([6]), 6 → Set([2,9]),
+ * 9 → Set([6]), 7 → Set([10]), 10 → Set([7]), 8 → Set([11]), 11 → Set([8]) }.
+ * Bidirectional — each "A-B" adds both A→B and B→A. Returns null when the
+ * spec is empty so 2-table auto-assign can fall back to "any pair works".
+ * Throws on syntax errors. */
+function parseAdjacencySpec(spec) {
+  if (spec == null) return null;
+  const s = String(spec).trim();
+  if (!s) return null;
+  const adj = new Map();
+  const link = (a, b) => {
+    if (!adj.has(a)) adj.set(a, new Set());
+    adj.get(a).add(b);
+  };
+  for (const part of s.split(',')) {
+    const p = part.trim();
+    if (!p) continue;
+    const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (!m) throw new Error('bad pair "' + p + '" — expected number-number, e.g. 2-6');
+    const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+    if (!Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b < 1) {
+      throw new Error('bad pair "' + p + '" — both sides must be positive integers');
+    }
+    if (a === b) throw new Error('bad pair "' + p + '" — a table cannot be adjacent to itself');
+    link(a, b);
+    link(b, a);
+  }
+  return adj;
+}
+
+/* table_no may be a number, a string "5", or a comma-separated string "5,6"
+ * (for matches that occupy 2 tables). These helpers normalize. */
+function tableNoToArray(v) {
+  if (v == null || v === '') return [];
+  if (typeof v === 'number') return [v];
+  return String(v).split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0);
+}
+function tableNoFromArray(arr) {
+  if (!arr || !arr.length) return null;
+  if (arr.length === 1) return arr[0];
+  return arr.join(',');
+}
+function fmtTableNoForDisplay(v) {
+  const arr = tableNoToArray(v);
+  if (!arr.length) return '';
+  return arr.join('+');
+}
+
+/* Updates the live preview under the available-tables input. Shows the
+ * parsed list (or a red error) so the operator gets feedback as they type. */
+function updateAvailableTablesPreview() {
+  const inp = document.getElementById('tEditAvailableTables');
+  const out = document.getElementById('tEditAvailableTablesPreview');
+  if (!inp || !out) return;
+  const raw = inp.value;
+  if (!raw.trim()) { out.textContent = ''; out.style.color = ''; return; }
+  try {
+    const list = parseTableSpec(raw);
+    out.style.color = 'var(--spm-accent)';
+    out.textContent = (list && list.length ? list.length + ' tables: ' + list.join(', ') : '(empty)');
+  } catch (e) {
+    out.style.color = 'var(--danger)';
+    out.textContent = '⚠ ' + e.message;
+  }
+}
+
+function updateSecondaryTablesPreview() {
+  const inp = document.getElementById('tEditSecondaryTables');
+  const out = document.getElementById('tEditSecondaryTablesPreview');
+  if (!inp || !out) return;
+  const raw = inp.value;
+  if (!raw.trim()) { out.textContent = ''; out.style.color = ''; return; }
+  try {
+    const list = parseTableSpec(raw);
+    out.style.color = 'var(--spm-accent)';
+    out.textContent = (list && list.length ? list.length + ' overflow tables: ' + list.join(', ') : '(empty)');
+  } catch (e) {
+    out.style.color = 'var(--danger)';
+    out.textContent = '⚠ ' + e.message;
+  }
+}
+
+function updateAdjacentTablesPreview() {
+  const inp = document.getElementById('tEditAdjacentTables');
+  const out = document.getElementById('tEditAdjacentTablesPreview');
+  if (!inp || !out) return;
+  const raw = inp.value;
+  if (!raw.trim()) { out.textContent = ''; out.style.color = ''; return; }
+  try {
+    const adj = parseAdjacencySpec(raw);
+    out.style.color = 'var(--spm-accent)';
+    if (!adj || !adj.size) { out.textContent = '(empty)'; return; }
+    // Count unique unordered pairs for the preview.
+    const pairs = new Set();
+    for (const [a, neighbors] of adj) for (const b of neighbors) pairs.add(a < b ? a + '-' + b : b + '-' + a);
+    out.textContent = pairs.size + ' adjacent pair' + (pairs.size === 1 ? '' : 's') + ' across ' + adj.size + ' table' + (adj.size === 1 ? '' : 's');
+  } catch (e) {
+    out.style.color = 'var(--danger)';
+    out.textContent = '⚠ ' + e.message;
+  }
+}
+
+/* Auto-assign tables. Rules:
+ *  • HARD: no back-to-back — a match never lands on its immediate feeder's
+ *    table. (T4 → T1 → T4 is fine because T4 is two matches back.)
+ *  • SOFT: among candidates, prefer tables not in this match's ancestry, so
+ *    we still avoid same-table-twice when possible.
+ *  • Tie-break: least-used globally so wear levels out.
+ *  • Concurrency: matches sharing scheduled_at can't share tables.
+ *  • 2-table matches consume two tables; both forbid for descendants.
+ *  • Fallback: if even the no-back-to-back rule has no candidate, pick any
+ *    table that isn't already taken in this same time slot. */
+async function autoAssignTables() {
+  if (!_activeMatchTournament) { alert('No live tournament loaded.'); return; }
+  const t = _activeMatchTournament;
+  const cfg = t.config || {};
+  let avail;
+  try { avail = parseTableSpec(cfg.availableTablesSpec); }
+  catch (e) { alert('Available-tables spec invalid: ' + e.message); return; }
+  if (!avail || !avail.length) {
+    const cap = t.total_tables;
+    if (!Number.isInteger(cap) || cap < 1) {
+      alert('No available-tables list set, and venue has no total_tables. Set one in the tournament edit modal first.');
+      return;
+    }
+    avail = [];
+    for (let i = 1; i <= cap; i++) avail.push(i);
+  }
+  let secondary = null;
+  try { secondary = parseTableSpec(cfg.secondaryTablesSpec); }
+  catch (e) { alert('Secondary-tables spec invalid: ' + e.message); return; }
+  if (!secondary) secondary = [];
+  let adjacency = null;
+  try { adjacency = parseAdjacencySpec(cfg.adjacentTablesSpec); }
+  catch (e) { alert('Adjacent-tables spec invalid: ' + e.message); return; }
+  const adjacencyNote = adjacency && adjacency.size
+    ? ' 2-table matches must use an adjacent pair from your adjacency list.'
+    : ' (No adjacency list set — any pair of available tables can be used for 2-table matches.)';
+  const secondaryNote = secondary.length
+    ? ' HARD priority: secondary tables (' + secondary.join(', ') + ') are used at a time slot only when the slot\'s concurrent demand exceeds the ' + avail.length + ' primary table' + (avail.length === 1 ? '' : 's') + '.'
+    : '';
+  const winnersNote = ' Winners-side matches (bracket name contains "winner") claim primary tables first at over-capacity slots.';
+  confirmModal({
+    title: 'Auto-assign tables?',
+    message: 'Assigns tables using these ' + avail.length + ' primary table' + (avail.length === 1 ? '' : 's') + ': ' + avail.join(', ') + '.' + secondaryNote + winnersNote + ' Hard rule: no back-to-back (a match never lands on its immediate feeder\'s table). Soft preference: avoid putting a team on a table they\'ve played before — accepts an earlier-round repeat (e.g. T4 → T1 → T4) when nothing else is free.' + adjacencyNote + ' Overwrites every current assignment.',
+    okText: 'Auto-assign',
+    onOk: async () => {
+      const snapshot = JSON.stringify(t.matches);
+      const result = runAutoAssign(t.matches, avail, adjacency, secondary);
+      try {
+        await sb('PATCH', 'tournaments?id=eq.' + t.id, { matches: t.matches });
+        renderMatchesEditor();
+        renderScheduleEditor();
+        const status = document.getElementById('scheduleStatus');
+        if (status) {
+          const bits = [result.assigned + ' assigned'];
+          if (result.relaxed)   bits.push(result.relaxed   + ' ancestry repeat (back-to-back avoided)');
+          if (result.fallback)  bits.push(result.fallback  + ' BACK-TO-BACK forced (no other table free)');
+          if (result.failed)    bits.push(result.failed    + ' FAILED');
+          if (result.adjacency_unsatisfied) bits.push('— ' + result.adjacency_unsatisfied + ' caused by no adjacent pair available; widen the adjacency list');
+          status.textContent = bits.join(' · ');
+          setTimeout(() => { status.textContent = ''; }, 5000);
+        }
+      } catch (e) {
+        t.matches = JSON.parse(snapshot);
+        alert('Auto-assign failed: ' + e.message);
+      }
+    }
+  });
+}
+
+function runAutoAssign(matches, availableTables, adjacency, secondaryTables) {
+  // availableTables: PRIMARY pool (preferred — main room).
+  // secondaryTables: OVERFLOW pool. HARD rule — only used at a time slot
+  // when the concurrent demand at that slot exceeds the primary pool size.
+  // adjacency: Map<int, Set<int>> or null. When non-null, 2-table picks
+  // MUST land on a pair (a, b) with `adjacency.get(a).has(b)`.
+  if (!secondaryTables) secondaryTables = [];
+  const primarySet = new Set(availableTables);
+  const byId = {};
+  for (const m of matches) byId[m.id] = m;
+  const isAdjacent = (a, b) => adjacency && adjacency.has(a) && adjacency.get(a).has(b);
+
+  // Pre-compute per-time-slot table demand. Sum of tablesPerMatch
+  // (1 or 2) across all non-bye matches at the same scheduled_at. A slot
+  // whose total demand fits the primary pool stays primary-only.
+  const slotDemand = {};
+  for (const m of matches) {
+    if (m.is_bye) continue;
+    const slot = m.scheduled_at || '__unscheduled__';
+    const tip = (m.tables_in_parallel && m.tables_in_parallel >= 2) ? 2 : 1;
+    slotDemand[slot] = (slotDemand[slot] || 0) + tip;
+  }
+  // Per-slot pool: primary only if demand fits, else primary + secondary.
+  const slotPool = {};
+  for (const slot in slotDemand) {
+    if (slotDemand[slot] <= availableTables.length) {
+      slotPool[slot] = availableTables;
+    } else {
+      // Merge primary + secondary, primary first so it's preferred by sort.
+      const seen = new Set();
+      const merged = [];
+      for (const t of availableTables) { if (!seen.has(t)) { seen.add(t); merged.push(t); } }
+      for (const t of secondaryTables) { if (!seen.has(t)) { seen.add(t); merged.push(t); } }
+      slotPool[slot] = merged;
+    }
+  }
+
+  // Iteration order: by scheduled_at, then winners-side first, then bracket/
+  // round/slot. Within a time slot, matches whose bracket name contains
+  // "winner" (case-insensitive) get processed first so they claim primary
+  // tables before losers-side matches at the same slot. (For tournaments
+  // whose brackets are 'A'/'B'/'64' this is a no-op until the brackets are
+  // renamed; the explicit rule is in place for the modified-SE templates
+  // coming next.) Matches without a scheduled_at get processed LAST so
+  // their feeders are already assigned.
+  const isWinnersSide = m => /winner/i.test(String(m.bracket || ''));
+  const order = matches.filter(m => !m.is_bye).slice().sort((a, b) => {
+    const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : Infinity;
+    const tb = b.scheduled_at ? new Date(b.scheduled_at).getTime() : Infinity;
+    if (ta !== tb) return ta - tb;
+    const wa = isWinnersSide(a) ? 0 : 1;
+    const wb = isWinnersSide(b) ? 0 : 1;
+    if (wa !== wb) return wa - wb;
+    if (a.bracket !== b.bracket) return String(a.bracket).localeCompare(String(b.bracket));
+    if (a.round !== b.round) return a.round - b.round;
+    return a.slot - b.slot;
+  });
+
+  // tableHistory[matchId] = Set of tables every potential entrant has touched
+  // by the time they reach this match. Includes feeders' tables + their own
+  // tables propagated forward.
+  const tableHistory = {};
+  // usedAtSlot[scheduled_at] = Set of tables already taken at that wall-clock.
+  const usedAtSlot = {};
+  // Global count for tie-breaking. Initialized only for available tables.
+  const globalCount = {};
+  for (const t of availableTables) globalCount[t] = 0;
+
+  function ancestorTables(m, visited) {
+    visited = visited || new Set();
+    if (visited.has(m.id)) return new Set();
+    visited.add(m.id);
+    const out = new Set();
+    for (const ref of [m.top_from, m.bot_from]) {
+      if (!ref || !ref.match_id) continue;
+      const feeder = byId[ref.match_id];
+      if (!feeder) continue;
+      // Feeder's own tables (now assigned)
+      for (const t of tableNoToArray(feeder.table_no)) out.add(t);
+      // Feeder's ancestors (recursive)
+      const fHist = tableHistory[feeder.id];
+      if (fHist) for (const t of fHist) out.add(t);
+    }
+    return out;
+  }
+  function immediateFeederTables(m) {
+    const out = new Set();
+    for (const ref of [m.top_from, m.bot_from]) {
+      if (!ref || !ref.match_id) continue;
+      const feeder = byId[ref.match_id];
+      if (!feeder) continue;
+      for (const t of tableNoToArray(feeder.table_no)) out.add(t);
+    }
+    return out;
+  }
+
+  const counters = { assigned: 0, relaxed: 0, fallback: 0, failed: 0 };
+
+  for (const m of order) {
+    const need = (m.tables_in_parallel && m.tables_in_parallel >= 2) ? 2 : 1;
+    const slotKey = m.scheduled_at || '__unscheduled__';
+    const inUse = usedAtSlot[slotKey] = usedAtSlot[slotKey] || new Set();
+    // Pool for this slot: primary only if slot fits, else primary+secondary.
+    const pool = slotPool[slotKey] || availableTables;
+
+    // HARD rule: no back-to-back. Never pick a table that's already on this
+    // match's IMMEDIATE feeders (one round back). T4 → T1 → T4 is fine.
+    const immediateForbid = immediateFeederTables(m);
+    // SOFT rule: prefer tables this match's ancestry hasn't touched. Avoid
+    // if able, but allowed when we run out of choices.
+    const ancestry = ancestorTables(m);
+    tableHistory[m.id] = ancestry;
+
+    let candidates = pool.filter(t => !immediateForbid.has(t) && !inUse.has(t));
+    let mode = 'no-back-to-back';
+    if (candidates.length < need) {
+      // Even back-to-back is unavoidable. Take any free table this slot.
+      candidates = pool.filter(t => !inUse.has(t));
+      mode = 'b2b-fallback';
+    }
+    if (candidates.length < need) {
+      // Truly nothing left at this time slot.
+      counters.failed++;
+      continue;
+    }
+
+    // Score function for a candidate table: lower is better.
+    //  0. PRIMARY tier (0) before SECONDARY tier (1) — HARD rule: secondary
+    //     tables are only chosen when primary doesn't have a valid candidate.
+    //  1. Tables NOT in ancestry come first (soft constraint).
+    //  2. Then least-used globally (wear leveling).
+    //  3. Then table number (deterministic).
+    const score = t => [primarySet.has(t) ? 0 : 1, ancestry.has(t) ? 1 : 0, globalCount[t] || 0, t];
+    const cmpScore = (a, b) => {
+      const sa = score(a), sb = score(b);
+      for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return sa[i] - sb[i];
+      return 0;
+    };
+
+    let picked = null;
+    if (need === 1) {
+      const sorted = candidates.slice().sort(cmpScore);
+      picked = [sorted[0]];
+    } else {
+      // need === 2 — pick a PAIR. When adjacency is set, the pair must be
+      // adjacent. Score the pair by summing per-table scores so the best
+      // (least-ancestry, least-used) pair wins; deterministic tiebreak by
+      // (lo, hi) table numbers.
+      let bestPair = null, bestScore = null;
+      const checkPair = (a, b) => {
+        if (a === b) return;
+        if (inUse.has(a) || inUse.has(b)) return;
+        // back-to-back check already filtered candidates; just guard the b2b
+        // fallback case where candidates ignored immediateForbid.
+        if (mode === 'no-back-to-back' && (immediateForbid.has(a) || immediateForbid.has(b))) return;
+        const sa = score(a), sb = score(b);
+        const pairScore = [sa[0] + sb[0], sa[1] + sb[1], Math.min(a, b), Math.max(a, b)];
+        if (bestScore == null || cmpVec(pairScore, bestScore) < 0) {
+          bestScore = pairScore; bestPair = [a, b].sort((x, y) => x - y);
+        }
+      };
+      if (adjacency && adjacency.size) {
+        // Iterate only adjacency edges, both sides constrained to candidates.
+        const candSet = new Set(candidates);
+        for (const [a, neighbors] of adjacency) {
+          if (!candSet.has(a)) continue;
+          for (const b of neighbors) {
+            if (a < b && candSet.has(b)) checkPair(a, b);
+          }
+        }
+      } else {
+        // No adjacency constraint — any pair of candidates.
+        for (let i = 0; i < candidates.length; i++)
+          for (let j = i + 1; j < candidates.length; j++)
+            checkPair(candidates[i], candidates[j]);
+      }
+      if (!bestPair) {
+        // Adjacency constraint made the strict mode infeasible. Step down to
+        // fallback (no back-to-back honored, ignored, etc.) before giving up.
+        if (adjacency && adjacency.size && mode === 'no-back-to-back') {
+          // Try again without the back-to-back filter.
+          const candSet2 = new Set(availableTables.filter(t => !inUse.has(t)));
+          for (const [a, neighbors] of adjacency) {
+            if (!candSet2.has(a)) continue;
+            for (const b of neighbors) {
+              if (a < b && candSet2.has(b)) checkPair(a, b);
+            }
+          }
+          if (bestPair) mode = 'b2b-fallback';
+        }
+      }
+      if (!bestPair) {
+        counters.failed++;
+        if (adjacency && adjacency.size) counters.adjacency_unsatisfied = (counters.adjacency_unsatisfied || 0) + 1;
+        continue;
+      }
+      picked = bestPair;
+    }
+
+    const ancestryRepeat = picked.some(t => ancestry.has(t));
+    for (const t of picked) {
+      inUse.add(t);
+      globalCount[t] = (globalCount[t] || 0) + 1;
+      tableHistory[m.id].add(t);
+    }
+    m.table_no = tableNoFromArray(picked);
+    counters.assigned++;
+    if (mode === 'b2b-fallback')   counters.fallback++;
+    else if (ancestryRepeat)        counters.relaxed++;
+  }
+  return counters;
+}
+
+function cmpVec(a, b) {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
+}
+
+async function renumberAllTables() {
+  if (!_activeMatchTournament) { alert('No live tournament loaded.'); return; }
+  confirmModal({
+    title: 'Renumber tables?',
+    message: 'Assigns table_no = 1, 2, 3 … to every non-bye match in slot order, within each (bracket, round). Overwrites any custom table assignments.',
+    okText: 'Renumber',
+    onOk: async () => {
+      const snapshot = JSON.stringify(_activeMatchTournament.matches);
+      const rounds = listRounds(_activeMatchTournament.matches);
+      for (const r of rounds) {
+        const ms = _activeMatchTournament.matches
+          .filter(m => m.bracket === r.bracket && m.round === r.round && !m.is_bye)
+          .sort((a, b) => a.slot - b.slot);
+        ms.forEach((m, idx) => { m.table_no = idx + 1; });
+      }
+      try {
+        await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+        renderMatchesEditor();
+        renderScheduleEditor();
+        const status = document.getElementById('scheduleStatus');
+        if (status) {
+          status.textContent = 'Tables renumbered';
+          setTimeout(() => { status.textContent = ''; }, 2400);
+        }
+      } catch (e) {
+        _activeMatchTournament.matches = JSON.parse(snapshot);
+        alert('Renumber failed: ' + e.message);
+      }
+    }
+  });
+}
+
+/* ── Schedule math ─────────────────────────
+ *  A "match" in BreakOut is an APA team match = 5 individual matches between
+ *  two teams. tables_in_parallel describes how many tables ONE team match
+ *  occupies (1 or 2). The schedule editor's duration_min is the WALL-CLOCK
+ *  duration the operator has set for that round — already accounts for the
+ *  toggle. The capacity math must NOT halve it again.
+ *
+ *  So computeMatchInterval reads duration_min as-is. tablesPerMatch is used
+ *  only for the demand count: a 2-table team match consumes 2 tables
+ *  concurrently for the full duration_min minutes.
+ *
+ *  Every match in a round shares scheduled_at; no wave staggering.
+ */
+function indexMatchSlots(matches) {
+  // Retained for callers that want per-round counts; the timing math no
+  // longer depends on slot indexing.
+  const groups = {};
+  for (const m of matches) {
+    if (m.is_bye) continue;
+    const key = m.bracket + '/' + m.round;
+    (groups[key] = groups[key] || []).push(m);
+  }
+  for (const k in groups) {
+    groups[k].sort((a, b) => a.slot - b.slot);
+    groups[k].forEach((m, i) => { m._slotIdx = i; });
+  }
+  const counts = {};
+  for (const k in groups) counts[k] = groups[k].length;
+  return counts;
+}
+
+function tablesPerMatch(m) {
+  // Toggle is binary today: 1 or 2. Anything ≥2 is treated as 2.
+  const raw = m && m.tables_in_parallel ? m.tables_in_parallel : 1;
+  return raw >= 2 ? 2 : 1;
+}
+
+function computeMatchInterval(m /* , roundCounts (unused) */) {
+  if (!m.scheduled_at) return null;
+  const start = new Date(m.scheduled_at);
+  if (isNaN(start.getTime())) return null;
+  // duration_min is the WALL-CLOCK duration as set by the operator. The
+  // capacity math does not adjust it for table count — tablesPerMatch only
+  // affects how many tables of demand the match contributes, not its length.
+  const dur = m.duration_min != null ? m.duration_min : 240;
+  const end = new Date(start.getTime() + dur * 60 * 1000);
+  return { start, end, m };
+}
+
+function fmtSlot(d) {
+  return d.toLocaleDateString('en-US', { weekday: 'short' })
+       + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+async function renderCapacityAnalyzer() {
+  const body = document.getElementById('capacityBody');
+  const status = document.getElementById('capacityStatus');
+  body.innerHTML = '<p class="hint">Loading&hellip;</p>';
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/' + activeTournamentQuery('id,name,slug,venue_name,total_tables,matches'), { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    if (!list.length) {
+      body.innerHTML = '<p class="hint">No tournament selected. Generate or pick one above.</p>';
+      status.textContent = '';
+      return;
+    }
+    const t = list[0];
+    const cap = t.total_tables != null ? t.total_tables : null;
+    const matches = (Array.isArray(t.matches) ? t.matches : []).filter(m => !m.is_bye);
+    const roundCounts = indexMatchSlots(matches);
+    const intervals = matches.map(m => computeMatchInterval(m, roundCounts)).filter(Boolean);
+    if (!intervals.length) {
+      body.innerHTML = '<p class="hint">No matches have a scheduled start yet. Set times in the <strong>Schedule by round</strong> card above.</p>';
+      status.textContent = '';
+      return;
+    }
+
+    // 30-min bucket sweep, GROUPED PER DAY. Each day's range = earliest
+    // start to latest end of matches that start on that day; we don't show
+    // overnight empty hours.
+    const SLOT_MIN = 30;
+    const SLOT_MS  = SLOT_MIN * 60 * 1000;
+    const dateKey = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const intervalsByDate = {};
+    for (const iv of intervals) {
+      const k = dateKey(iv.start);
+      (intervalsByDate[k] = intervalsByDate[k] || []).push(iv);
+    }
+    const days = Object.keys(intervalsByDate).sort();
+    let maxDemand = 0;
+    const dayBuckets = days.map(date => {
+      const ivs = intervalsByDate[date];
+      let minT = Infinity, maxT = -Infinity;
+      for (const iv of ivs) {
+        if (iv.start.getTime() < minT) minT = iv.start.getTime();
+        if (iv.end.getTime()   > maxT) maxT = iv.end.getTime();
+      }
+      minT = Math.floor(minT / SLOT_MS) * SLOT_MS;
+      maxT = Math.ceil(maxT / SLOT_MS) * SLOT_MS;
+      const dayRows = [];
+      for (let t0 = minT; t0 < maxT; t0 += SLOT_MS) {
+        const t1 = t0 + SLOT_MS;
+        // Demand counts the TABLES each active team match consumes (1 or 2),
+        // summed across all overlapping matches. Two team matches on 2 tables
+        // each = 4 tables of demand in this bucket.
+        const active = intervals.filter(it => it.start.getTime() < t1 && it.end.getTime() > t0);
+        const demand = active.reduce((sum, it) => sum + tablesPerMatch(it.m), 0);
+        if (demand > maxDemand) maxDemand = demand;
+        dayRows.push({
+          start: new Date(t0),
+          count: demand,
+          // Tag each match with ×2 when it's running on 2 tables so the
+          // matches column makes the doubling visible at a glance.
+          ids: active.map(it => 'M' + (it.m.match_no || '?') + (tablesPerMatch(it.m) === 2 ? '×2' : '')).join(', ')
+        });
+      }
+      return { date, rows: dayRows };
+    });
+
+    const venueLine = (t.venue_name || '(no venue set)') + ' &middot; '
+      + (cap != null ? cap + ' tables' : '<span style="color:var(--danger)">capacity not set</span>');
+    status.innerHTML = venueLine;
+
+    const overflowSlots = cap != null
+      ? dayBuckets.reduce((sum, d) => sum + d.rows.filter(r => r.count > cap).length, 0)
+      : 0;
+    const overflowNote = cap != null && overflowSlots > 0
+      ? '<p class="validation-banner" style="margin:8px 0">⚠ ' + overflowSlots + ' time slot' + (overflowSlots === 1 ? '' : 's') + ' exceed capacity (' + cap + ' tables). Reduce overlap by adjusting round start times or table assignments.</p>'
+      : (cap != null ? '<p class="validation-banner ok" style="margin:8px 0">Within capacity at every slot</p>' : '<p class="hint" style="margin:8px 0">Set the venue\'s <strong>Total tables</strong> in the tournament edit modal to enable capacity checking.</p>');
+
+    const fmtTime = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const fmtDay  = (dateKeyStr) => {
+      const dd = new Date(dateKeyStr + 'T12:00:00');
+      return dd.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    };
+
+    const renderRow = (rw) => {
+      const over = cap != null && rw.count > cap;
+      const atCap = cap != null && rw.count === cap;
+      const rowCls = over ? 'over' : (atCap ? 'at-cap' : '');
+      const widthPct = cap ? Math.min(100, Math.round(rw.count * 100 / cap)) : Math.round(rw.count * 100 / Math.max(1, maxDemand));
+      const tag = cap == null
+        ? '<span class="hint">' + rw.count + '</span>'
+        : (over ? '<span class="over-tag">+' + (rw.count - cap) + ' over</span>'
+          : (atCap ? '<span class="ok-tag">at cap</span>' : '<span class="ok-tag">ok</span>'));
+      return '<tr class="' + rowCls + '">'
+        + '<td>' + escapeHtml(fmtTime(rw.start)) + '</td>'
+        + '<td><strong>' + rw.count + '</strong> / ' + (cap != null ? cap : '?') + ' &nbsp; ' + tag + '</td>'
+        + '<td><span class="demand-bar' + (over ? ' over' : '') + '" style="width:' + widthPct + '%"></span></td>'
+        + '<td class="matches-cell">' + escapeHtml(rw.ids) + '</td>'
+        + '</tr>';
+    };
+
+    const tableHtml = '<table class="table capacity-table">'
+      + '<thead><tr><th style="width:120px">Time</th><th style="width:80px">Demand</th><th style="width:200px">Bar</th><th>Matches</th></tr></thead>'
+      + '<tbody>'
+      + dayBuckets.map(day => {
+          const header = '<tr class="day-header"><td colspan="4">' + escapeHtml(fmtDay(day.date)) + '</td></tr>';
+          return header + day.rows.map(renderRow).join('');
+        }).join('')
+      + '</tbody></table>';
+
+    body.innerHTML = overflowNote + '<div class="table-wrap">' + tableHtml + '</div>';
+  } catch (e) {
+    body.innerHTML = '<p class="hint" style="color:var(--danger)">Load failed: ' + escapeHtml(e.message) + '</p>';
+    status.textContent = '';
+  }
+}
+
+function renderMatchesEditor() {
+  const body = document.getElementById('matchesBody');
+  if (!_activeMatchTournament) { body.innerHTML = ''; return; }
+  const matches = _activeMatchTournament.matches;
+  const issues = validateMatches(matches);
+  const bannerHtml = issues.length
+    ? '<div class="validation-banner"><strong>' + issues.length + ' wiring issue' + (issues.length === 1 ? '' : 's') + '</strong><ul>' + issues.slice(0, 12).map(i => '<li>' + escapeHtml(i) + '</li>').join('') + (issues.length > 12 ? '<li>(&plus; ' + (issues.length - 12) + ' more)</li>' : '') + '</ul></div>'
+    : (matches.length ? '<div class="validation-banner ok"><strong>Wiring OK</strong> &mdash; ' + matches.length + ' matches, every reference resolves, no cycles.</div>' : '');
+  const tableHtml = matches.length ? renderMatchesTable(matches) : '<p class="hint">No matches yet.</p>';
+  body.innerHTML = bannerHtml + tableHtml;
+}
+
+function renderMatchesTable(matches) {
+  const byId = {};
+  matches.forEach(m => { byId[m.id] = m; });
+  const sourceLabel = (src) => {
+    if (!src) return '<span class="hint">&mdash;</span>';
+    const source = byId[src.match_id];
+    if (!source) return '<span style="color:var(--danger)">missing ' + escapeHtml(src.match_id) + '</span>';
+    if (source.is_bye) return '<span class="src-bye" title="' + escapeHtml(source.id) + '">BYE&nbsp;&rarr;&nbsp;Seed ' + (source.top_seed != null ? source.top_seed : '?') + '</span>';
+    const prefix = src.kind === 'winner' ? 'W of M' : 'L of M';
+    const cls    = src.kind === 'winner' ? 'src-win' : 'src-lose';
+    return '<span class="' + cls + '" title="' + escapeHtml(source.id) + '">' + prefix + (source.match_no || '?') + '</span>';
+  };
+  const entrantCell = (m, side) => {
+    const seed = side === 'top' ? m.top_seed : m.bot_seed;
+    const from = side === 'top' ? m.top_from : m.bot_from;
+    if (seed != null) return '<span class="src-seed">Seed ' + seed + '</span>';
+    if (from) return sourceLabel(from);
+    if (m.is_bye && side === 'bot') return '<span class="hint">&mdash;</span>';
+    return '<span style="color:var(--danger)">none</span>';
+  };
+  const sorted = matches.slice().sort((a, b) => (a.match_no || 9999) - (b.match_no || 9999));
+  const rowsHtml = sorted.map(m => {
+    const mno = m.match_no != null
+      ? '<strong>M' + m.match_no + '</strong>' + (m.is_bye ? ' <span class="bye-tag-mini">BYE</span>' : '')
+      : '<span style="color:var(--danger)">?</span>';
+    // Schedule display: prefer scheduled_at; fall back to legacy day/time.
+    let dayCell = '';
+    let timeCell = '';
+    if (m.scheduled_at) {
+      const d = new Date(m.scheduled_at);
+      if (!isNaN(d.getTime())) {
+        dayCell  = d.toLocaleDateString('en-US', { weekday: 'short' });
+        timeCell = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      }
+    } else {
+      dayCell  = m.day || '';
+      timeCell = m.time || '';
+    }
+    return '<tr class="editable' + (m.is_bye ? ' bye-row' : '') + '" data-match-id="' + escapeHtml(m.id) + '" onclick="openMatchEditModal(this.dataset.matchId)">'
+      + '<td>' + mno + '</td>'
+      + '<td>' + escapeHtml(m.bracket) + '</td>'
+      + '<td>' + m.round + '</td>'
+      + '<td>' + m.slot + '</td>'
+      + '<td>' + entrantCell(m, 'top') + '</td>'
+      + '<td>' + entrantCell(m, 'bot') + '</td>'
+      + '<td>' + escapeHtml(dayCell) + '</td>'
+      + '<td>' + escapeHtml(timeCell) + '</td>'
+      + '<td class="num-cell">' + (m.payout != null && m.payout !== '' ? '$' + m.payout : '') + '</td>'
+      + '<td class="num-cell">' + escapeHtml(fmtTableNoForDisplay(m.table_no)) + '</td>'
+      + '<td class="hint" style="font-family:\'SF Mono\',Consolas,Menlo,monospace;font-size:0.72rem">' + escapeHtml(m.id) + '</td>'
+      + '<td><button class="edit-btn" onclick="event.stopPropagation(); openMatchEditModal(\'' + escapeHtml(m.id).replace(/'/g, "\\'") + '\')">Edit</button></td>'
+      + '</tr>';
+  }).join('');
+  return '<table class="table matches-table">'
+    + '<thead><tr>'
+    +   '<th style="width:60px">M#</th>'
+    +   '<th style="width:40px">Br</th>'
+    +   '<th style="width:36px">R</th>'
+    +   '<th style="width:40px">Slot</th>'
+    +   '<th>Top from</th>'
+    +   '<th>Bot from</th>'
+    +   '<th style="width:80px">Day</th>'
+    +   '<th style="width:80px">Time</th>'
+    +   '<th style="width:60px">$</th>'
+    +   '<th style="width:50px">Table</th>'
+    +   '<th style="width:120px">id</th>'
+    +   '<th style="width:50px"></th>'
+    + '</tr></thead>'
+    + '<tbody>' + rowsHtml + '</tbody>'
+    + '</table>';
+}
+
+/* ── Validation (Stage 3) ─────────────────── */
+function validateMatches(matches) {
+  const issues = [];
+  const byId = {};
+  for (const m of matches) {
+    if (byId[m.id]) issues.push('duplicate match id: ' + m.id);
+    else byId[m.id] = m;
+  }
+  const seenMno = {};
+  for (const m of matches) {
+    if (m.match_no != null) {
+      if (seenMno[m.match_no]) issues.push('duplicate match # M' + m.match_no);
+      else seenMno[m.match_no] = m.id;
+    }
+  }
+  // every "from" reference resolves
+  for (const m of matches) {
+    for (const side of ['top_from', 'bot_from']) {
+      const f = m[side];
+      if (f && f.match_id && !byId[f.match_id]) {
+        issues.push(m.id + '.' + side + ' references missing match ' + f.match_id);
+      }
+      if (f && f.kind && f.kind !== 'winner' && f.kind !== 'loser') {
+        issues.push(m.id + '.' + side + ' has invalid kind "' + f.kind + '"');
+      }
+    }
+  }
+  // every match has resolvable top + bot (unless bye, then bot can be empty)
+  for (const m of matches) {
+    const topOk = (m.top_seed != null) || (m.top_from && m.top_from.match_id);
+    if (!topOk) issues.push(m.id + ' has no top entrant');
+    if (!m.is_bye) {
+      const botOk = (m.bot_seed != null) || (m.bot_from && m.bot_from.match_id);
+      if (!botOk) issues.push(m.id + ' has no bot entrant');
+    }
+  }
+  // cycles: from-references must form a DAG
+  // depth-first walk per node
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = {};
+  for (const m of matches) color[m.id] = WHITE;
+  function visit(id, stack) {
+    if (color[id] === BLACK) return;
+    if (color[id] === GRAY) {
+      issues.push('cycle detected: ' + stack.concat([id]).join(' → '));
+      return;
+    }
+    color[id] = GRAY;
+    const m = byId[id];
+    if (m) {
+      for (const side of ['top_from', 'bot_from']) {
+        const f = m[side];
+        if (f && f.match_id && byId[f.match_id]) {
+          visit(f.match_id, stack.concat([id]));
+        }
+      }
+    }
+    color[id] = BLACK;
+  }
+  for (const m of matches) visit(m.id, []);
+
+  // Schedule dependency check: a downstream match cannot start until its
+  // feeder matches are expected to finish. Computes effective end times
+  // (accounting for tables_in_parallel waves) and flags violations.
+  issues.push(...validateScheduleDependencies(matches));
+  return issues;
+}
+
+function validateScheduleDependencies(matches) {
+  const issues = [];
+  const realMatches = matches.filter(m => !m.is_bye);
+  if (!realMatches.length) return issues;
+  const roundCounts = indexMatchSlots(realMatches);
+  const byId = {};
+  const intervalById = {};
+  for (const m of matches) byId[m.id] = m;
+  for (const m of realMatches) {
+    const iv = computeMatchInterval(m, roundCounts);
+    if (iv) intervalById[m.id] = iv;
+  }
+  const fmtTime = (d) => d.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  for (const m of matches) {
+    if (m.is_bye) continue;
+    const mIv = intervalById[m.id];
+    if (!mIv) continue;
+    const feeders = [];
+    if (m.top_from) feeders.push({ ref: m.top_from, side: 'top' });
+    if (m.bot_from) feeders.push({ ref: m.bot_from, side: 'bot' });
+    for (const f of feeders) {
+      const feeder = byId[f.ref.match_id];
+      if (!feeder || feeder.is_bye) continue;  // byes auto-finish
+      const fIv = intervalById[feeder.id];
+      if (!fIv) continue;  // feeder has no schedule yet
+      if (fIv.end.getTime() > mIv.start.getTime()) {
+        const mLabel = m.match_no ? 'M' + m.match_no : m.id;
+        const fLabel = feeder.match_no ? 'M' + feeder.match_no : feeder.id;
+        issues.push(mLabel + ' starts ' + fmtTime(mIv.start) + ' but feeder ' + fLabel + ' (' + f.side + ') doesn’t finish until ' + fmtTime(fIv.end));
+      }
+    }
+  }
+  return issues;
+}
+
+/* ── Edit modal (Stage 2) ─────────────────── */
+function openMatchEditModal(matchId) {
+  if (!_activeMatchTournament) return;
+  const m = _activeMatchTournament.matches.find(x => x.id === matchId);
+  if (!m) return;
+  _editingMatchId = matchId;
+
+  document.getElementById('matchEditTitle').textContent = 'Edit ' + (m.match_no ? 'M' + m.match_no : matchId);
+  document.getElementById('matchEditPosition').textContent = m.bracket + ' / R' + m.round + ' / slot ' + m.slot;
+  document.getElementById('matchEditMno').textContent = m.match_no ? 'M' + m.match_no : '—';
+  document.getElementById('matchEditIsBye').checked = !!m.is_bye;
+
+  // Populate match-id dropdowns for "W of" / "L of"
+  const otherMatches = _activeMatchTournament.matches
+    .filter(x => x.id !== matchId)
+    .slice()
+    .sort((a, b) => (a.match_no || 9999) - (b.match_no || 9999));
+  const optHtml = otherMatches.map(x => {
+    const label = (x.match_no ? 'M' + x.match_no : '—') + ' (' + x.id + ')';
+    return '<option value="' + escapeHtml(x.id) + '">' + escapeHtml(label) + '</option>';
+  }).join('');
+  for (const id of ['matchEditTopWinnerSel','matchEditTopLoserSel','matchEditBotWinnerSel','matchEditBotLoserSel']) {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">— pick —</option>' + optHtml;
+  }
+
+  // Populate values
+  setSideFields('top', m);
+  setSideFields('bot', m);
+
+  // Default the picker to this match's scheduled_at if set, else fall back to
+  // any sibling in the same round that's already been scheduled.
+  let initialDt = m.scheduled_at;
+  if (!initialDt && _activeMatchTournament) {
+    const sibling = _activeMatchTournament.matches.find(x =>
+      !x.is_bye && x.bracket === m.bracket && x.round === m.round && x.scheduled_at);
+    if (sibling) initialDt = sibling.scheduled_at;
+  }
+  const dtParts = splitDateTime(initialDt || '');
+  document.getElementById('matchEditScheduledDate').value = dtParts.date;
+  document.getElementById('matchEditScheduledTime').innerHTML = buildTimeOptions(dtParts.time);
+  document.getElementById('matchEditPayout').value  = m.payout != null ? m.payout : '';
+  document.getElementById('matchEditTable').value   = fmtTableNoForDisplay(m.table_no).replace(/\+/g, ',');
+
+  applyByeToggle();
+  hideStatus('matchEditStatus');
+  document.getElementById('matchEditModal').classList.add('shown');
+}
+
+function setSideFields(side, m) {
+  const seed = side === 'top' ? m.top_seed : m.bot_seed;
+  const from = side === 'top' ? m.top_from : m.bot_from;
+  const kind = (seed != null) ? 'seed' : (from && from.kind ? from.kind : 'seed');
+  // Set radio
+  document.querySelectorAll('input[name="match-edit-' + side + '-kind"]').forEach(r => { r.checked = (r.value === kind); });
+  // Seed input
+  document.getElementById('matchEdit' + (side === 'top' ? 'Top' : 'Bot') + 'Seed').value = seed != null ? seed : '';
+  // Match-id selects
+  document.getElementById('matchEdit' + (side === 'top' ? 'Top' : 'Bot') + 'WinnerSel').value = (kind === 'winner' && from) ? from.match_id : '';
+  document.getElementById('matchEdit' + (side === 'top' ? 'Top' : 'Bot') + 'LoserSel').value  = (kind === 'loser'  && from) ? from.match_id : '';
+}
+
+function applyByeToggle() {
+  const isBye = document.getElementById('matchEditIsBye').checked;
+  const botFs = document.getElementById('matchEditBotFieldset');
+  botFs.classList.toggle('disabled', isBye);
+}
+
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.id === 'matchEditIsBye') applyByeToggle();
+});
+
+function closeMatchEditModal() {
+  document.getElementById('matchEditModal').classList.remove('shown');
+  _editingMatchId = null;
+}
+
+function readSide(side) {
+  const kind = (document.querySelector('input[name="match-edit-' + side + '-kind"]:checked') || {}).value;
+  if (!kind) return { seed: null, from: null };
+  const prefix = side === 'top' ? 'matchEditTop' : 'matchEditBot';
+  if (kind === 'seed') {
+    const v = document.getElementById(prefix + 'Seed').value.trim();
+    const n = parseInt(v, 10);
+    return { seed: Number.isInteger(n) ? n : null, from: null };
+  }
+  if (kind === 'winner') {
+    const v = document.getElementById(prefix + 'WinnerSel').value;
+    return { seed: null, from: v ? { match_id: v, kind: 'winner' } : null };
+  }
+  if (kind === 'loser') {
+    const v = document.getElementById(prefix + 'LoserSel').value;
+    return { seed: null, from: v ? { match_id: v, kind: 'loser' } : null };
+  }
+  return { seed: null, from: null };
+}
+
+async function saveMatchEdit() {
+  if (!_editingMatchId || !_activeMatchTournament) return;
+  const m = _activeMatchTournament.matches.find(x => x.id === _editingMatchId);
+  if (!m) return;
+
+  const isBye = document.getElementById('matchEditIsBye').checked;
+  const top = readSide('top');
+  const bot = isBye ? { seed: null, from: null } : readSide('bot');
+
+  // Apply
+  m.is_bye = isBye;
+  m.top_seed = top.seed;
+  m.top_from = top.from;
+  m.bot_seed = bot.seed;
+  m.bot_from = bot.from;
+  const dateV  = document.getElementById('matchEditScheduledDate').value;
+  const timeV  = document.getElementById('matchEditScheduledTime').value;
+  const dtV    = combineDateTime(dateV, timeV);
+  const payV   = document.getElementById('matchEditPayout').value.trim();
+  const tblV   = document.getElementById('matchEditTable').value.trim();
+  m.scheduled_at = dtV || null;
+  if (dtV) { m.day = null; m.time = null; }
+  m.payout   = payV  !== '' ? parseInt(payV, 10) : null;
+  m.table_no = tableNoFromArray(tableNoToArray(tblV));
+
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+    closeMatchEditModal();
+    renderMatchesEditor();
+  } catch (e) {
+    setStatus('matchEditStatus', 'Save failed: ' + e.message, 'err');
+  }
+}
+
+async function deleteEditingMatch() {
+  if (!_editingMatchId || !_activeMatchTournament) return;
+  const m = _activeMatchTournament.matches.find(x => x.id === _editingMatchId);
+  if (!m) return;
+  confirmModal({
+    title: 'Delete ' + (m.match_no ? 'M' + m.match_no : m.id) + '?',
+    message: 'Removes the match from the tournament. Any matches referencing it will become invalid until rewired.',
+    okText: 'Delete',
+    onOk: async () => {
+      _activeMatchTournament.matches = _activeMatchTournament.matches.filter(x => x.id !== _editingMatchId);
+      try {
+        await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+        closeMatchEditModal();
+        renderMatchesEditor();
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      }
+    }
+  });
+}
+
+async function addMatchToEditor() {
+  if (!_activeMatchTournament) { alert('No live tournament loaded.'); return; }
+  // New custom match. id like "CUSTOM-<timestamp>", bracket=A, round=99, slot=auto.
+  const ts = String(Date.now()).slice(-6);
+  const newMatch = {
+    id: 'CUSTOM-' + ts,
+    bracket: 'A',
+    round: 99,
+    slot: 0,
+    is_bye: false,
+    top_seed: null, bot_seed: null,
+    top_from: null, bot_from: null,
+    day: null, time: null, payout: null, table_no: null,
+    winner_side: null
+  };
+  // match_no = max + 1
+  const maxNo = _activeMatchTournament.matches.reduce((mx, m) => Math.max(mx, m.match_no || 0), 0);
+  newMatch.match_no = maxNo + 1;
+  _activeMatchTournament.matches.push(newMatch);
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id, { matches: _activeMatchTournament.matches });
+    renderMatchesEditor();
+    openMatchEditModal(newMatch.id);
+  } catch (e) {
+    // rollback
+    _activeMatchTournament.matches = _activeMatchTournament.matches.filter(x => x.id !== newMatch.id);
+    alert('Add failed: ' + e.message);
+  }
+}
+
+async function clearAllMatchResults() {
+  let active;
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/' + activeTournamentQuery('id,name,matches'), { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    if (!list.length) { alert('No active tournament to clear.'); return; }
+    active = list[0];
+  } catch (e) { alert('Load failed: ' + e.message); return; }
+
+  const matches = Array.isArray(active.matches) ? active.matches : [];
+  const withResults = matches.filter(m => m.winner_side === 'top' || m.winner_side === 'bot').length;
+  if (!withResults) { alert('No match results to clear (no winners have been recorded yet).'); return; }
+
+  confirmModal({
+    title: 'Clear ALL match results?',
+    message: 'This will wipe the winner from ' + withResults + ' match' + (withResults === 1 ? '' : 'es')
+           + ' in "' + (active.name || 'active tournament') + '". '
+           + 'The bracket will revert to "no winners recorded" state for everyone viewing it. '
+           + 'This cannot be undone.',
+    okText: 'Clear all results',
+    onOk: () => doClearAllMatchResults(active)
+  });
+}
+
+async function doClearAllMatchResults(active) {
+  try {
+    const cleared = (active.matches || []).map(m => Object.assign({}, m, { winner_side: null }));
+    await sb('PATCH', 'tournaments?id=eq.' + active.id, { matches: cleared });
+    loadTournaments();
+    loadMatchesView();
+    renderCapacityAnalyzer();
+  } catch (e) {
+    alert('Clear failed: ' + e.message);
+  }
+}
+
+/* ── Venues catalog ───────────────────────
+ *  Reusable host locations. When a tournament's venue name matches an
+ *  existing venue, we link via venue_id and pre-fill address + table count.
+ *  Typing a new name + saving creates a new venue row for future use. */
+let _venuesByName = {};
+
+async function loadVenues() {
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/venues?select=id,name,address,total_tables&order=name.asc', { headers: HEADERS_READ });
+    if (!r.ok) return;
+    const list = await r.json();
+    _venuesByName = {};
+    for (const v of list) _venuesByName[v.name.toLowerCase()] = v;
+    const dl = document.getElementById('venueList');
+    if (dl) dl.innerHTML = list.map(v => '<option value="' + escapeHtml(v.name) + '">').join('');
+  } catch (e) { /* non-fatal */ }
+}
+
+function maybeAutofillVenue() {
+  const name = (document.getElementById('tEditVenueName').value || '').trim();
+  if (!name) return;
+  const v = _venuesByName[name.toLowerCase()];
+  if (!v) return;
+  // Only autofill empty fields so we don't clobber edits in progress.
+  const addr = document.getElementById('tEditVenueAddress');
+  const tt   = document.getElementById('tEditTotalTables');
+  if (!addr.value && v.address) addr.value = v.address;
+  if (!tt.value   && v.total_tables) tt.value = v.total_tables;
+}
+
+async function ensureVenue(name, address, totalTables) {
+  if (!name) return null;
+  const existing = _venuesByName[name.toLowerCase()];
+  if (existing) {
+    // Update if any field changed.
+    const patch = {};
+    if (address && address !== existing.address) patch.address = address;
+    if (totalTables != null && totalTables !== existing.total_tables) patch.total_tables = totalTables;
+    if (Object.keys(patch).length) {
+      try { await sb('PATCH', 'venues?id=eq.' + existing.id, patch); } catch (_) {}
+      Object.assign(existing, patch);
+    }
+    return existing.id;
+  }
+  // Create new.
+  const row = { name, address: address || null, total_tables: totalTables != null ? totalTables : null };
+  const created = await sb('POST', 'venues', row);
+  const c = Array.isArray(created) ? created[0] : created;
+  if (c) {
+    _venuesByName[c.name.toLowerCase()] = c;
+    return c.id;
+  }
+  return null;
+}
+
+/* ── Tournament edit modal ──────────────── */
+let _editingTournamentId = null;
+
+async function openTournamentEditModal(tournamentId, focusStatus) {
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?id=eq.' + tournamentId + '&select=*', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const list = await r.json();
+    if (!list.length) throw new Error('Tournament not found');
+    const t = list[0];
+    _editingTournamentId = t.id;
+    document.getElementById('tournamentEditTitle').textContent = 'Edit tournament: ' + t.name;
+    document.getElementById('tEditSlug').value           = t.slug || '';
+    document.getElementById('tEditName').value           = t.name || '';
+    document.getElementById('tEditStatus').value         = t.status || 'draft';
+    document.getElementById('tEditStartDate').value      = t.start_date || '';
+    document.getElementById('tEditEndDate').value        = t.end_date || '';
+    document.getElementById('tEditVenueName').value      = t.venue_name || '';
+    document.getElementById('tEditVenueAddress').value   = t.venue_address || '';
+    document.getElementById('tEditTotalTables').value    = t.total_tables != null ? t.total_tables : '';
+    document.getElementById('tEditDirectorName').value   = t.director_name || '';
+    document.getElementById('tEditDirectorContact').value= t.director_contact || '';
+    document.getElementById('tEditDescription').value    = t.description || '';
+    document.getElementById('tEditLogoUrl').value        = t.logo_url || '';
+    const cfg = t.config || {};
+    document.getElementById('tEditBracketChamp').value   = cfg.bracketChampText || '';
+    document.getElementById('tEditChampion').value       = cfg.championText || '';
+    document.getElementById('tEditAvailableTables').value = cfg.availableTablesSpec || '';
+    updateAvailableTablesPreview();
+    document.getElementById('tEditSecondaryTables').value = cfg.secondaryTablesSpec || '';
+    updateSecondaryTablesPreview();
+    document.getElementById('tEditAdjacentTables').value  = cfg.adjacentTablesSpec  || '';
+    updateAdjacentTablesPreview();
+    const bn = cfg.bracketNames || {};
+    document.getElementById('tEditBracketNameA').value   = bn.A   || '';
+    document.getElementById('tEditBracketNameB').value   = bn.B   || '';
+    document.getElementById('tEditBracketNameT64').value = bn.T64 || '';
+    // Links
+    // Viewer is in the same directory as admin — './' (not '../') so the
+    // GitHub Pages repo prefix is preserved.
+    const publicHref = './?t=' + encodeURIComponent(t.slug);
+    const staffHref  = './?t=' + encodeURIComponent(t.slug) + '&role=staff&key=' + encodeURIComponent(SB_KEY || '');
+    const publicLink = document.getElementById('tEditPublicUrl');
+    publicLink.href = publicHref;
+    publicLink.textContent = publicHref;
+    const staffLink = document.getElementById('tEditStaffUrl');
+    staffLink.href = staffHref;
+    staffLink.textContent = './?t=' + t.slug + '&role=staff&key=…';
+    hideStatus('tournamentEditStatus');
+    document.getElementById('tournamentEditModal').classList.add('shown');
+    if (focusStatus) {
+      setTimeout(() => document.getElementById('tEditStatus').focus(), 60);
+    }
+  } catch (e) {
+    alert('Load failed: ' + e.message);
+  }
+}
+
+function closeTournamentEditModal() {
+  document.getElementById('tournamentEditModal').classList.remove('shown');
+  _editingTournamentId = null;
+}
+
+async function saveTournamentEdit() {
+  if (!_editingTournamentId) return;
+  const status = document.getElementById('tEditStatus').value;
+  const cfg = {
+    bracketChampText: document.getElementById('tEditBracketChamp').value.trim() || 'Bracket Champ',
+    championText:     document.getElementById('tEditChampion').value.trim()     || 'Champion',
+    availableTablesSpec: document.getElementById('tEditAvailableTables').value.trim() || '',
+    secondaryTablesSpec: document.getElementById('tEditSecondaryTables').value.trim() || '',
+    adjacentTablesSpec:  document.getElementById('tEditAdjacentTables').value.trim()  || '',
+    bracketNames: {
+      A:   document.getElementById('tEditBracketNameA').value.trim()   || '',
+      B:   document.getElementById('tEditBracketNameB').value.trim()   || '',
+      T64: document.getElementById('tEditBracketNameT64').value.trim() || ''
+    }
+  };
+  const venueName = document.getElementById('tEditVenueName').value.trim();
+  const venueAddr = document.getElementById('tEditVenueAddress').value.trim();
+  const totalTblV = document.getElementById('tEditTotalTables').value.trim();
+  const totalTbl  = totalTblV === '' ? null : parseInt(totalTblV, 10);
+  const slugVal = document.getElementById('tEditSlug').value.trim();
+  if (!slugVal) {
+    setStatus('tournamentEditStatus', 'Slug is required.', 'err');
+    return;
+  }
+  const patch = {
+    name:             document.getElementById('tEditName').value.trim(),
+    slug:             slugVal,
+    status:           status,
+    is_active:        status === 'live',
+    start_date:       document.getElementById('tEditStartDate').value || null,
+    end_date:         document.getElementById('tEditEndDate').value || null,
+    venue_name:       venueName || null,
+    venue_address:    venueAddr || null,
+    total_tables:     totalTbl,
+    director_name:    document.getElementById('tEditDirectorName').value.trim() || null,
+    director_contact: document.getElementById('tEditDirectorContact').value.trim() || null,
+    description:      document.getElementById('tEditDescription').value.trim() || null,
+    logo_url:         document.getElementById('tEditLogoUrl').value.trim() || null,
+    config:           cfg
+  };
+  if (!patch.name) {
+    setStatus('tournamentEditStatus', 'Name is required.', 'err');
+    return;
+  }
+  try {
+    // Save venue first (creates or updates), then link from tournament.
+    if (venueName) {
+      const vId = await ensureVenue(venueName, venueAddr, totalTbl);
+      if (vId) patch.venue_id = vId;
+    }
+    await sb('PATCH', 'tournaments?id=eq.' + _editingTournamentId, patch);
+    closeTournamentEditModal();
+    loadTournaments();
+    loadMatchesView();
+    renderCapacityAnalyzer();
+    loadVenues();  // refresh datalist
+  } catch (e) {
+    setStatus('tournamentEditStatus', 'Save failed: ' + e.message, 'err');
+  }
+}
+
+/* Rebuild the slug from the current Name input. Per the slug-conventions
+ * memory rule, slugs are usually immutable post-creation so permalinks stay
+ * stable — this confirms before regenerating to make that trade-off explicit. */
+async function regenerateSlugFromName() {
+  if (!_editingTournamentId) return;
+  const name = (document.getElementById('tEditName').value || '').trim();
+  if (!name) {
+    setStatus('tournamentEditStatus', 'Enter a name first.', 'err');
+    return;
+  }
+  const base = slugify(name);
+  let nextSlug;
+  try {
+    nextSlug = await uniqueSlug(base, _editingTournamentId);
+  } catch (e) {
+    setStatus('tournamentEditStatus', 'Slug generation failed: ' + e.message, 'err');
+    return;
+  }
+  const current = document.getElementById('tEditSlug').value;
+  if (nextSlug === current) {
+    setStatus('tournamentEditStatus', 'Slug is already derived from "' + name + '" — nothing to regenerate.', 'progress');
+    return;
+  }
+  confirmModal({
+    title: 'Regenerate slug?',
+    message: 'New slug will be "' + nextSlug + '". Any existing links pointing at "' + current + '" will 404 after you save. Continue?',
+    okText: 'Regenerate',
+    onOk: () => {
+      document.getElementById('tEditSlug').value = nextSlug;
+      // Refresh the Public + Staff URL preview lines at the bottom of the
+      // modal so the user sees what links will look like after Save.
+      const publicHref = './?t=' + encodeURIComponent(nextSlug);
+      const staffHref  = './?t=' + encodeURIComponent(nextSlug) + '&role=staff&key=' + encodeURIComponent(SB_KEY || '');
+      const pl = document.getElementById('tEditPublicUrl');
+      if (pl) { pl.href = publicHref; pl.textContent = publicHref; }
+      const sl = document.getElementById('tEditStaffUrl');
+      if (sl) { sl.href = staffHref; sl.textContent = './?t=' + nextSlug + '&role=staff&key=…'; }
+      setStatus('tournamentEditStatus', 'Slug regenerated. Click Save to apply.', 'progress');
+    }
+  });
+}
+
+function deleteEditingTournament() {
+  if (!_editingTournamentId) return;
+  const slug = document.getElementById('tEditSlug').value;
+  const name = document.getElementById('tEditName').value;
+  confirmModal({
+    title: 'Delete tournament?',
+    message: 'Permanently deletes "' + name + '" (' + slug + ') including all match data and staff-recorded results. Cannot be undone.',
+    okText: 'Delete tournament',
+    onOk: async () => {
+      try {
+        await sb('DELETE', 'tournaments?id=eq.' + _editingTournamentId);
+        closeTournamentEditModal();
+        loadTournaments();
+        loadMatchesView();
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      }
+    }
+  });
+}
+
+/* Duplicate the tournament currently open in the edit modal.
+ * Copies every column (structure, seeds, schedule, venue, director,
+ * config) into a NEW row. Differences from the source:
+ *   - new unique slug (permalinks must stay distinct)
+ *   - name gets a " (copy)" suffix
+ *   - status forced to 'draft' (never two live tournaments — the viewer
+ *     picks the most-recently-created live row, so a live duplicate
+ *     would silently hijack the public URL)
+ *   - every match's winner_side cleared → copy starts at all-TBD
+ * Duplicates the SAVED DB row, not unsaved modal edits — re-fetches
+ * fresh so the behavior is predictable. */
+async function duplicateEditingTournament() {
+  if (!_editingTournamentId) return;
+  const srcId = _editingTournamentId;
+  confirmModal({
+    title: 'Duplicate tournament?',
+    message: 'Creates a copy with the same bracket structure, teams, seeds, schedule, '
+      + 'and settings. Match results are cleared (every match back to TBD) and the copy '
+      + 'is created as a draft. The original is left untouched. '
+      + 'Note: this duplicates the last SAVED version — save your edits first if you want them included.',
+    okText: 'Duplicate',
+    onOk: async () => {
+      try {
+        const r = await fetch(SB_URL + '/rest/v1/tournaments?id=eq.' + srcId + '&select=*', { headers: HEADERS_READ });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const list = await r.json();
+        if (!list.length) throw new Error('Source tournament not found');
+        const src = list[0];
+
+        // Copy all columns except identity / timestamps (DB regenerates those).
+        const copy = Object.assign({}, src);
+        delete copy.id;
+        delete copy.created_at;
+        delete copy.updated_at;
+
+        copy.name   = (src.name || 'Tournament') + ' (copy)';
+        copy.slug   = await uniqueSlug(slugify(copy.name));
+        copy.status = 'draft';
+        copy.is_active = false;
+
+        // Clear staff-recorded results so the copy is a fresh tournament.
+        if (Array.isArray(copy.matches)) {
+          copy.matches = copy.matches.map(m => Object.assign({}, m, { winner_side: null }));
+        }
+
+        await sb('POST', 'tournaments', copy);
+        closeTournamentEditModal();
+        loadTournaments();
+        loadMatchesView();
+        renderCapacityAnalyzer();
+      } catch (e) {
+        setStatus('tournamentEditStatus', 'Duplicate failed: ' + e.message, 'err');
+      }
+    }
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Template: Modified Single Elimination, 32 teams → 8 Qualifiers
+   ──────────────────────────────────────────────────────────────────
+   Mirrors the APA Mod-SE 32-1 reference PDF, TRUNCATED at the 8-team
+   advancement line. No M49–M55, no champion match.
+
+   Single bracket '32'. Match-number assignment preserves the PDF's
+   numbering scheme exactly:
+     R1   : M1–M16   (16 matches, 32 teams enter)
+     R2W  : M17–M24  (8 matches, winners of R1 pairs)
+     R2L  : M25–M32  (8 matches, losers of R1 pairs)
+     R3L  : M33–M40  (8 matches: W of R2L vs L of R2W, crossing)
+     R4L  : M41–M44  (4 matches, terminal — ★ qualifiers from loser arm)
+     R3W  : M45–M48  (4 matches, terminal — ★ qualifiers from winner arm)
+
+   Cross-wiring (per the PDF's "L OF X" labels on M33–M40):
+     M33 = W of M25 vs L of M24      (W of R2L[0], L of R2W[7])
+     M34 = W of M26 vs L of M23
+     M35 = W of M27 vs L of M22
+     M36 = W of M28 vs L of M21
+     M37 = W of M29 vs L of M20
+     M38 = W of M30 vs L of M19
+     M39 = W of M31 vs L of M18
+     M40 = W of M32 vs L of M17
+   ══════════════════════════════════════════════════════════════════════ */
+const MSE32_SCHEDULE = {
+  1: { day: 'Saturday', time: '9:00 AM',  payout: null },
+  2: { day: 'Saturday', time: '11:00 AM', payout: null },
+  3: { day: 'Saturday', time: '1:00 PM',  payout: null },
+  4: { day: 'Saturday', time: '3:00 PM',  payout: null }
+};
+
+function templateMse32To8() {
+  const md = [];
+  const b = '32';
+  const id = (r, s) => '32-r' + r + 's' + s;
+
+  // R1 (M1–M16): 32 teams seeded into 16 matches via SEED_ORDER_32.
+  for (let i = 0; i < 16; i++) {
+    md.push({
+      id: id(1, i),
+      bracket: b, round: 1, slot: i, is_bye: false,
+      top_seed: SEED_ORDER_32[i * 2],
+      bot_seed: SEED_ORDER_32[i * 2 + 1]
+    });
+  }
+  // R2 winners (M17–M24): winners of consecutive R1 pairs.
+  for (let i = 0; i < 8; i++) {
+    md.push({
+      id: id(2, i),
+      bracket: b, round: 2, slot: i, is_bye: false,
+      top_from: { match_id: id(1, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(1, i * 2 + 1), kind: 'winner' }
+    });
+  }
+  // R2 losers (M25–M32): losers of those same R1 pairs.
+  for (let i = 0; i < 8; i++) {
+    md.push({
+      id: id(2, i + 8),
+      bracket: b, round: 2, slot: i + 8, is_bye: false,
+      top_from: { match_id: id(1, i * 2),     kind: 'loser' },
+      bot_from: { match_id: id(1, i * 2 + 1), kind: 'loser' }
+    });
+  }
+  // R3 loser-arm (M33–M40): W of R2L[i] vs L of R2W[7-i] (crossing).
+  for (let i = 0; i < 8; i++) {
+    md.push({
+      id: id(3, i),
+      bracket: b, round: 3, slot: i, is_bye: false,
+      top_from: { match_id: id(2, i + 8), kind: 'winner' },
+      bot_from: { match_id: id(2, 7 - i), kind: 'loser'  }
+    });
+  }
+  // R4 loser-arm (M41–M44) — ★ TERMINAL qualifiers.
+  for (let i = 0; i < 4; i++) {
+    md.push({
+      id: id(4, i),
+      bracket: b, round: 4, slot: i, is_bye: false,
+      top_from: { match_id: id(3, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(3, i * 2 + 1), kind: 'winner' },
+      is_qualifier: true
+    });
+  }
+  // R3 winner-arm (M45–M48) — ★ TERMINAL qualifiers. Winners of R2W pairs.
+  for (let i = 0; i < 4; i++) {
+    md.push({
+      id: id(3, i + 8),
+      bracket: b, round: 3, slot: i + 8, is_bye: false,
+      top_from: { match_id: id(2, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(2, i * 2 + 1), kind: 'winner' },
+      is_qualifier: true
+    });
+  }
+
+  applyMse32To8Schedule(md);
+  assignMatchNumbersMse32(md);
+  assignTableNumbersMse32(md);
+  return md;
+}
+
+function applyMse32To8Schedule(md) {
+  for (const m of md) {
+    const s = MSE32_SCHEDULE[m.round];
+    if (s) { m.day = s.day; m.time = s.time; m.payout = s.payout; }
+  }
+}
+
+/* Assign M1..M48 numbering to match the PDF exactly. Six sequential
+ * segments by (round, slot-range) maps R1→1, R2W→17, R2L→25, R3L→33,
+ * R4L→41, R3W→45 — the reference layout's actual numbering.       */
+function assignMatchNumbersMse32(md) {
+  const segments = [
+    { round: 1, smin: 0, smax: 15, start: 1  },
+    { round: 2, smin: 0, smax: 7,  start: 17 },
+    { round: 2, smin: 8, smax: 15, start: 25 },
+    { round: 3, smin: 0, smax: 7,  start: 33 },
+    { round: 4, smin: 0, smax: 3,  start: 41 },
+    { round: 3, smin: 8, smax: 11, start: 45 }
+  ];
+  for (const seg of segments) {
+    md.filter(m => m.round === seg.round && m.slot >= seg.smin && m.slot <= seg.smax)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach((m, i) => { m.match_no = seg.start + i; });
+  }
+  // play_order = the natural play order through the bracket — admin can
+  // tune times per-match later if rounds interleave differently.
+  let p = 1;
+  for (let r = 1; r <= 4; r++) {
+    md.filter(m => m.round === r && !m.is_bye)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach(m => { m.play_order = p++; });
+  }
+}
+
+function assignTableNumbersMse32(md) {
+  for (let r = 1; r <= 4; r++) {
+    md.filter(m => m.round === r && !m.is_bye)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach((m, idx) => { m.table_no = idx + 1; });
+  }
+}
+
+/* ── Template (mirror of viewer's templateModSe12_12To64) ─────────── */
+function templateModSe12_12To64() {
+  const md = [];
+  md.push(...gen12Bracket('A'));
+  md.push(...gen12Bracket('B'));
+  md.push(...gen64Bracket());
+  applyTemplateSchedule(md);
+  assignMatchNumbers(md);
+  assignTableNumbers(md);
+  return md;
+}
+
+const TEMPLATE_SCHEDULES = {
+  twelve: [
+    { day: 'Saturday', time: '9:00 AM',  payout: null },
+    { day: 'Saturday', time: '10:30 AM', payout: null },
+    { day: 'Saturday', time: '12:00 PM', payout: 100 },
+    { day: 'Saturday', time: '1:30 PM',  payout: 400 }
+  ],
+  sixtyfour: [
+    { day: 'Saturday', time: '11:00 AM', payout: null },
+    { day: 'Saturday', time: '1:00 PM',  payout: null },
+    { day: 'Saturday', time: '3:00 PM',  payout: null },
+    { day: 'Saturday', time: '5:00 PM',  payout: null },
+    { day: 'Sunday',   time: '10:00 AM', payout: 100 },
+    { day: 'Sunday',   time: '12:00 PM', payout: 600 }
+  ]
+};
+
+function gen12Bracket(label) {
+  const matches = [];
+  for (let i = 0; i < 8; i++) {
+    const topSeed = SEED_ORDER_16[i * 2];
+    const botSeed = SEED_ORDER_16[i * 2 + 1];
+    const topReal = topSeed <= 12 ? topSeed : null;
+    const botReal = botSeed <= 12 ? botSeed : null;
+    if (topReal && botReal) {
+      matches.push({ id: label + '-R1-M' + i, bracket: label, round: 1, slot: i, is_bye: false,
+                     top_seed: topReal, bot_seed: botReal });
+    } else {
+      const seededTeam = topReal || botReal;
+      matches.push({ id: label + '-R1-BYE' + i, bracket: label, round: 1, slot: i, is_bye: true,
+                     top_seed: seededTeam, bot_seed: null });
+    }
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: label + '-R2-M' + (i + 1), bracket: label, round: 2, slot: i, is_bye: false,
+                   top_from: { match_id: matches[i * 2].id, kind: 'winner' },
+                   bot_from: { match_id: matches[i * 2 + 1].id, kind: 'winner' } });
+  }
+  const r2 = matches.filter(m => m.round === 2);
+  for (let i = 0; i < 2; i++) {
+    matches.push({ id: label + '-R3-M' + (i + 1), bracket: label, round: 3, slot: i, is_bye: false,
+                   top_from: { match_id: r2[i * 2].id, kind: 'winner' },
+                   bot_from: { match_id: r2[i * 2 + 1].id, kind: 'winner' } });
+  }
+  const r3 = matches.filter(m => m.round === 3);
+  matches.push({ id: label + '-R4-M1', bracket: label, round: 4, slot: 0, is_bye: false,
+                 top_from: { match_id: r3[0].id, kind: 'winner' },
+                 bot_from: { match_id: r3[1].id, kind: 'winner' } });
+  return matches;
+}
+
+function gen64Bracket() {
+  const matches = [];
+  const aR1Real = [1, 3, 5, 7].map(i => 'A-R1-M' + i);
+  const aR2     = [1, 2, 3, 4].map(i => 'A-R2-M' + i);
+  const bR1Real = [1, 3, 5, 7].map(i => 'B-R1-M' + i);
+  const bR2     = [1, 2, 3, 4].map(i => 'B-R2-M' + i);
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R1-M' + (i + 1), bracket: '64', round: 1, slot: i, is_bye: false,
+                   top_from: { match_id: aR1Real[i], kind: 'loser' },
+                   bot_from: { match_id: aR2[i],     kind: 'loser' } });
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R1-M' + (i + 5), bracket: '64', round: 1, slot: i + 4, is_bye: false,
+                   top_from: { match_id: bR1Real[i], kind: 'loser' },
+                   bot_from: { match_id: bR2[i],     kind: 'loser' } });
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R2-M' + (i + 1), bracket: '64', round: 2, slot: i, is_bye: false,
+                   top_from: { match_id: '64-R1-M' + (i * 2 + 1), kind: 'winner' },
+                   bot_from: { match_id: '64-R1-M' + (i * 2 + 2), kind: 'winner' } });
+  }
+  const integ = [
+    ['64-R3-M1', 'A-R3-M1', '64-R2-M1'],
+    ['64-R3-M2', 'A-R3-M2', '64-R2-M2'],
+    ['64-R3-M3', 'B-R3-M1', '64-R2-M3'],
+    ['64-R3-M4', 'B-R3-M2', '64-R2-M4']
+  ];
+  integ.forEach((row, idx) => {
+    matches.push({ id: row[0], bracket: '64', round: 3, slot: idx, is_bye: false,
+                   top_from: { match_id: row[1], kind: 'loser' },
+                   bot_from: { match_id: row[2], kind: 'winner' } });
+  });
+  for (let i = 0; i < 2; i++) {
+    matches.push({ id: '64-R4-M' + (i + 1), bracket: '64', round: 4, slot: i, is_bye: false,
+                   top_from: { match_id: '64-R3-M' + (i * 2 + 1), kind: 'winner' },
+                   bot_from: { match_id: '64-R3-M' + (i * 2 + 2), kind: 'winner' } });
+  }
+  matches.push({ id: '64-R5-M1', bracket: '64', round: 5, slot: 0, is_bye: false,
+                 top_from: { match_id: 'A-R4-M1', kind: 'loser' },
+                 bot_from: { match_id: '64-R4-M1', kind: 'winner' } });
+  matches.push({ id: '64-R5-M2', bracket: '64', round: 5, slot: 1, is_bye: false,
+                 top_from: { match_id: 'B-R4-M1', kind: 'loser' },
+                 bot_from: { match_id: '64-R4-M2', kind: 'winner' } });
+  matches.push({ id: '64-R6-M1', bracket: '64', round: 6, slot: 0, is_bye: false,
+                 top_from: { match_id: '64-R5-M1', kind: 'winner' },
+                 bot_from: { match_id: '64-R5-M2', kind: 'winner' } });
+  return matches;
+}
+
+function applyTemplateSchedule(md) {
+  for (const m of md) {
+    const sched = (m.bracket === '64' ? TEMPLATE_SCHEDULES.sixtyfour : TEMPLATE_SCHEDULES.twelve)[m.round - 1];
+    if (sched) { m.day = sched.day; m.time = sched.time; m.payout = sched.payout; }
+  }
+}
+
+function assignMatchNumbers(md) {
+  // M# = bracket-position. Byes included. Cross-references stay stable.
+  const bracketOrder = ['A', 'B', '64'];
+  let no = 1;
+  for (const bracket of bracketOrder) {
+    const inBracket = md.filter(m => m.bracket === bracket);
+    if (!inBracket.length) continue;
+    const maxRound = Math.max.apply(null, inBracket.map(m => m.round));
+    for (let r = 1; r <= maxRound; r++) {
+      inBracket.filter(m => m.round === r)
+               .sort((a, b) => a.slot - b.slot)
+               .forEach(m => { m.match_no = no++; });
+    }
+  }
+  // play_order = scheduling sequence, real matches only.
+  const playSeq = [['A',1],['B',1],['A',2],['B',2],['64',1],['A',3],['B',3],['64',2],['64',3],['A',4],['B',4],['64',4],['64',5],['64',6]];
+  let p = 1;
+  for (const pair of playSeq) {
+    md.filter(m => m.bracket === pair[0] && m.round === pair[1] && !m.is_bye)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach(m => { m.play_order = p++; });
+  }
+}
+
+function assignTableNumbers(md) {
+  for (const bracket of ['A', 'B', '64']) {
+    for (let r = 1; r <= 6; r++) {
+      md.filter(m => m.bracket === bracket && m.round === r && !m.is_bye)
+        .sort((a, b) => a.slot - b.slot)
+        .forEach((m, idx) => { m.table_no = idx + 1; });
+    }
+  }
+}
+
+/* ── Init ─────────────────────────────────── */
+async function init() {
+  document.title = 'BreakOut Admin';
+  checkVersion();
+  setInterval(checkVersion, 30000);
+  if (!SB_KEY) {
+    document.getElementById('keyGate').classList.remove('hidden');
+    return;
+  }
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/teams?select=id&limit=1', { headers: HEADERS_READ });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch (e) {
+    const g = document.getElementById('keyGate');
+    g.classList.remove('hidden');
+    document.getElementById('keyGateTitle').textContent = 'Access denied';
+    document.getElementById('keyGateMsg').innerHTML = '<strong style="color:var(--danger)">Admin key invalid or expired.</strong><br>Double-check <code>?key=</code>.';
+    return;
+  }
+  document.getElementById('adminMain').classList.remove('hidden');
+  // Forward the admin's service_role key to the staff-scoring URL so the
+  // header link drops the user straight into a working staff session.
+  const staffLink = document.getElementById('staffSiteLink');
+  if (staffLink && SB_KEY) staffLink.href = './?role=staff&key=' + encodeURIComponent(SB_KEY);
+  try { await loadTeams(); } catch (e) { setStatus('bulkStatus', 'Load failed: ' + e.message, 'err'); return; }
+  renderTeams();
+  // Await loadTournaments so the active-tournament pointer is resolved
+  // (and any stale localStorage id corrected) before the editors load.
+  await loadTournaments();
+  loadMatchesView();
+  loadVenues();
+  renderCapacityAnalyzer();
+  document.getElementById('tEditVenueName').addEventListener('change', maybeAutofillVenue);
+  document.getElementById('tEditVenueName').addEventListener('blur', maybeAutofillVenue);
+  document.getElementById('tEditAvailableTables').addEventListener('input', updateAvailableTablesPreview);
+  document.getElementById('tEditSecondaryTables').addEventListener('input', updateSecondaryTablesPreview);
+  document.getElementById('tEditAdjacentTables').addEventListener('input',  updateAdjacentTablesPreview);
+}
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
