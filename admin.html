@@ -206,6 +206,79 @@
   .seed-lbl { font-weight: 700; width: 36px; font-family: 'SF Mono',Consolas,Menlo,monospace; font-size: 0.82rem; color: #0031a1; }
   .seed-select { flex: 1; padding: 5px 6px; font: inherit; font-size: 0.86rem; min-width: 0; }
   @media (max-width: 640px) { .seed-grid { grid-template-columns: 1fr; } }
+
+  /* ── Live Draw panel (0.98+) ─────────────────────────────────────── */
+  .ld-controls {
+    background: #f9fafb; border: 1px solid var(--border, #e5e7eb);
+    padding: 14px 16px; border-radius: 10px; margin-bottom: 14px;
+  }
+  .ld-input-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+  .ld-field {
+    display: flex; flex-direction: column; gap: 5px;
+    font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted, #6b7280);
+  }
+  .ld-field select, .ld-field input {
+    padding: 8px 10px; font-size: 1rem; font-weight: 500;
+    color: var(--text, #111); text-transform: none; letter-spacing: 0;
+    border: 1px solid var(--border-strong, #d1d5db); border-radius: 6px;
+    background: #fff; font-family: inherit;
+  }
+  .ld-field-team select { min-width: 280px; }
+  .ld-field-tile input {
+    width: 90px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 1.5rem; text-align: center; font-weight: 800; padding: 6px 8px;
+  }
+  .ld-place-btn { padding: 9px 18px; font-size: 0.94rem; }
+  .ld-preview {
+    margin-top: 10px; font-size: 0.86rem; min-height: 1.2em;
+    color: var(--muted, #6b7280);
+  }
+  .ld-preview .ok       { color: #166534; font-weight: 700; }
+  .ld-preview .conflict { color: #b91c1c; font-weight: 700; }
+  .ld-progress {
+    font-size: 0.94rem; margin-bottom: 12px; padding: 6px 0;
+    color: var(--text, #111);
+  }
+  .ld-progress strong { color: #2563eb; }
+  .ld-progress.done strong { color: #166534; }
+  .ld-section-head {
+    font-weight: 800; font-size: 0.7rem; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted, #6b7280); margin: 14px 0 6px;
+  }
+  .ld-remaining-tiles {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.94rem; background: #fffbeb;
+    border: 1px solid #fde68a; padding: 8px 12px; border-radius: 6px;
+    line-height: 1.7; word-spacing: 4px;
+  }
+  .ld-history {
+    max-height: 360px; overflow-y: auto;
+    border: 1px solid var(--border, #e5e7eb); border-radius: 6px; background: #fff;
+  }
+  .ld-history-row {
+    padding: 8px 12px; border-bottom: 1px solid #f3f4f6;
+    display: flex; align-items: center; gap: 10px; font-size: 0.88rem;
+  }
+  .ld-history-row:last-child { border-bottom: none; }
+  .ld-tile-chip {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #2563eb; color: #fff; padding: 3px 9px;
+    border-radius: 5px; font-weight: 700; font-size: 0.82rem; min-width: 64px;
+    text-align: center;
+  }
+  .ld-arrow { color: #9ca3af; }
+  .ld-slot-chip {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 700; color: var(--spm-accent, #0031a1); min-width: 36px;
+  }
+  .ld-team-name { font-weight: 600; color: var(--text, #111); flex: 1; }
+  .ld-undo-btn {
+    margin-left: auto; padding: 2px 10px; font-size: 0.86rem;
+    background: transparent; border: 1px solid var(--border-strong, #d1d5db);
+    border-radius: 5px; cursor: pointer; color: var(--muted, #6b7280);
+  }
+  .ld-undo-btn:hover { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
   .tournaments-table .status-pill:hover { opacity: 0.8; }
 
   /* Schedule-by-round editor */
@@ -447,6 +520,19 @@
       when new formats are added.
     </p>
     <div id="tournamentBody" class="hint">Loading&hellip;</div>
+  </div>
+
+  <!-- Live Draw — physical-tile random-draw workflow (0.98+). One team at
+       a time: select a team, type the tile number (1–24), Enter to commit.
+       Auto-saves to Supabase on each draw, re-renders the bracket below.
+       Tile mapping: 1–12 → A1–A12, 13–24 → B1–B12. -->
+  <div class="card">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+      <h2 style="margin-bottom:0">Live Draw</h2>
+      <span class="hint" id="ldStatus"></span>
+    </div>
+    <p class="hint" style="margin-top:0">Sequential random draw using physical tiles 1&ndash;24. Pick the team, read the tile, Enter. Each draw is saved instantly. Tile <code>1&ndash;12</code> = slots <code>A1&ndash;A12</code>; tile <code>13&ndash;24</code> = slots <code>B1&ndash;B12</code>.</p>
+    <div id="liveDrawBody"><p class="hint">Loading&hellip;</p></div>
   </div>
 
   <div class="card">
@@ -1363,6 +1449,7 @@ async function loadMatchesView() {
     renderMatchesEditor();
     renderScheduleEditor();
     renderSeedingEditor();
+    renderLiveDraw();
     const matches = _activeMatchTournament.matches;
     const real = matches.filter(m => !m.is_bye).length;
     const byes = matches.length - real;
@@ -1463,6 +1550,221 @@ async function saveSeedingEditor() {
     alert('Save failed: ' + e.message);
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   LIVE DRAW (0.98+) — physical-tile random seeding workflow.
+   ──────────────────────────────────────────────────────────────────
+   Workflow: admin draws a physical tile (numbered 1–24), picks a team
+   at random, types both into this panel. Each commit PATCHes the
+   tournament's seed_assignments and re-renders both this panel and the
+   full seeding grid below. No "save" button — instant persistence.
+   Mapping: tile 1–12 → A1–A12, tile 13–24 → B1–B12 (12+12 brackets).
+   ══════════════════════════════════════════════════════════════════════ */
+
+function ldTileToSlot(tile) {
+  const n = parseInt(tile, 10);
+  if (!Number.isInteger(n) || n < 1 || n > 24) return null;
+  return n <= 12 ? { bracket: 'A', seed: n } : { bracket: 'B', seed: n - 12 };
+}
+function ldSlotToTile(bracket, seed) {
+  return bracket === 'A' ? seed : seed + 12;
+}
+
+function renderLiveDraw() {
+  const panel = document.getElementById('liveDrawBody');
+  if (!panel) return;
+  if (!_activeMatchTournament) {
+    panel.innerHTML = '<p class="hint">No tournament selected.</p>';
+    return;
+  }
+  if (!_teams.length) {
+    panel.innerHTML = '<p class="hint">No teams in the database yet — add teams above first.</p>';
+    return;
+  }
+  const sa = Array.isArray(_activeMatchTournament.seed_assignments)
+    ? _activeMatchTournament.seed_assignments : [];
+  const placedTiles = new Set();
+  const placedTeamNums = new Set();
+  for (const a of sa) {
+    placedTiles.add(ldSlotToTile(a.bracket, a.seed));
+    placedTeamNums.add(String(a.team_number));
+  }
+  const remainingTeams = _teams.filter(t => !placedTeamNums.has(String(t.number)));
+  const remainingTiles = [];
+  for (let n = 1; n <= 24; n++) if (!placedTiles.has(n)) remainingTiles.push(n);
+
+  const teamOpts = '<option value="">— pick a team —</option>' +
+    remainingTeams.map(t =>
+      '<option value="' + escapeHtml(String(t.number)) + '">'
+      + escapeHtml(String(t.number) + ' — ' + (t.name || '(no name)')) + '</option>'
+    ).join('');
+
+  const teamByNum = new Map(_teams.map(t => [String(t.number), t]));
+  // History — newest first; only the most recent gets an Undo button.
+  const history = sa.slice().reverse().map((a, i) => {
+    const team = teamByNum.get(String(a.team_number));
+    const tile = ldSlotToTile(a.bracket, a.seed);
+    const teamLabel = team ? (team.number + ' — ' + (team.name || '(no name)')) : '#' + a.team_number;
+    return '<div class="ld-history-row">'
+      + '<span class="ld-tile-chip">Tile ' + tile + '</span>'
+      + '<span class="ld-arrow">→</span>'
+      + '<span class="ld-slot-chip">' + a.bracket + a.seed + '</span>'
+      + '<span class="ld-team-name">' + escapeHtml(teamLabel) + '</span>'
+      + (i === 0
+          ? '<button class="ld-undo-btn" onclick="ldUndoLast()" title="Undo this draw">Undo</button>'
+          : '')
+      + '</div>';
+  }).join('');
+
+  const isDone = remainingTiles.length === 0;
+  panel.innerHTML = `
+    <div class="ld-controls">
+      <div class="ld-input-row">
+        <label class="ld-field ld-field-team">Team
+          <select id="ldTeamSel" ${isDone ? 'disabled' : ''}>${teamOpts}</select>
+        </label>
+        <label class="ld-field ld-field-tile">Tile&nbsp;#
+          <input id="ldTileInput" type="number" min="1" max="24" inputmode="numeric"
+                 placeholder="1–24" autocomplete="off" ${isDone ? 'disabled' : ''}>
+        </label>
+        <button class="btn btn-primary ld-place-btn" id="ldPlaceBtn"
+                onclick="ldPlace()" ${isDone ? 'disabled' : ''}>Place &amp; save</button>
+      </div>
+      <div class="ld-preview" id="ldPreview">${
+        isDone
+          ? '<span class="ok">✓ Draw complete — all 24 slots filled.</span>'
+          : 'Pick a team, type the tile number, press Enter (or click Place).'
+      }</div>
+    </div>
+
+    <div class="ld-progress ${isDone ? 'done' : ''}">
+      <strong>${sa.length}</strong> of 24 placed &nbsp;·&nbsp;
+      <strong>${remainingTiles.length}</strong> tiles left &nbsp;·&nbsp;
+      <strong>${remainingTeams.length}</strong> teams left
+    </div>
+
+    ${remainingTiles.length > 0 ? `
+      <div class="ld-section-head">Remaining tiles</div>
+      <div class="ld-remaining-tiles">${remainingTiles.join(' &nbsp; ')}</div>
+    ` : ''}
+
+    ${history ? `
+      <div class="ld-section-head">Placed (newest first)</div>
+      <div class="ld-history">${history}</div>
+    ` : ''}
+  `;
+
+  const teamSel = document.getElementById('ldTeamSel');
+  const tileInp = document.getElementById('ldTileInput');
+  const preview = document.getElementById('ldPreview');
+  if (teamSel && tileInp) {
+    // Team picked → auto-focus the tile input (mirrors physical "pick team then draw tile")
+    teamSel.onchange = () => { if (teamSel.value) tileInp.focus(); ldUpdatePreview(); };
+    tileInp.oninput = ldUpdatePreview;
+    tileInp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); ldPlace(); } };
+    // Initial focus for fast keyboarding on each draw
+    if (!isDone) setTimeout(() => teamSel.focus(), 30);
+  }
+}
+
+function ldUpdatePreview() {
+  const teamSel = document.getElementById('ldTeamSel');
+  const tileInp = document.getElementById('ldTileInput');
+  const preview = document.getElementById('ldPreview');
+  if (!teamSel || !tileInp || !preview) return;
+  const tileVal = tileInp.value.trim();
+  if (!tileVal) {
+    preview.innerHTML = teamSel.value
+      ? 'Now read the tile and type its number above.'
+      : 'Pick a team, type the tile number, press Enter (or click Place).';
+    return;
+  }
+  const slot = ldTileToSlot(tileVal);
+  if (!slot) {
+    preview.innerHTML = '<span class="conflict">Tile must be a whole number 1–24.</span>';
+    return;
+  }
+  const sa = _activeMatchTournament.seed_assignments || [];
+  const taken = sa.find(a => a.bracket === slot.bracket && a.seed === slot.seed);
+  if (taken) {
+    const team = _teams.find(t => String(t.number) === String(taken.team_number));
+    preview.innerHTML = '<span class="conflict">⚠ Tile ' + escapeHtml(tileVal)
+      + ' (' + slot.bracket + slot.seed + ') is already placed → '
+      + escapeHtml(team ? (team.number + ' ' + (team.name || '')) : ('#' + taken.team_number))
+      + '.</span>';
+    return;
+  }
+  preview.innerHTML = '<span class="ok">Tile ' + escapeHtml(tileVal)
+    + '</span> → slot <strong>' + slot.bracket + slot.seed + '</strong>'
+    + (teamSel.value ? '. Press Enter to commit.' : '. Pick a team first.');
+}
+
+async function ldPlace() {
+  if (!_activeMatchTournament) { alert('No tournament selected.'); return; }
+  const teamSel = document.getElementById('ldTeamSel');
+  const tileInp = document.getElementById('ldTileInput');
+  if (!teamSel || !tileInp) return;
+  const teamNum = teamSel.value;
+  const tileVal = tileInp.value.trim();
+  if (!teamNum) { alert('Pick a team first.'); teamSel.focus(); return; }
+  const slot = ldTileToSlot(tileVal);
+  if (!slot) { alert('Tile must be 1–24.'); tileInp.focus(); return; }
+  const sa = (_activeMatchTournament.seed_assignments || []).slice();
+  if (sa.some(a => a.bracket === slot.bracket && a.seed === slot.seed)) {
+    alert('Tile ' + tileVal + ' (' + slot.bracket + slot.seed + ') is already placed. Pick another tile or Undo first.');
+    return;
+  }
+  if (sa.some(a => String(a.team_number) === teamNum)) {
+    alert('That team is already placed somewhere. Pick a different team.');
+    return;
+  }
+  const team = _teams.find(t => String(t.number) === teamNum);
+  if (!team) { alert('Team not found in the catalog.'); return; }
+  sa.push({ bracket: slot.bracket, seed: slot.seed, team_number: team.number });
+  const status = document.getElementById('ldStatus');
+  if (status) status.textContent = 'Saving…';
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id,
+      { seed_assignments: sa });
+    _activeMatchTournament.seed_assignments = sa;
+    if (status) status.textContent = '✓ Saved · ' + sa.length + '/24 placed';
+    setTimeout(() => { if (status) status.textContent = ''; }, 1800);
+    renderLiveDraw();
+    renderSeedingEditor();
+  } catch (e) {
+    if (status) status.textContent = '';
+    alert('Save failed: ' + e.message);
+  }
+}
+
+async function ldUndoLast() {
+  if (!_activeMatchTournament) return;
+  const sa = (_activeMatchTournament.seed_assignments || []).slice();
+  if (!sa.length) return;
+  const last = sa[sa.length - 1];
+  const team = _teams.find(t => String(t.number) === String(last.team_number));
+  const teamLabel = team ? (team.number + ' ' + (team.name || '')) : ('#' + last.team_number);
+  const tile = ldSlotToTile(last.bracket, last.seed);
+  if (!confirm('Undo last draw?\n\nTile ' + tile + ' → ' + last.bracket + last.seed + ' → ' + teamLabel)) return;
+  sa.pop();
+  const status = document.getElementById('ldStatus');
+  if (status) status.textContent = 'Undoing…';
+  try {
+    await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id,
+      { seed_assignments: sa });
+    _activeMatchTournament.seed_assignments = sa;
+    if (status) status.textContent = 'Undone';
+    setTimeout(() => { if (status) status.textContent = ''; }, 1500);
+    renderLiveDraw();
+    renderSeedingEditor();
+  } catch (e) {
+    if (status) status.textContent = '';
+    alert('Undo failed: ' + e.message);
+  }
+}
+
+window.ldPlace    = ldPlace;
+window.ldUndoLast = ldUndoLast;
 
 /* ── Schedule-by-round bulk editor ─────────
  *  Lists every (bracket, round) present in the active tournament. Each
