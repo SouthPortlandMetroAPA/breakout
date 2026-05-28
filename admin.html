@@ -841,7 +841,13 @@ async function sb(method, path, body, extra) {
   return text ? JSON.parse(text) : null;
 }
 async function loadTeams() {
-  _teams = await sb('GET', 'teams?order=number.asc') || [];
+  // 1.00: teams are scoped per-tournament. Reads only the active
+  // tournament's teams; without an active tournament we leave _teams
+  // empty (UI shows "pick a tournament first" state).
+  if (_activeTournamentId == null) { _teams = []; return; }
+  _teams = await sb('GET',
+    'teams?tournament_id=eq.' + _activeTournamentId +
+    '&order=number.asc') || [];
 }
 
 /* ── Teams CRUD ─────────────────────────────
@@ -1064,6 +1070,11 @@ function pdfClearPreview() {
 
 async function pdfImportSelected() {
   if (!_pdfParsed) return;
+  if (_activeTournamentId == null) {
+    document.getElementById('pdfImportStatus').textContent = '';
+    setStatus('pdfStatus', 'Pick a tournament first — teams are scoped per-tournament.', 'err');
+    return;
+  }
   const checks = document.querySelectorAll('.pdf-row-check');
   const picks = [];
   checks.forEach(cb => {
@@ -1071,7 +1082,8 @@ async function pdfImportSelected() {
       const i = parseInt(cb.dataset.idx, 10);
       const t = _pdfParsed[i];
       const c = classifyParsedTeam(t);
-      if (c.ok) picks.push({ number: c.num, name: t.team_name });
+      // 1.00: stamp tournament_id on every parsed row.
+      if (c.ok) picks.push({ number: c.num, name: t.team_name, tournament_id: _activeTournamentId });
     }
   });
   if (!picks.length) {
@@ -1085,7 +1097,7 @@ async function pdfImportSelected() {
     _teams.push(...list);
     _teams.sort((a, b) => a.number - b.number);
     renderTeams();
-    setStatus('pdfStatus', 'Added ' + list.length + ' team' + (list.length === 1 ? '' : 's') + ' from PDF.', 'ok');
+    setStatus('pdfStatus', 'Added ' + list.length + ' team' + (list.length === 1 ? '' : 's') + ' from PDF to this tournament.', 'ok');
     pdfClearPreview();
   } catch (e) {
     document.getElementById('pdfImportStatus').textContent = '';
@@ -1115,6 +1127,10 @@ async function handleRosterFile(file) {
 
 async function bulkAddTeams() {
   hideStatus('bulkStatus');
+  if (_activeTournamentId == null) {
+    setStatus('bulkStatus', 'Pick a tournament first — teams are scoped per-tournament.', 'err');
+    return;
+  }
   const text = document.getElementById('bulkInput').value;
   const { rows, errors } = parseBulkTsv(text);
   if (errors.length) {
@@ -1126,12 +1142,14 @@ async function bulkAddTeams() {
     return;
   }
   try {
-    const created = await sb('POST', 'teams', rows);
+    // 1.00: stamp tournament_id on every insert.
+    const stamped = rows.map(r => ({ ...r, tournament_id: _activeTournamentId }));
+    const created = await sb('POST', 'teams', stamped);
     const list = Array.isArray(created) ? created : [created];
     _teams.push(...list);
     _teams.sort((a, b) => a.number - b.number);
     document.getElementById('bulkInput').value = '';
-    setStatus('bulkStatus', 'Added ' + list.length + ' team' + (list.length === 1 ? '' : 's') + '.', 'ok');
+    setStatus('bulkStatus', 'Added ' + list.length + ' team' + (list.length === 1 ? '' : 's') + ' to this tournament.', 'ok');
     renderTeams();
   } catch (e) {
     setStatus('bulkStatus', 'Add failed: ' + e.message, 'err');
@@ -1152,9 +1170,18 @@ function refreshBulkPreview() {
 
 function renderTeams() {
   const body = document.getElementById('teamsBody');
-  document.getElementById('teamsCount').textContent = _teams.length + ' team' + (_teams.length === 1 ? '' : 's');
+  // 1.00: show which tournament these teams belong to. Empty (or
+  // missing-active-tournament) → instruct admin to pick one.
+  const scopeEl = document.getElementById('teamsCount');
+  const activeT = _tournamentsCache.find(t => t.id === _activeTournamentId);
+  const scopeLabel = activeT ? ('in ' + activeT.name) : '(no active tournament)';
+  scopeEl.textContent = _teams.length + ' team' + (_teams.length === 1 ? '' : 's') + ' · ' + scopeLabel;
+  if (_activeTournamentId == null) {
+    body.innerHTML = '<tr><td colspan="3" class="hint">Pick a tournament above (Make Active) — teams are scoped per-tournament.</td></tr>';
+    return;
+  }
   if (!_teams.length) {
-    body.innerHTML = '<tr><td colspan="3" class="hint">No teams yet. Paste tab-separated rows in the Add teams card above.</td></tr>';
+    body.innerHTML = '<tr><td colspan="3" class="hint">No teams in this tournament yet. Drop a roster PDF or paste tab-separated rows in the Add teams card above.</td></tr>';
     return;
   }
   body.innerHTML = _teams.map(t => '<tr>'
@@ -1235,8 +1262,12 @@ function clearAllTeams() {
   });
 }
 async function doClearAllTeams() {
+  if (_activeTournamentId == null) { alert('No active tournament.'); return; }
   try {
-    await sb('DELETE', 'teams?id=gte.0');
+    // 1.00: scope DELETE to active tournament. The original DELETE id=gte.0
+    // wiped the entire global catalog; with per-tournament scoping that
+    // would cascade-clear every tournament's teams.
+    await sb('DELETE', 'teams?tournament_id=eq.' + _activeTournamentId);
     _teams = [];
     renderTeams();
   } catch (e) {
@@ -1387,6 +1418,8 @@ async function loadTournaments() {
 async function setActiveTournament(id) {
   _activeTournamentId = id;
   _persistActiveTournamentId();
+  await loadTeams();            // 1.00: re-scope teams to the new tournament
+  renderTeams();                // re-render the (now tournament-scoped) Teams card
   await loadTournaments();      // re-render list: move highlight + status line
   await loadMatchesView();      // retargets Matches + Schedule editors
   renderCapacityAnalyzer();     // retargets Capacity
@@ -3520,15 +3553,16 @@ async function init() {
   // header link drops the user straight into a working staff session.
   const staffLink = document.getElementById('staffSiteLink');
   if (staffLink && SB_KEY) staffLink.href = './?role=staff&key=' + encodeURIComponent(SB_KEY);
-  try { await loadTeams(); } catch (e) { setStatus('bulkStatus', 'Load failed: ' + e.message, 'err'); return; }
-  renderTeams();
   // Load formats registry → renders Generate buttons. Fire-and-forget;
   // if the breakout.formats table is empty or unreachable, the buttons
   // panel shows a "no formats" hint but admin still loads.
   loadFormats();
-  // Await loadTournaments so the active-tournament pointer is resolved
-  // (and any stale localStorage id corrected) before the editors load.
+  // 1.00: tournaments BEFORE teams. Teams are scoped per-tournament now,
+  // so we need the active-tournament pointer resolved (and any stale
+  // localStorage id corrected) before loadTeams can scope correctly.
   await loadTournaments();
+  try { await loadTeams(); } catch (e) { setStatus('bulkStatus', 'Load failed: ' + e.message, 'err'); return; }
+  renderTeams();
   loadMatchesView();
   loadVenues();
   renderCapacityAnalyzer();

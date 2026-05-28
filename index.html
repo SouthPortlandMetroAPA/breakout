@@ -1432,10 +1432,13 @@ async function saveStaffOverrides() {
 
 function reapplyTournamentInMemory() {
   const teamsByNumber = Object.fromEntries(_teams.map(t => [t.number, t]));
-  const seedAssignments = (_tournamentRow && Array.isArray(_tournamentRow.seed_assignments)
-                          && _tournamentRow.seed_assignments.length)
+  // 1.00: empty seed_assignments → empty bracket (all TBD). The previous
+  // fallback (defaultSeedAssignments) auto-filled the first 24 catalog
+  // teams which broke the Live Draw workflow — admins literally clear
+  // seeds to start a fresh random draw, and saw teams reappear.
+  const seedAssignments = (_tournamentRow && Array.isArray(_tournamentRow.seed_assignments))
     ? _tournamentRow.seed_assignments
-    : defaultSeedAssignments(_teams);
+    : [];
   const fresh = reconstructTournament(_tournament.matchData, seedAssignments, teamsByNumber);
   fresh.matchData = _tournament.matchData;
   resolveTournament(fresh);
@@ -1509,8 +1512,16 @@ function buildTimeOptions(selected, startHour, endHour) {
 }
 
 /* ── Data fetch ───────────────────────────── */
-async function loadTeams() {
-  const r = await fetch(SB_URL + '/rest/v1/teams?order=number.asc&select=id,number,name', { headers: HEADERS_DB });
+async function loadTeams(tournamentId) {
+  // 1.00: teams are scoped per-tournament. Without an id we leave the
+  // catalog empty (renderer shows TBD slots, which is correct for "no
+  // tournament loaded"). With an id we fetch only that tournament's
+  // teams so the bracket can't accidentally pull teams from another.
+  if (tournamentId == null) { _teams = []; return; }
+  const r = await fetch(
+    SB_URL + '/rest/v1/teams?tournament_id=eq.' + tournamentId
+           + '&order=number.asc&select=id,number,name',
+    { headers: HEADERS_DB });
   if (!r.ok) throw new Error('Could not load teams: HTTP ' + r.status);
   _teams = await r.json();
 }
@@ -1911,17 +1922,25 @@ async function buildTournament() {
   // 0 teams every slot resolves to TBD; with a partial roster the
   // unfilled seeds show TBD. The bracket always renders.
   const dbRow = await loadActiveTournament();
+  // 1.00: load teams scoped to THIS tournament (per-tournament isolation).
+  // No tournament row → no teams loaded; renderer shows the empty template.
+  await loadTeams(dbRow ? dbRow.id : null);
   let matchData, seedAssignments, config;
   if (dbRow && Array.isArray(dbRow.matches) && dbRow.matches.length) {
     matchData = dbRow.matches;
-    seedAssignments = Array.isArray(dbRow.seed_assignments) && dbRow.seed_assignments.length
-                       ? dbRow.seed_assignments
-                       : defaultSeedAssignments(_teams);
+    // 1.00: respect empty seed_assignments. The previous fallback to
+    // defaultSeedAssignments(_teams) auto-filled the first 24 catalog
+    // teams in catalog order, which silently broke the Live Draw
+    // (clearing seeds to start a random draw made all teams "reappear").
+    seedAssignments = Array.isArray(dbRow.seed_assignments) ? dbRow.seed_assignments : [];
     config = dbRow.config || {};
     _tournamentRow = dbRow;
   } else {
+    // No DB row at all → template preview with no teams. Used to default
+    // to defaultSeedAssignments(_teams) which made a brand-new visitor
+    // see Bandits → Just A Team auto-seeded; same Live Draw problem.
     matchData = templateModSe12_12To64();
-    seedAssignments = defaultSeedAssignments(_teams);
+    seedAssignments = [];
     config = {};
     _tournamentRow = null;
   }
@@ -3830,12 +3849,12 @@ function initPrintButtons() {
 (async () => {
   initZoomToolbar();
   initPrintButtons();
-  try { await loadTeams(); }
-  catch (e) {
-    document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">Could not load teams: ' + esc(e.message) + '</p>';
-    return;
-  }
   setupStaffMode();
+  // 1.00: tournament first, then its teams. The previous global
+  // loadTeams() pulled every team in the DB; with per-tournament
+  // scoping we need the tournament id from buildTournament's loadActive
+  // path first. buildTournament internally calls loadTeams(dbRow.id)
+  // after loading the tournament row.
   try { _tournament = await buildTournament(); }
   catch (e) {
     document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">' + esc(e.message) + '</p>';
