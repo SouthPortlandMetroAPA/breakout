@@ -470,7 +470,18 @@
 <div id="adminMain" class="wrap hidden">
   <div class="card">
     <h2>Add teams</h2>
-    <p class="hint" style="margin-top:0">Paste tab-separated rows: <code>number&lt;TAB&gt;name</code>, one team per line. Blank lines are ignored. Last 2 digits of the number must be 01&ndash;16.</p>
+    <p class="hint" style="margin-top:0">Two ways to add: drop in an APA <strong>Roster &amp; Handicap Report</strong> PDF (same format Slate Common Players accepts), or paste tab-separated rows. Last 2 digits of the team number must be 01&ndash;16.</p>
+
+    <!-- ── PDF roster importer (0.99+) ──────────────────────────────── -->
+    <div id="pdfDropzone" tabindex="0" role="button"
+         style="border:2px dashed var(--border-strong);border-radius:10px;padding:18px;text-align:center;cursor:pointer;transition:background 0.12s;margin-bottom:14px;background:#fafbfc">
+      <div style="font-weight:700;margin-bottom:4px">📄 Drop roster PDF here</div>
+      <div class="hint" style="font-size:0.82rem">or click to choose · single PDF · parses team#, name, city</div>
+      <input id="pdfInput" type="file" accept=".pdf,application/pdf" hidden>
+    </div>
+    <div id="pdfStatus" class="status-line" style="margin-bottom:10px"></div>
+    <div id="pdfPreview" style="margin-bottom:14px"></div>
+
     <textarea id="bulkInput" rows="10" spellcheck="false" placeholder="1503&#9;Avenging Eagles&#10;1504&#9;Greek Villagers&#10;5109&#9;SlopDawg Billard&rsquo;Air"
               style="width:100%;font-family:'SF Mono',Consolas,Menlo,monospace;font-size:0.85rem;line-height:1.45;padding:8px 10px;border:1px solid var(--border-strong);border-radius:6px;resize:vertical;background:#fafbfc;"></textarea>
     <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
@@ -879,6 +890,229 @@ function parseBulkTsv(text) {
   return { rows, errors };
 }
 
+/* ── Roster-PDF import (0.99+) ──────────────────────────────────────
+   Mirrors Slate Common Players' cpParseRosterPdf. Same Y-tolerance row
+   clustering + per-column band carve-up + anchor detection. Produces
+   { team_number, team_name } per team; ignores players for BreakOut's
+   number+name schema. PDF.js lazy-loaded from jsdelivr on first use. */
+const RT_PDFJS_VERSION = '4.8.69';
+const RT_PDFJS_URL     = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@' + RT_PDFJS_VERSION + '/build/pdf.min.mjs';
+const RT_PDFJS_WORKER  = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@' + RT_PDFJS_VERSION + '/build/pdf.worker.min.mjs';
+let _rtPdfJsPromise = null;
+function rtEnsurePdfJs() {
+  if (!_rtPdfJsPromise) {
+    _rtPdfJsPromise = import(RT_PDFJS_URL).then(mod => {
+      mod.GlobalWorkerOptions.workerSrc = RT_PDFJS_WORKER;
+      return mod;
+    });
+  }
+  return _rtPdfJsPromise;
+}
+
+let _pdfParsed = null;  // last-parsed teams[]
+
+async function parseRosterPdf(file) {
+  const pdfjs = await rtEnsurePdfJs();
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true }).promise;
+  const teams = [];
+  const seenTeamNums = new Set();
+
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    const items = tc.items
+      .filter(it => it.str && it.str.trim())
+      .map(it => ({ x: it.transform[4], y: it.transform[5], str: it.str.trim() }));
+    if (!items.length) continue;
+
+    const Y_TOLERANCE = 3;
+    const sortedByY = items.slice().sort((a, b) => b.y - a.y);
+    const rows = [];
+    for (const it of sortedByY) {
+      const last = rows[rows.length - 1];
+      if (last && Math.abs(it.y - last.y) <= Y_TOLERANCE) last.items.push(it);
+      else rows.push({ y: it.y, items: [it] });
+    }
+    for (const r of rows) r.items.sort((a, b) => a.x - b.x);
+
+    const isTeamNumberOnly = s => /^\d{5}$/.test(s);
+    const headerAnchorsForRow = (row) => {
+      const anchors = [];
+      for (let i = 0; i < row.items.length; i++) {
+        const cur = row.items[i];
+        if (!isTeamNumberOnly(cur.str)) continue;
+        const prev = row.items[i - 1];
+        if (prev) {
+          const dxPrev = cur.x - prev.x;
+          if (dxPrev < 60 && /^[1-9]$/.test(prev.str)) continue;
+          if (dxPrev < 60 && /^[IN*]$/.test(prev.str)) continue;
+        }
+        const next = row.items[i + 1];
+        if (!next) continue;
+        const dx = next.x - cur.x;
+        if (dx < 8 || dx > 80) continue;
+        if (!/^[A-Za-z]/.test(next.str)) continue;
+        if (/,/.test(next.str)) continue;
+        anchors.push({ x: cur.x, team: cur.str, nameStart: next.x });
+      }
+      return anchors;
+    };
+
+    let rIdx = 0;
+    while (rIdx < rows.length) {
+      const anchors = headerAnchorsForRow(rows[rIdx]);
+      if (!anchors.length) { rIdx++; continue; }
+      let endIdx = rIdx + 1;
+      while (endIdx < rows.length && !headerAnchorsForRow(rows[endIdx]).length) endIdx++;
+      const bounds = anchors.map((a, c) => ({
+        lo: c === 0 ? -Infinity : (anchors[c - 1].x + a.x) / 2,
+        hi: c === anchors.length - 1 ? Infinity : (a.x + anchors[c + 1].x) / 2
+      }));
+
+      for (let c = 0; c < anchors.length; c++) {
+        const teamNum = anchors[c].team;
+        if (seenTeamNums.has(teamNum)) continue;
+        const headerColItems = rows[rIdx].items.filter(i => i.x >= bounds[c].lo && i.x < bounds[c].hi);
+        const nameItems = [];
+        let pastTeamNum = false;
+        for (const it of headerColItems) {
+          if (!pastTeamNum) { if (it.str === teamNum) pastTeamNum = true; continue; }
+          if (/^[NIH*]$/.test(it.str) && nameItems.length > 0) break;
+          nameItems.push(it.str);
+        }
+        const teamName = nameItems.join(' ')
+          .replace(/\s+/g, ' ')
+          .replace(/\s+[NIH*]\s+\d{4,}.*$/i, '')
+          .trim();
+        // Find the FROM: city line in the band for context.
+        let city = null;
+        for (const br of rows.slice(rIdx + 1, endIdx)) {
+          const cells = br.items.filter(i => i.x >= bounds[c].lo && i.x < bounds[c].hi);
+          const text = cells.map(i => i.str).join(' ');
+          const m = text.match(/FROM\s*:\s*(.+)/);
+          if (m) { city = m[1].trim(); break; }
+        }
+        seenTeamNums.add(teamNum);
+        teams.push({ team_number: teamNum, team_name: teamName, city });
+      }
+      rIdx = endIdx;
+    }
+  }
+  return teams;
+}
+
+function classifyParsedTeam(t) {
+  // Maps a parsed team to its BreakOut import status. Returns one of:
+  //   { ok: true, num: <int>, reason: 'new' }
+  //   { ok: false, num: <int>, reason: '...' }
+  const numStr = String(t.team_number || '').replace(/^0+/, '') || '0';
+  const num = parseInt(numStr, 10);
+  if (!Number.isInteger(num)) return { num: null, reason: 'unparseable team number', ok: false };
+  if (!validNumber(num))     return { num, reason: 'last 2 digits must be 01–16', ok: false };
+  if (!t.team_name)          return { num, reason: 'missing team name', ok: false };
+  if (_teams.some(x => x.number === num)) return { num, reason: 'already in catalog', ok: false };
+  return { num, reason: 'new', ok: true };
+}
+
+function renderPdfPreview() {
+  const wrap = document.getElementById('pdfPreview');
+  if (!_pdfParsed || !_pdfParsed.length) { wrap.innerHTML = ''; return; }
+
+  const classified = _pdfParsed.map(t => ({ t, c: classifyParsedTeam(t) }));
+  const okCount  = classified.filter(x => x.c.ok).length;
+  const badCount = classified.length - okCount;
+
+  let html = '<div style="border:1px solid var(--border);border-radius:8px;background:#fff;overflow:hidden">'
+    + '<div style="padding:8px 12px;background:#eff6ff;border-bottom:1px solid var(--border);font-size:0.86rem;font-weight:700;display:flex;align-items:center;gap:10px">'
+    +   '<span>' + classified.length + ' team' + (classified.length === 1 ? '' : 's') + ' parsed</span>'
+    +   '<span style="color:#16a34a">· ' + okCount + ' importable</span>'
+    +   (badCount ? '<span style="color:#dc2626">· ' + badCount + ' skipped</span>' : '')
+    +   '<label style="margin-left:auto;font-weight:500;font-size:0.82rem;display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="pdfSelectAll" checked> select all importable</label>'
+    + '</div>';
+  html += '<table style="width:100%;border-collapse:collapse;font-size:0.86rem">';
+  html += '<thead><tr><th style="text-align:left;padding:6px 10px;background:#f9fafb;width:36px"></th><th style="text-align:left;padding:6px 10px;background:#f9fafb;width:80px">Team #</th><th style="text-align:left;padding:6px 10px;background:#f9fafb">Name</th><th style="text-align:left;padding:6px 10px;background:#f9fafb">Status</th></tr></thead><tbody>';
+  classified.forEach(({ t, c }, i) => {
+    const cls = c.ok ? '' : 'opacity:0.6';
+    html += '<tr style="border-top:1px solid var(--border);' + cls + '">'
+      + '<td style="padding:6px 10px">' + (c.ok ? '<input type="checkbox" class="pdf-row-check" data-idx="' + i + '" checked>' : '—') + '</td>'
+      + '<td style="padding:6px 10px;font-family:\'SF Mono\',Consolas,Menlo,monospace">' + esc(t.team_number) + (c.num !== null && String(c.num) !== t.team_number ? ' <span class="hint">→ ' + c.num + '</span>' : '') + '</td>'
+      + '<td style="padding:6px 10px"><strong>' + esc(t.team_name) + '</strong>' + (t.city ? ' <span class="hint">(' + esc(t.city) + ')</span>' : '') + '</td>'
+      + '<td style="padding:6px 10px"><span class="hint" style="color:' + (c.ok ? '#16a34a' : '#dc2626') + '">' + esc(c.reason) + '</span></td>'
+      + '</tr>';
+  });
+  html += '</tbody></table>';
+  html += '<div style="padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+  html += '<button class="btn btn-primary btn-sm" id="pdfImportBtn">Import selected</button>';
+  html += '<button class="btn btn-outline btn-sm" onclick="pdfClearPreview()">Cancel</button>';
+  html += '<span class="hint" id="pdfImportStatus" style="margin-left:auto"></span>';
+  html += '</div></div>';
+  wrap.innerHTML = html;
+
+  document.getElementById('pdfSelectAll').onchange = (e) => {
+    document.querySelectorAll('.pdf-row-check').forEach(cb => { cb.checked = e.target.checked; });
+  };
+  document.getElementById('pdfImportBtn').onclick = pdfImportSelected;
+}
+
+function pdfClearPreview() {
+  _pdfParsed = null;
+  document.getElementById('pdfPreview').innerHTML = '';
+  hideStatus('pdfStatus');
+  document.getElementById('pdfInput').value = '';
+}
+
+async function pdfImportSelected() {
+  if (!_pdfParsed) return;
+  const checks = document.querySelectorAll('.pdf-row-check');
+  const picks = [];
+  checks.forEach(cb => {
+    if (cb.checked) {
+      const i = parseInt(cb.dataset.idx, 10);
+      const t = _pdfParsed[i];
+      const c = classifyParsedTeam(t);
+      if (c.ok) picks.push({ number: c.num, name: t.team_name });
+    }
+  });
+  if (!picks.length) {
+    document.getElementById('pdfImportStatus').textContent = 'Nothing selected.';
+    return;
+  }
+  document.getElementById('pdfImportStatus').textContent = 'Importing…';
+  try {
+    const created = await sb('POST', 'teams', picks);
+    const list = Array.isArray(created) ? created : [created];
+    _teams.push(...list);
+    _teams.sort((a, b) => a.number - b.number);
+    renderTeams();
+    setStatus('pdfStatus', 'Added ' + list.length + ' team' + (list.length === 1 ? '' : 's') + ' from PDF.', 'ok');
+    pdfClearPreview();
+  } catch (e) {
+    document.getElementById('pdfImportStatus').textContent = '';
+    setStatus('pdfStatus', 'Import failed: ' + e.message, 'err');
+  }
+}
+
+async function handleRosterFile(file) {
+  if (!file) return;
+  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+    setStatus('pdfStatus', 'Please drop a PDF file.', 'err');
+    return;
+  }
+  setStatus('pdfStatus', 'Parsing ' + esc(file.name) + '…', '');
+  try {
+    _pdfParsed = await parseRosterPdf(file);
+    if (!_pdfParsed.length) {
+      setStatus('pdfStatus', 'No teams found in this PDF. Is it the right format?', 'err');
+      return;
+    }
+    setStatus('pdfStatus', 'Parsed ' + _pdfParsed.length + ' team' + (_pdfParsed.length === 1 ? '' : 's') + '. Review below and click Import.', 'ok');
+    renderPdfPreview();
+  } catch (e) {
+    setStatus('pdfStatus', 'Parse failed: ' + e.message, 'err');
+  }
+}
+
 async function bulkAddTeams() {
   hideStatus('bulkStatus');
   const text = document.getElementById('bulkInput').value;
@@ -1033,6 +1267,25 @@ document.getElementById('bulkInput').addEventListener('keydown', (ev) => {
   // Ctrl/Cmd+Enter submits the bulk add.
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); bulkAddTeams(); }
 });
+
+// PDF dropzone wiring (0.99+)
+(function wirePdfDrop() {
+  const dz = document.getElementById('pdfDropzone');
+  const input = document.getElementById('pdfInput');
+  if (!dz || !input) return;
+  dz.onclick = () => input.click();
+  input.onchange = () => { if (input.files && input.files[0]) handleRosterFile(input.files[0]); };
+  dz.ondragover = (e) => { e.preventDefault(); dz.style.background = '#eff6ff'; };
+  dz.ondragleave = () => { dz.style.background = '#fafbfc'; };
+  dz.ondrop = (e) => {
+    e.preventDefault();
+    dz.style.background = '#fafbfc';
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleRosterFile(f);
+  };
+})();
+window.pdfClearPreview = pdfClearPreview;
+window.handleRosterFile = handleRosterFile;
 
 /* ── Tournament management ──────────────────
  * Seed pairings (SEED_ORDER_16, SEED_ORDER_32) used to live here for the
