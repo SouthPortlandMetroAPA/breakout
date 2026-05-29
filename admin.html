@@ -252,6 +252,19 @@
     border: 1px solid #fde68a; padding: 8px 12px; border-radius: 6px;
     line-height: 1.7; word-spacing: 4px;
   }
+  .ld-remaining-tiles-pills {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    word-spacing: 0; line-height: 1.4;
+  }
+  .ld-tile-pill {
+    display: inline-block; padding: 4px 9px; background: #fff;
+    border: 1px solid #d97706; color: #92400e; border-radius: 5px;
+    font-weight: 700; min-width: 30px; text-align: center;
+  }
+  .ld-tile-pill.ld-tile-bye {
+    background: #f3f4f6; border-color: #d1d5db; color: #9ca3af;
+    text-decoration: line-through; font-weight: 400;
+  }
   .ld-history {
     max-height: 360px; overflow-y: auto;
     border: 1px solid var(--border, #e5e7eb); border-radius: 6px; background: #fff;
@@ -533,16 +546,19 @@
     <div id="tournamentBody" class="hint">Loading&hellip;</div>
   </div>
 
-  <!-- Live Draw — physical-tile random-draw workflow (0.98+). One team at
-       a time: select a team, type the tile number (1–24), Enter to commit.
-       Auto-saves to Supabase on each draw, re-renders the bracket below.
-       Tile mapping: 1–12 → A1–A12, 13–24 → B1–B12. -->
+  <!-- Live Draw — physical-tile random-draw workflow.
+       0.98 : tile 1–24 → A1–A12, B1–B12 (seed-order mapping)
+       1.01 : tile 1–32 → R1 match slots in sequence (top, bot, top, bot…).
+              Each match gets two tiles. BYE matches' bottom slots are
+              "empty" tiles — admin sets them aside when drawn. Mapping
+              is derived from the tournament's R1 matches so changes to
+              the format flow through automatically. -->
   <div class="card">
     <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
       <h2 style="margin-bottom:0">Live Draw</h2>
       <span class="hint" id="ldStatus"></span>
     </div>
-    <p class="hint" style="margin-top:0">Sequential random draw using physical tiles 1&ndash;24. Pick the team, read the tile, Enter. Each draw is saved instantly. Tile <code>1&ndash;12</code> = slots <code>A1&ndash;A12</code>; tile <code>13&ndash;24</code> = slots <code>B1&ndash;B12</code>.</p>
+    <p class="hint" style="margin-top:0">Sequential random draw using physical tiles 1&ndash;32. Pick the team, read the tile, Enter. Each draw is saved instantly. <strong>Tile numbering:</strong> tile 1 = top slot of Match&nbsp;#1, tile 2 = bottom slot of Match&nbsp;#1, tile 3 = top of Match&nbsp;#2, etc. <strong>BYE tiles</strong> (the empty side of BYE matches) are dimmed below — when drawn, set them aside and draw another.</p>
     <div id="liveDrawBody"><p class="hint">Loading&hellip;</p></div>
   </div>
 
@@ -1840,20 +1856,52 @@ async function saveSeedingEditor() {
 /* ══════════════════════════════════════════════════════════════════════
    LIVE DRAW (0.98+) — physical-tile random seeding workflow.
    ──────────────────────────────────────────────────────────────────
-   Workflow: admin draws a physical tile (numbered 1–24), picks a team
+   Workflow: admin draws a physical tile (numbered 1–32), picks a team
    at random, types both into this panel. Each commit PATCHes the
    tournament's seed_assignments and re-renders both this panel and the
    full seeding grid below. No "save" button — instant persistence.
-   Mapping: tile 1–12 → A1–A12, tile 13–24 → B1–B12 (12+12 brackets).
+
+   Tile numbering (1.01+):
+     Sequential through R1 matches. Tile 1 = top slot of Match #1,
+     tile 2 = bottom slot of Match #1, tile 3 = top of Match #2, etc.
+     Brackets A then B (A R1 matches occupy tiles 1–16; B R1 matches
+     occupy tiles 17–32). BYE matches still get two tiles, but the
+     bottom slot is empty (auto-skip — the bye seed sits in the top).
    ══════════════════════════════════════════════════════════════════════ */
+
+// Build a Map<tileNo, {bracket, seed, is_bye_slot, match_no}> by walking
+// the R1 matches in (bracket, slot) order. is_bye_slot=true means this
+// tile corresponds to the empty side of a BYE match — the admin should
+// set the physical tile aside and draw another.
+function ldBuildTileMap() {
+  if (!_activeMatchTournament || !Array.isArray(_activeMatchTournament.matches)) return new Map();
+  const bracketOrder = (b) => b === 'A' ? 0 : (b === 'B' ? 1 : 99);
+  const r1 = _activeMatchTournament.matches
+    .filter(m => m.round === 1 && m.bracket !== '64')
+    .sort((a, b) => bracketOrder(a.bracket) - bracketOrder(b.bracket) || (a.slot - b.slot));
+  const map = new Map();
+  r1.forEach((m, idx) => {
+    const tileTop = idx * 2 + 1;
+    const tileBot = idx * 2 + 2;
+    // Top of a BYE match still holds the auto-advancing seed → real placement.
+    // Bottom of a BYE match is the empty side → is_bye_slot=true.
+    map.set(tileTop, { bracket: m.bracket, seed: m.top_seed, is_bye_slot: false, match_no: m.match_no });
+    map.set(tileBot, { bracket: m.bracket, seed: m.bot_seed, is_bye_slot: !!m.is_bye, match_no: m.match_no });
+  });
+  return map;
+}
 
 function ldTileToSlot(tile) {
   const n = parseInt(tile, 10);
-  if (!Number.isInteger(n) || n < 1 || n > 24) return null;
-  return n <= 12 ? { bracket: 'A', seed: n } : { bracket: 'B', seed: n - 12 };
+  if (!Number.isInteger(n) || n < 1) return null;
+  const info = ldBuildTileMap().get(n);
+  return info ? { ...info, tile: n } : null;
 }
 function ldSlotToTile(bracket, seed) {
-  return bracket === 'A' ? seed : seed + 12;
+  for (const [tile, info] of ldBuildTileMap()) {
+    if (info.bracket === bracket && info.seed === seed && !info.is_bye_slot) return tile;
+  }
+  return null;
 }
 
 function renderLiveDraw() {
@@ -1869,6 +1917,7 @@ function renderLiveDraw() {
   }
   const sa = Array.isArray(_activeMatchTournament.seed_assignments)
     ? _activeMatchTournament.seed_assignments : [];
+  const tileMap = ldBuildTileMap();
   const placedTiles = new Set();
   const placedTeamNums = new Set();
   for (const a of sa) {
@@ -1876,8 +1925,17 @@ function renderLiveDraw() {
     placedTeamNums.add(String(a.team_number));
   }
   const remainingTeams = _teams.filter(t => !placedTeamNums.has(String(t.number)));
-  const remainingTiles = [];
-  for (let n = 1; n <= 24; n++) if (!placedTiles.has(n)) remainingTiles.push(n);
+  // Sort tiles by number ascending. Each tile carries is_bye_slot so the
+  // UI can render BYE tiles greyed-out (no team needed).
+  const allTilesSorted = [...tileMap.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([n, info]) => ({ n, ...info }));
+  const remainingTiles = allTilesSorted
+    .filter(t => !t.is_bye_slot && !placedTiles.has(t.n))
+    .map(t => t.n);
+  const remainingTilesIncBye = allTilesSorted
+    .filter(t => !placedTiles.has(t.n));
+  const totalPlaceableTiles = allTilesSorted.filter(t => !t.is_bye_slot).length;
 
   const teamOpts = '<option value="">— pick a team —</option>' +
     remainingTeams.map(t =>
@@ -1891,10 +1949,12 @@ function renderLiveDraw() {
     const team = teamByNum.get(String(a.team_number));
     const tile = ldSlotToTile(a.bracket, a.seed);
     const teamLabel = team ? (team.number + ' — ' + (team.name || '(no name)')) : '#' + a.team_number;
+    const info = tile != null ? tileMap.get(tile) : null;
+    const matchTag = info ? ' (Match #' + info.match_no + ')' : '';
     return '<div class="ld-history-row">'
-      + '<span class="ld-tile-chip">Tile ' + tile + '</span>'
+      + '<span class="ld-tile-chip">Tile ' + (tile == null ? '?' : tile) + '</span>'
       + '<span class="ld-arrow">→</span>'
-      + '<span class="ld-slot-chip">' + a.bracket + a.seed + '</span>'
+      + '<span class="ld-slot-chip">' + a.bracket + a.seed + matchTag + '</span>'
       + '<span class="ld-team-name">' + escapeHtml(teamLabel) + '</span>'
       + (i === 0
           ? '<button class="ld-undo-btn" onclick="ldUndoLast()" title="Undo this draw">Undo</button>'
@@ -1902,7 +1962,17 @@ function renderLiveDraw() {
       + '</div>';
   }).join('');
 
+  // Render the "Remaining tiles" strip with BYE tiles dimmed + struck so
+  // the admin knows to set those physical tiles aside.
+  const tileChips = remainingTilesIncBye.map(t => {
+    if (t.is_bye_slot) {
+      return '<span class="ld-tile-pill ld-tile-bye" title="BYE slot in Match #' + t.match_no + ' — set this tile aside">' + t.n + '</span>';
+    }
+    return '<span class="ld-tile-pill">' + t.n + '</span>';
+  }).join('');
+
   const isDone = remainingTiles.length === 0;
+  const tileMax = tileMap.size || 32;
   panel.innerHTML = `
     <div class="ld-controls">
       <div class="ld-input-row">
@@ -1910,28 +1980,28 @@ function renderLiveDraw() {
           <select id="ldTeamSel" ${isDone ? 'disabled' : ''}>${teamOpts}</select>
         </label>
         <label class="ld-field ld-field-tile">Tile&nbsp;#
-          <input id="ldTileInput" type="number" min="1" max="24" inputmode="numeric"
-                 placeholder="1–24" autocomplete="off" ${isDone ? 'disabled' : ''}>
+          <input id="ldTileInput" type="number" min="1" max="${tileMax}" inputmode="numeric"
+                 placeholder="1–${tileMax}" autocomplete="off" ${isDone ? 'disabled' : ''}>
         </label>
         <button class="btn btn-primary ld-place-btn" id="ldPlaceBtn"
                 onclick="ldPlace()" ${isDone ? 'disabled' : ''}>Place &amp; save</button>
       </div>
       <div class="ld-preview" id="ldPreview">${
         isDone
-          ? '<span class="ok">✓ Draw complete — all 24 slots filled.</span>'
-          : 'Pick a team, type the tile number, press Enter (or click Place).'
+          ? '<span class="ok">✓ Draw complete — all ' + totalPlaceableTiles + ' slots filled.</span>'
+          : 'Pick a team, type the tile number, press Enter (or click Place). Tile 1 = top slot of Match #1, tile 2 = bottom, tile 3 = top of Match #2, etc.'
       }</div>
     </div>
 
     <div class="ld-progress ${isDone ? 'done' : ''}">
-      <strong>${sa.length}</strong> of 24 placed &nbsp;·&nbsp;
-      <strong>${remainingTiles.length}</strong> tiles left &nbsp;·&nbsp;
+      <strong>${sa.length}</strong> of ${totalPlaceableTiles} placed &nbsp;·&nbsp;
+      <strong>${remainingTiles.length}</strong> active tiles left &nbsp;·&nbsp;
       <strong>${remainingTeams.length}</strong> teams left
     </div>
 
-    ${remainingTiles.length > 0 ? `
-      <div class="ld-section-head">Remaining tiles</div>
-      <div class="ld-remaining-tiles">${remainingTiles.join(' &nbsp; ')}</div>
+    ${remainingTilesIncBye.length > 0 ? `
+      <div class="ld-section-head">Remaining tiles <span class="hint" style="font-weight:500;text-transform:none;letter-spacing:0">— BYE tiles dimmed; set them aside when drawn</span></div>
+      <div class="ld-remaining-tiles ld-remaining-tiles-pills">${tileChips}</div>
     ` : ''}
 
     ${history ? `
@@ -1965,9 +2035,17 @@ function ldUpdatePreview() {
       : 'Pick a team, type the tile number, press Enter (or click Place).';
     return;
   }
+  const map = ldBuildTileMap();
+  const tileMax = map.size || 32;
   const slot = ldTileToSlot(tileVal);
   if (!slot) {
-    preview.innerHTML = '<span class="conflict">Tile must be a whole number 1–24.</span>';
+    preview.innerHTML = '<span class="conflict">Tile must be a whole number 1–' + tileMax + '.</span>';
+    return;
+  }
+  if (slot.is_bye_slot) {
+    preview.innerHTML = '<span class="conflict">⚠ Tile ' + escapeHtml(tileVal)
+      + ' is the BYE side of Match #' + slot.match_no
+      + '. No team needed — set this tile aside and draw another.</span>';
     return;
   }
   const sa = _activeMatchTournament.seed_assignments || [];
@@ -1975,13 +2053,13 @@ function ldUpdatePreview() {
   if (taken) {
     const team = _teams.find(t => String(t.number) === String(taken.team_number));
     preview.innerHTML = '<span class="conflict">⚠ Tile ' + escapeHtml(tileVal)
-      + ' (' + slot.bracket + slot.seed + ') is already placed → '
+      + ' (' + slot.bracket + slot.seed + ', Match #' + slot.match_no + ') is already placed → '
       + escapeHtml(team ? (team.number + ' ' + (team.name || '')) : ('#' + taken.team_number))
       + '.</span>';
     return;
   }
   preview.innerHTML = '<span class="ok">Tile ' + escapeHtml(tileVal)
-    + '</span> → slot <strong>' + slot.bracket + slot.seed + '</strong>'
+    + '</span> → slot <strong>' + slot.bracket + slot.seed + '</strong> in <strong>Match #' + slot.match_no + '</strong>'
     + (teamSel.value ? '. Press Enter to commit.' : '. Pick a team first.');
 }
 
@@ -1992,9 +2070,16 @@ async function ldPlace() {
   if (!teamSel || !tileInp) return;
   const teamNum = teamSel.value;
   const tileVal = tileInp.value.trim();
+  const map = ldBuildTileMap();
+  const tileMax = map.size || 32;
   if (!teamNum) { alert('Pick a team first.'); teamSel.focus(); return; }
   const slot = ldTileToSlot(tileVal);
-  if (!slot) { alert('Tile must be 1–24.'); tileInp.focus(); return; }
+  if (!slot) { alert('Tile must be 1–' + tileMax + '.'); tileInp.focus(); return; }
+  if (slot.is_bye_slot) {
+    alert('Tile ' + tileVal + ' is the BYE side of Match #' + slot.match_no
+      + '. Set this tile aside (no team is placed) and draw another.');
+    return;
+  }
   const sa = (_activeMatchTournament.seed_assignments || []).slice();
   if (sa.some(a => a.bracket === slot.bracket && a.seed === slot.seed)) {
     alert('Tile ' + tileVal + ' (' + slot.bracket + slot.seed + ') is already placed. Pick another tile or Undo first.');
@@ -2008,12 +2093,13 @@ async function ldPlace() {
   if (!team) { alert('Team not found in the catalog.'); return; }
   sa.push({ bracket: slot.bracket, seed: slot.seed, team_number: team.number });
   const status = document.getElementById('ldStatus');
+  const placeable = [...map.values()].filter(v => !v.is_bye_slot).length;
   if (status) status.textContent = 'Saving…';
   try {
     await sb('PATCH', 'tournaments?id=eq.' + _activeMatchTournament.id,
       { seed_assignments: sa });
     _activeMatchTournament.seed_assignments = sa;
-    if (status) status.textContent = '✓ Saved · ' + sa.length + '/24 placed';
+    if (status) status.textContent = '✓ Saved · ' + sa.length + '/' + placeable + ' placed';
     setTimeout(() => { if (status) status.textContent = ''; }, 1800);
     renderLiveDraw();
     renderSeedingEditor();
