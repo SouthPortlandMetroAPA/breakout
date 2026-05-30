@@ -1,0 +1,3907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BreakOut — Tournament viewer</title>
+
+<!-- PWA: install to home screen for standalone (no URL bar) experience.
+     Tap browser menu → "Add to Home Screen" / "Install app". Launched from
+     the home-screen icon, BreakOut runs full-screen without browser chrome. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#ea002a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BreakOut">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<style>
+  :root {
+    --spm-primary: #ea002a;
+    --spm-accent:  #0031a1;
+    --bg:    #f3f3f3;
+    --card:  #ffffff;
+    --text:  #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --border-strong: #d1d5db;
+    --connector: #94a3b8;
+    --drop: #f59e0b;
+    --radius: 10px;
+    --pill: 999px;
+    /* On-screen zoom factor (0.4–1.5). Applied by JS as a CSS transform:
+       scale() on each bracket SVG (see applyZoomToSvgs). The SVG itself
+       always renders at natural 1:1 size; the compositor scales the
+       finished layer. This is a deliberate change from the old viewBox-
+       resize zoom, which broke <foreignObject> card positioning on WebKit
+       (iOS) — cards drifted off their connector lines when zoomed. */
+    --zoom: 1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+  /* Move the page's scroll into a fixed-positioned inner container so the
+     mobile URL bar isn't yanked back into view every time the user pans up
+     a tiny bit inside the bracket. The browser tracks "body scrolled past
+     top" to decide URL-bar visibility — if scroll happens inside an
+     internal container, the body stays at top and the URL bar stays in
+     whatever state the user last put it in. Pull-to-refresh is also
+     disabled by this, which is fine because the bracket auto-refreshes via
+     the 15s updated_at poll. */
+  html, body { height: 100%; margin: 0; }
+  /* Body is a fixed flex column. Header sits at the top (full viewport
+     width, no horizontal scroll), .page-scroll fills the remaining space.
+     This makes the header pin to the viewport regardless of how far the
+     user pans horizontally inside the bracket canvas — sticky-positioned
+     elements inside a scroll container slide horizontally with the
+     scroll, which is why the previous setup made the banner appear to
+     scroll off-screen during a right-pan. */
+  body {
+    position: fixed; inset: 0; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .page-scroll {
+    /* Single 2-axis scroll container for the whole tournament. Sits below
+       the (now extracted) header and fills the rest of the body via flex. */
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    /* contain prevents overscroll from chaining up to the body (which would
+       defeat the whole point on Chrome Mobile) and disables pull-to-refresh
+       on Android. */
+    overscroll-behavior: contain;
+    /* Hide native scrollbars — the bracket UI is pan-driven on touch and
+       click-drag on desktop. Content still scrolls programmatically. */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .page-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+  .header {
+    background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
+    color: #fff; padding: 14px 18px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    /* Sits outside .page-scroll now (direct body child via flex column),
+       so it spans the full viewport width and stays pinned at top without
+       any sticky positioning — which had a bug where it would slide
+       horizontally with .page-scroll's scrollLeft during a right-pan. */
+    flex: 0 0 auto;
+    z-index: 10;
+  }
+  .header-inner {
+    max-width: 1500px; margin: 0 auto;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .header h1 {
+    font-size: 1.25rem; font-weight: 900; letter-spacing: -0.01em;
+    display: inline-flex; align-items: center; gap: 8px;
+    user-select: none;
+  }
+  .brand-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.25); }
+  .badge { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 9px; border-radius: var(--pill); background: rgba(255,255,255,0.18); border: 1.5px solid rgba(255,255,255,0.45); }
+  .header-spacer { flex: 1 1 auto; }
+
+  /* Search */
+  .search { position: relative; flex: 0 1 280px; min-width: 180px; }
+  .search input { width: 100%; background: rgba(255,255,255,0.16); border: 1.5px solid rgba(255,255,255,0.4); color: #fff; font: inherit; font-size: 0.86rem; padding: 6px 30px 6px 32px; border-radius: var(--pill); outline: none; }
+  .search input::placeholder { color: rgba(255,255,255,0.7); }
+  .search input:focus { background: rgba(255,255,255,0.24); border-color: rgba(255,255,255,0.75); }
+  .search svg.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; opacity: 0.7; pointer-events: none; }
+  .search button.search-x { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: transparent; border: 0; cursor: pointer; color: rgba(255,255,255,0.75); font-size: 1.1rem; width: 22px; height: 22px; border-radius: 50%; display: none; align-items: center; justify-content: center; line-height: 1; padding: 0; }
+  .search.has-value button.search-x { display: inline-flex; }
+  .search button.search-x:hover { background: rgba(255,255,255,0.18); color: #fff; }
+  .search-result { font-size: 0.72rem; color: rgba(255,255,255,0.88); padding: 0 4px; }
+
+  /* Zoom + print toolbar (lives in the sticky header). Buttons are sized
+     for thumb taps on touch. Disabled state when zoom is at extreme. */
+  .view-tools {
+    display: flex; align-items: center; gap: 4px;
+    background: rgba(255,255,255,0.10);
+    border: 1.5px solid rgba(255,255,255,0.35);
+    border-radius: var(--pill);
+    padding: 2px 4px;
+  }
+  .view-tools button {
+    background: transparent; border: 0; color: #fff;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    font: inherit; font-weight: 800; font-size: 1rem;
+    cursor: pointer; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 0.12s;
+  }
+  .view-tools button:hover:not(:disabled) { background: rgba(255,255,255,0.22); }
+  .view-tools button:disabled { opacity: 0.4; cursor: default; }
+  .view-tools .zoom-label {
+    color: #fff; font-size: 0.74rem; font-weight: 700;
+    min-width: 38px; text-align: center;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+  }
+  .view-tools .divider { width: 1px; height: 18px; background: rgba(255,255,255,0.35); margin: 0 2px; }
+  .view-tools .print-btn {
+    width: auto; padding: 0 10px;
+    font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase;
+    border-radius: 14px; font-weight: 700;
+  }
+  @media (max-width: 600px) {
+    .view-tools .print-btn span.full { display: none; }
+  }
+
+  /* Print orientation popover — small menu pinned below the Print button. */
+  .view-tools .print-wrap { position: relative; }
+  .view-tools .print-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: #fff;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+    padding: 4px;
+    min-width: 160px;
+    z-index: 50;
+    display: flex; flex-direction: column;
+  }
+  .view-tools .print-popover[hidden] { display: none; }
+  .view-tools .print-popover-opt {
+    display: flex; align-items: center; gap: 10px;
+    background: transparent; border: 0; border-radius: 6px;
+    padding: 9px 12px; cursor: pointer;
+    color: var(--text); font: inherit; font-size: 0.9rem; font-weight: 600;
+    text-align: left;
+    width: 100%;
+  }
+  .view-tools .print-popover-opt:hover { background: rgba(0,49,161,0.08); color: var(--spm-accent); }
+  .view-tools .print-popover-opt .opt-icon { font-size: 1.05rem; line-height: 1; width: 18px; text-align: center; color: var(--spm-accent); }
+  /* Hide the orientation popover on touch-only devices — mobile Chromium
+     ignores the @page orientation hint anyway, so the choice is misleading.
+     JS short-circuits the Print button to fire directly on those devices.
+     This rule is belt-and-suspenders in case JS detection misses an edge case. */
+  @media (hover: none) and (pointer: coarse) {
+    .view-tools .print-popover { display: none !important; }
+  }
+
+  /* Print: one bracket per page, fitted to page dimensions WITHOUT touching
+     the on-screen UI.
+     SVG viewBox makes this trivial: each .bracket-svg has width/height = 100%
+     and a fixed viewBox in design units. In @media print we make the wrap
+     and svg fill the page, and the browser fits viewBox content to that box.
+     No zoom hacks, no transform scaling, no per-section measurement. */
+  /* Print: stripped down for mobile reliability.
+     Mobile Chromium / Samsung Internet ignore @page size hints, ignore
+     vh resolved against page area, and don't fully unwind the fixed-body
+     screen layout. So we lean on what DOES work everywhere:
+       • Strip the screen layout (position: static, overflow: visible).
+       • Section flows naturally: title at top, SVG below.
+       • SVG uses width:100% height:auto — its viewBox preserves aspect
+         and gives the wrapper its natural height, no vh needed.
+       • page-break-inside: avoid keeps title and bracket together. */
+  @media print {
+    .header, .hero, .save-toast, .update-overlay, .foot,
+    .view-tools, .search, #searchResult, .header-spacer { display: none !important; }
+    body { background: #fff; }
+    html, body, .page-scroll {
+      position: static !important;
+      overflow: visible !important;
+      height: auto !important;
+      width: auto !important;
+      inset: auto !important;
+      margin: 0 !important;
+    }
+    .bracket-section {
+      page-break-after: always; break-after: page;
+      page-break-inside: avoid; break-inside: avoid;
+      padding: 0; margin: 0;
+      overflow: hidden;
+    }
+    .bracket-section:last-child { page-break-after: auto; break-after: auto; }
+    .bracket-section .section-title { padding: 6px 8px; }
+    .bracket-section .viewport {
+      overflow: visible !important;
+      padding: 0 !important;
+      cursor: default !important;
+    }
+    .bracket-section .bracket-wrap {
+      display: block !important;
+      width: 100% !important;
+      height: auto !important;
+      min-width: 0 !important;
+      /* Strip the screen-only pan-canvas padding (option-A 2× canvas) so
+         the SVG fills the page width instead of sitting in a 4× empty box. */
+      padding: 0 !important;
+    }
+    .bracket-section .bracket-svg {
+      display: block;
+      width: 100% !important;
+      height: auto !important;
+      /* Cap at 7in tall so wide-aspect brackets don't overflow landscape
+         page height (page content area for Letter landscape with 0.35in
+         margins is 7.8in tall). 7in leaves room for the section-title.
+         Portrait brackets naturally come in under this. */
+      max-height: 7in !important;
+      margin: 0 auto !important;
+      /* Drop the on-screen zoom transform for print — paper fit comes from
+         the viewBox (width:100% + height:auto), not the screen scale(). */
+      transform: none !important;
+    }
+    /* Re-enable visible borders for paper output */
+    .match { box-shadow: none !important; }
+  }
+  @page { size: auto; margin: 0.35in; }
+
+
+  /* Tournament hero — large title + supporting metadata below the
+     org banner. Non-sticky on purpose: scrolls away so the bracket gets
+     full vertical space mid-play. */
+  .hero {
+    background: linear-gradient(180deg, #fff 0%, var(--bg) 100%);
+    padding: 28px 18px 18px;
+    border-bottom: 1px solid var(--border);
+    /* width: 100vw spans the viewport horizontally; hero-inner inside
+       (max-width: 1500px, margin: 0 auto) centers content within that
+       span. The horizontal pin is done in JS (see pinTitlesToViewport)
+       via transform: translateX(scrollLeft) because CSS sticky requires
+       the parent to be larger than the sticky element — which isn't the
+       case here (hero parent == 100vw, hero == 100vw). */
+    width: 100vw;
+    box-sizing: border-box;
+    z-index: 4;
+    will-change: transform;
+  }
+  .hero-inner {
+    max-width: 1500px;
+    margin: 0 auto;
+    text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .hero-status {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 0.7rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    padding: 3px 11px;
+    border-radius: 999px;
+    background: rgba(22,163,74,0.12);
+    color: #15803d;
+    margin-bottom: 6px;
+  }
+  .hero-status .pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #15803d;
+    animation: heroPulse 1.6s ease-in-out infinite;
+  }
+  @keyframes heroPulse {
+    0%, 100% { transform: scale(1);   opacity: 1;   }
+    50%      { transform: scale(1.5); opacity: 0.5; }
+  }
+  .t-name {
+    font-size: 2.2rem;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    margin: 0;
+    background: linear-gradient(90deg, var(--spm-primary), var(--spm-accent));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+  .t-meta {
+    font-size: 0.98rem;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: 0.01em;
+    line-height: 1.4;
+  }
+  .t-meta .sep { color: var(--border-strong); margin: 0 6px; }
+  @media (max-width: 767px) {
+    .hero { padding: 18px 14px 14px; }
+    .t-name { font-size: 1.5rem; }
+    .t-meta { font-size: 0.84rem; }
+    .t-meta .sep { margin: 0 4px; }
+  }
+
+  /* Bracket sections (stacked vertically) */
+  .bracket-section { padding: 14px 0 4px; border-bottom: 1px solid var(--border); }
+  .bracket-section:last-of-type { border-bottom: 0; }
+  .section-title {
+    padding: 4px 18px 8px;
+    font-size: 0.86rem; font-weight: 800; letter-spacing: 0.02em;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    color: var(--spm-accent);
+    /* width: 100vw spans the viewport; justify-content: center centers
+       the pill. The horizontal pin (so the title stays centered while
+       the bracket pans) is done in JS via transform: translateX(scrollLeft)
+       — CSS sticky doesn't work here because the section box is also
+       100vw wide, leaving sticky no range to operate in. */
+    width: 100vw;
+    box-sizing: border-box;
+    background: var(--bg);
+    z-index: 5;
+    will-change: transform;
+  }
+  .section-title .pill {
+    display: inline-block; font-size: 0.66rem; font-weight: 800;
+    color: #fff; background: var(--spm-accent);
+    padding: 2px 9px; border-radius: var(--pill);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .section-title .pill.alt { background: var(--spm-primary); }
+  .section-title .pill.consolation { background: #6b7280; }
+  .section-title .desc { font-weight: 600; color: var(--muted); font-size: 0.78rem; }
+
+  /* Each bracket section gets a horizontal-scroll viewport. It also acts as
+     a pan surface: click-drag to scroll, Shift+wheel for mouse, arrow keys
+     when focused. Native touch scrolling handles mobile. */
+  .viewport {
+    /* As of v0.78: the per-section viewport no longer owns its own scroll
+       — the parent .page-scroll is the single 2-axis scroll container for
+       the whole tournament. This lets the three brackets feel like one
+       page (Option A). The .viewport stays as a styling/padding wrapper
+       and as the binding target for click-drag pan + pinch handlers
+       (they redirect scroll to .page-scroll).
+       overflow MUST stay visible: .viewport is only viewport-width (a
+       block element does not widen to fit wide content), so the bracket
+       — which is far wider — overflows it on purpose, and THAT overflow
+       is what gives .page-scroll its horizontal scroll range. v0.90
+       wrongly set this to hidden to clip a stray SVG box; that clipped
+       the whole bracket to viewport width and killed horizontal panning.
+       The clip belongs on .bracket-wrap (the zoom sizer), not here. */
+    overflow: visible;
+    padding: 4px 16px 24px;
+    cursor: grab;
+    outline: none;
+    /* touch-action: none — this viewport owns ALL touch gestures in JS
+       (one-finger pan + two-finger pinch; see setupPanScroll). Native
+       touch scrolling of the nested .page-scroll container is unreliable
+       on iOS Safari under a position:fixed <body>, so we drive the pan
+       ourselves via programmatic scrolling, which works everywhere. */
+    touch-action: none;
+  }
+  .viewport::-webkit-scrollbar { display: none; height: 0; }
+  .viewport.panning { cursor: grabbing; user-select: none; }
+  .viewport:focus-visible { box-shadow: inset 0 0 0 2px rgba(0,49,161,0.45); border-radius: 4px; }
+  /* Cards keep default cursor so users can read text without the grab hint. */
+  .viewport .match { cursor: default; }
+
+  /* Bracket wrap holds one big SVG per section. Cards live inside the SVG
+     as <foreignObject> so they keep their HTML/CSS rendering (ellipsis,
+     hover, container queries).
+     The wrap doubles as the zoom "sizer" — JS sets its explicit
+     width/height to design × zoom so .page-scroll gets honest scroll
+     overflow in BOTH axes. The SVG inside renders at natural 1:1 size and
+     is scaled by a CSS transform (a transform alone does NOT resize the
+     layout box, hence the separate sizer).
+     overflow: hidden clips the natural-size SVG box — larger than this
+     sizer at zoom < 1 — to the sizer's exact bounds, so the stray box
+     can't inflate .page-scroll's scroll area with empty space. Clipping
+     HERE is correct because the sizer is exactly as wide as the zoomed
+     bracket; clipping on .viewport (only viewport-width) amputates it. */
+  .bracket-wrap {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    /* Width/height = --zoom × natural-content size, set inline by JS. */
+  }
+  .bracket-svg {
+    display: block;
+    overflow: visible;
+    /* Zoom transform is applied inline by applyZoomToSvgs(). Scale from the
+       top-left so the SVG's painted box starts flush at the wrap's 0,0 and
+       exactly fills the sizer. */
+    transform-origin: 0 0;
+  }
+  .bracket-svg text.cross-source-link {
+    /* bounding-box (not auto) so the whole text bbox catches the pointer —
+       not just the painted glyph pixels. Otherwise hovering "between"
+       letters or near the underline falls through to the viewport's grab
+       cursor and clicks start a pan instead of firing the jump handler.
+       Mobile taps were forgiving enough to land on a glyph; desktop mice
+       are precise and missed. */
+    pointer-events: bounding-box;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  .bracket-svg text.cross-source-link:hover { fill: #7c3a04; }
+  .bracket-svg text.round-name {
+    font-size: 13.5px; font-weight: 900;
+    fill: var(--spm-accent);
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  .bracket-svg .round-tables-bg { fill: rgba(0,49,161,0.10); }
+  .bracket-svg text.round-tables {
+    font-size: 9.5px; font-weight: 800;
+    fill: var(--spm-accent);
+    letter-spacing: 0.95px;
+    text-transform: uppercase;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  .bracket-svg .round-divider {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+    fill: none;
+  }
+  .bracket-svg .round-header-underline {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  /* ── Match cell ─────────────────────────────
+     Layout best practices, applied:
+       • Team names get the most prominent type and space (primary info).
+       • Match # + destination chips share ONE compact top row (secondary).
+       • Schedule + table share ONE compact footer line (tertiary).
+       • Left edge has a 3px bracket-color stripe for instant identification.
+     Fixed card size — driven by the foreignObject's width/height in SVG. */
+  .match {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: var(--card);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    transition: box-shadow 0.18s ease, border-color 0.18s ease;
+    /* Each card is its own container so the collision-driven hide rules
+       below trigger based on the CARD'S own width — independent of zoom,
+       window size, or mobile vs desktop. */
+    container-type: inline-size;
+    container-name: card;
+  }
+  /* Seed numbers are intentionally hidden from the bracket viewer; admin
+     and staff UIs still show them where useful. */
+  .match .match-row .seed { display: none !important; }
+  /* Team-name font size scales with the visually-rendered card width. The
+     SVG/foreignObject sandwich means the @container approach doesn't see
+     the effective rendered width — so we toggle hide classes (and bump the
+     CSS var --name-size) per zoom band from JS in updateCardDensity(). */
+  .match .match-row .name { font-size: var(--name-size, 0.92rem); }
+  /* Progressive hide bands set by JS on the .match element. Order matches
+     the operator's priority: match # → day → team-num → time → chips. */
+  .match.cw-le-220 .match-top .mno { display: none; }
+  .match.cw-le-200 .match-foot .when .day { display: none; }
+  /* When team-num is hidden, the 3-col grid (44px | 1fr | 18px) leaves the
+     name in the 44px slot — squishing it. Drop the team-num track so name
+     gets the full 1fr column. Same fix shape as v0.59's seed-track drop. */
+  .match.cw-le-180 .match-row .team-num { display: none; }
+  .match.cw-le-180 .match-row { grid-template-columns: 1fr 18px; }
+  .match.cw-le-150 .match-foot .when .time { display: none; }
+  .match.cw-le-130 .match-top .destinations { display: none; }
+  .match:hover { box-shadow: 0 6px 18px rgba(0,0,0,0.10); }
+
+  /* Bracket-color stripe down the left edge — quick visual id per bracket.
+     Rendered as an inline div so it works through foreignObject reliably. */
+  .match .match-stripe {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--stripe, var(--border-strong));
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  /* Top: M# left, destination chips right. Single row, compact. */
+  .match-top {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px;
+    padding: 5px 10px 5px 13px;
+    background: linear-gradient(180deg, #fafbfc, #f4f5f7);
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+  }
+  .match-top .mno {
+    color: var(--spm-accent);
+    font-weight: 900;
+    font-size: 0.92rem;
+    letter-spacing: -0.005em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.05;
+  }
+  .match-top .destinations { display: flex; gap: 4px; align-items: center; }
+
+  /* Destination chips — clickable pills that jump to the linked match. */
+  .dest-chip {
+    display: inline-flex; align-items: center;
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 0.62rem; font-weight: 800;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    transition: background 0.15s ease;
+  }
+  a.dest-chip { cursor: pointer; }
+  .dest-chip.win        { background: rgba(21,128,61,0.10);  color: #15803d; }
+  a.dest-chip.win:hover { background: rgba(21,128,61,0.20); }
+  .dest-chip.lose       { background: rgba(180,83,9,0.10);  color: #b45309; }
+  a.dest-chip.lose:hover{ background: rgba(180,83,9,0.20); }
+  .dest-chip.bracket-champ {
+    background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    padding: 4px 11px;
+    border-radius: 6px;
+    box-shadow: 0 3px 8px rgba(234,0,42,0.30);
+    text-shadow: 0 1px 1px rgba(0,0,0,0.10);
+  }
+
+  /* Team rows — the primary content. Bigger type, breathing room. */
+  .match-rows { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+  .match-row {
+    display: grid;
+    /* 3 tracks: team-num badge | team name | trophy. Seed column dropped
+       in v0.59 — seed was hidden via display:none but its 22px track was
+       still reserved, shifting every child one column to the left and
+       squishing the badge + truncating the name. */
+    grid-template-columns: 44px 1fr 18px;
+    gap: 8px;
+    align-items: center;
+    padding: 0 10px 0 13px;
+    font-size: 0.95rem;
+    line-height: 1.15;
+    flex: 1 1 0;
+    min-height: 0;
+    transition: background 0.15s ease;
+  }
+  @media (max-width: 767px) { .match-row { font-size: 0.88rem; padding: 0 8px 0 11px; } }
+  .match-row + .match-row { border-top: 1px solid var(--border); }
+  .seed     { color: var(--muted); font-size: 0.72rem; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+  .team-num { font-family: 'SF Mono', Consolas, Menlo, monospace; font-variant-numeric: tabular-nums; font-size: 0.74rem; font-weight: 700; color: var(--spm-accent); background: rgba(0,49,161,0.08); padding: 2px 6px; border-radius: 6px; text-align: center; }
+  .name     { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trophy   { font-size: 0.95rem; opacity: 0; line-height: 1; text-align: right; }
+  .match-row.winner          { background: rgba(21,128,61,0.05); }
+  .match-row.winner .name    { font-weight: 800; }
+  .match-row.winner .trophy  { opacity: 1; }
+  .match-row.loser           { opacity: 0.52; }
+  .match-row.loser .name     { font-weight: 500; }
+  .match-row.loser .team-num { color: var(--muted); background: rgba(0,0,0,0.04); }
+
+  /* Footer: schedule on left, table on right. One line, compact. */
+  .match-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px;
+    padding: 4px 10px 4px 13px;
+    border-top: 1px solid var(--border);
+    background: #fafafa;
+    flex: 0 0 auto;
+    font-size: 0.62rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+  .match-foot .when     { display: flex; gap: 6px; align-items: center; min-width: 0; flex: 1 1 auto; overflow: hidden; white-space: nowrap; }
+  .match-foot .when .day { color: var(--muted); }
+  .match-foot .when .time{ color: var(--text); font-weight: 800; font-variant-numeric: tabular-nums; }
+  .match-foot .when .pay { color: #15803d; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .match-foot .table     { color: var(--spm-accent); font-weight: 800; flex: 0 0 auto; }
+
+  /* Bye card — de-emphasized version of a match card. Same dimensions so
+     card spacing stays uniform, but lighter background, italic "BYE" row,
+     and the seeded team's advancement arrow instead of a W/L chip. */
+  .match.bye { background: linear-gradient(180deg, #fafbfc, #f4f5f7); }
+  .match.bye .mno {
+    color: var(--spm-accent);
+    font-weight: 900;
+    font-size: 0.92rem;
+  }
+  .match.bye .bye-tag {
+    margin-left: 8px;
+    color: var(--muted);
+    font-weight: 800;
+    font-size: 0.62rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(0,0,0,0.05);
+    vertical-align: middle;
+  }
+  .match.bye .match-row.winner { background: rgba(0,49,161,0.04); }
+  .match.bye .match-row.winner .trophy {
+    opacity: 1; color: var(--spm-accent); font-weight: 900;
+    font-size: 1.05rem;
+  }
+  .match.bye .match-row.bye-row .name {
+    color: var(--muted); font-style: italic; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    font-size: 0.78rem;
+  }
+  .match.bye .match-row.bye-row .seed,
+  .match.bye .match-row.bye-row .team-num {
+    opacity: 0.45; background: transparent; color: var(--muted);
+  }
+
+  /* Staff mode — banner + clickable match cards + score-entry modal. */
+  .staff-banner {
+    background: linear-gradient(180deg, #ea8c00, #d97400);
+    color: #fff;
+    padding: 8px 18px;
+    font-size: 0.84rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    display: flex; align-items: center; gap: 10px; justify-content: center;
+    /* Inserted by setupStaffMode as a sibling of the header, both outside
+       .page-scroll. Flex item, no sticky needed. */
+    flex: 0 0 auto;
+    z-index: 9;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.10);
+  }
+  .staff-banner .dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.35); }
+
+  body.staff .match:not(.bye) { cursor: pointer; }
+  body.staff .match:not(.bye):hover { box-shadow: 0 6px 18px rgba(217,116,0,0.20); border-color: #d97400; }
+
+  .staff-modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(10,20,40,0.55);
+    z-index: 9998;
+    display: none; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .staff-modal-overlay.shown { display: flex; }
+  .staff-modal {
+    background: #fff; border-radius: 12px;
+    width: 100%; max-width: 440px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.30);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .staff-modal-head { padding: 14px 18px 10px; background: linear-gradient(180deg, #fafbfc, #f4f5f7); border-bottom: 1px solid var(--border); }
+  .staff-modal-head .mno { font-size: 1.05rem; font-weight: 900; color: var(--spm-accent); }
+  .staff-modal-head .ctx { font-size: 0.74rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 3px; }
+  .staff-modal-body { padding: 16px 18px; }
+  .staff-modal-body .q { font-size: 0.84rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 10px; }
+  .staff-overrides {
+    display: grid;
+    grid-template-columns: 1fr 88px auto;
+    gap: 8px;
+    align-items: end;
+    padding: 10px 12px;
+    background: #fafbfc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .staff-overrides label {
+    display: flex; flex-direction: column; gap: 3px;
+    font-size: 0.7rem; font-weight: 800; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .staff-overrides input, .staff-overrides select {
+    padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 5px;
+    font-size: 0.86rem; font-family: inherit; background: #fff;
+  }
+  .staff-overrides .dt-pair { display: flex; gap: 4px; align-items: center; }
+  .staff-overrides .dt-pair input[type="date"] { flex: 1 1 auto; min-width: 110px; }
+  .staff-overrides .dt-pair select { flex: 0 0 auto; min-width: 100px; }
+  .staff-btn.save { background: var(--spm-accent); color: #fff; border-color: var(--spm-accent); }
+  .staff-btn.save:hover { opacity: 0.92; }
+  .staff-btn.save.success { background: var(--success); border-color: var(--success); }
+  .staff-team-btn {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: #fff;
+    border: 2px solid var(--border-strong);
+    border-radius: 8px;
+    font-size: 0.94rem; font-weight: 700; color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  }
+  .staff-team-btn:hover:not(:disabled) { border-color: var(--spm-accent); background: rgba(0,49,161,0.04); transform: translateY(-1px); }
+  .staff-team-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+  .staff-team-btn.is-winner {
+    border-color: #15803d; background: rgba(21,128,61,0.08); color: #15803d;
+  }
+  .staff-team-btn .seed { font-size: 0.7rem; color: var(--muted); font-weight: 600; min-width: 24px; }
+  .staff-team-btn.is-winner .seed { color: #15803d; }
+  .staff-team-btn .team-num { font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.72rem; font-weight: 700; color: var(--spm-accent); background: rgba(0,49,161,0.08); padding: 2px 6px; border-radius: 5px; }
+  .staff-team-btn .name { flex: 1 1 auto; }
+  .staff-team-btn .check { color: #15803d; font-weight: 900; font-size: 1.05rem; display: none; }
+  .staff-team-btn.is-winner .check { display: inline; }
+  .staff-team-btn .tbd { color: var(--muted); font-style: italic; font-weight: 600; font-size: 0.84rem; }
+  .staff-modal-actions {
+    display: flex; gap: 8px; padding: 12px 18px 16px; border-top: 1px solid var(--border); background: #fafbfc;
+    align-items: center;
+  }
+  .staff-modal-actions .spacer { flex: 1 1 auto; }
+  .staff-btn {
+    padding: 7px 14px; font-size: 0.84rem; font-weight: 700;
+    border-radius: 6px; cursor: pointer; border: 1px solid var(--border-strong);
+    background: #fff; color: var(--text);
+    transition: background 0.15s;
+  }
+  .staff-btn:hover { background: var(--bg); }
+  .staff-btn.clear { border-color: #b45309; color: #b45309; }
+  .staff-btn.clear:hover { background: rgba(180,83,9,0.08); }
+  .staff-btn.clear:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Save toast — confirms PATCH succeeded. */
+  .save-toast {
+    position: fixed; bottom: 20px; right: 20px;
+    background: #15803d; color: #fff;
+    padding: 9px 16px; border-radius: 8px;
+    font-size: 0.84rem; font-weight: 700;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    z-index: 10000;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+  }
+  .save-toast.shown { opacity: 1; transform: translateY(0); }
+  .save-toast.err { background: var(--spm-primary); }
+
+  /* Jump-to flash — when a dest chip is clicked, the target match
+     pulses with an SPM red glow for 1.8s. */
+  /* Jump-to-match highlight — visually identical to search "latest" hit so
+     clicking W/L and a search current-match pulse look the same. Card
+     background pulses red; SVG halo pulses red ring outside foreignObject
+     clip. Animations defined further down with the search keyframes; we
+     just point the jump-specific classes at the same animations. */
+  .match.match-jump-flash {
+    animation: searchLatestBgPulse 2.4s ease-out forwards;
+    background: rgba(234,0,42,0.10);
+    border-color: var(--spm-primary);
+  }
+  .bracket-svg .match-jump-overlay {
+    fill: none;
+    stroke: #ea002a;
+    pointer-events: none;
+    filter: drop-shadow(0 0 8px rgba(234,0,42,0.55));
+    animation: searchLatestPulse 2.4s ease-out forwards;
+  }
+
+  /* Bracket Champ — promoted OUT of the card so it can be loud. Sits in
+     the final round's column, centered under the final match. Pulses
+     gently to draw the eye. Same SPM gradient as the in-card pill version
+     used to be, but ~2× the size and with a soft red halo.
+     Positioned by the foreignObject wrapping it in SVG coordinates. */
+  .bracket-champ-big {
+    display: inline-block;
+    padding: 11px 22px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
+    color: #fff;
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: 1.96px;
+    text-transform: uppercase;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.18);
+    white-space: nowrap;
+    box-shadow:
+      0 10px 24px rgba(234,0,42,0.32),
+      0 0 0 4px rgba(234,0,42,0.10),
+      0 0 0 8px rgba(0,49,161,0.06);
+    animation: champBounce 2.4s ease-in-out infinite;
+    pointer-events: none;
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  @keyframes champBounce {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50%      { transform: translateY(-4px) scale(1.05); }
+  }
+
+  /* Final-of-each-bracket emphasis: gradient top-strip on the card,
+     deeper winner-row tint, and the winning team's name in SPM blue.
+     The bracket-champ chip in the top-right already carries the gold
+     treatment — this gives the whole card a "this is the final" feel
+     without competing with non-final winner cells. */
+  .match.is-final-of-bracket::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--spm-primary), var(--spm-accent));
+    z-index: 2;
+    pointer-events: none;
+  }
+  .match.is-final-of-bracket .match-row.winner {
+    background: linear-gradient(90deg, rgba(234,0,42,0.10), rgba(0,49,161,0.10));
+  }
+  .match.is-final-of-bracket .match-row.winner .name {
+    color: var(--spm-accent);
+    font-weight: 900;
+  }
+  .match.is-final-of-bracket .match-row.winner .trophy {
+    font-size: 1.05rem;
+  }
+
+  /* Search match highlight — uses the same SVG-halo trick as jump-to-match
+     so the highlight actually radiates beyond the card's foreignObject clip.
+     The card itself gets a tinted background (contained inside the box, not
+     clipped) so each match-row reads as "found" even when the SVG halo is
+     far away. */
+  .match.match-hit { background: rgba(0,49,161,0.08); border-color: var(--spm-accent); }
+  .match.match-hit-latest {
+    background: rgba(234,0,42,0.10);
+    border-color: var(--spm-primary);
+    animation: searchLatestBgPulse 2.4s ease-out forwards;
+  }
+  @keyframes searchLatestBgPulse {
+    0%, 100%       { background: rgba(234,0,42,0.10); }
+    6%, 36%, 66%   { background: rgba(234,0,42,0.22); }
+    20%, 50%, 80%  { background: rgba(234,0,42,0.10); }
+  }
+
+  /* SVG halos drawn outside each card's foreignObject (in the bracket-svg
+     coordinate space) so they actually paint where the user can see them.
+     All hits get a steady blue ring; the latest hit (the one we scroll to)
+     pulses red 3 times then settles into a brighter red ring. */
+  .bracket-svg .search-hit-halo {
+    fill: none;
+    stroke: var(--spm-accent);
+    stroke-width: 4;
+    stroke-opacity: 0.7;
+    pointer-events: none;
+  }
+  .bracket-svg .search-hit-latest-halo {
+    fill: none;
+    stroke: #ea002a;
+    pointer-events: none;
+    filter: drop-shadow(0 0 8px rgba(234,0,42,0.55));
+    animation: searchLatestPulse 2.4s ease-out forwards;
+  }
+  @keyframes searchLatestPulse {
+    0%             { stroke-opacity: 0;    stroke-width: 0; }
+    6%, 36%, 66%   { stroke-opacity: 1;    stroke-width: 10; }
+    20%, 50%, 80%  { stroke-opacity: 0.5;  stroke-width: 4; }
+    100%           { stroke-opacity: 1;    stroke-width: 5; }
+  }
+
+  /* Team-path highlight (viewer mode) — click any team row to spotlight all
+     of that team's matches. Win = green border + tint, loss = red, pending
+     (not yet scored) = SPM blue. The team's own row inside each card gets
+     a stronger background to draw the eye. */
+  body:not(.staff) .match-row[data-team-num] { cursor: pointer; }
+  body:not(.staff) .match-row[data-team-num]:hover { background: rgba(0,49,161,0.04); }
+  .match.highlight-win {
+    border-color: #15803d;
+    box-shadow: 0 0 0 3px rgba(22,163,74,0.40), 0 2px 10px rgba(0,0,0,0.08);
+  }
+  .match.highlight-loss {
+    border-color: var(--spm-primary);
+    box-shadow: 0 0 0 3px rgba(234,0,42,0.40), 0 2px 10px rgba(0,0,0,0.08);
+  }
+  .match.highlight-pending {
+    border-color: var(--spm-accent);
+    box-shadow: 0 0 0 3px rgba(0,49,161,0.30), 0 2px 10px rgba(0,0,0,0.06);
+  }
+  .match-row.highlight-team        { background: rgba(0,49,161,0.08) !important; }
+  .match.highlight-win  .match-row.highlight-team { background: rgba(22,163,74,0.14) !important; }
+  .match.highlight-loss .match-row.highlight-team { background: rgba(234,0,42,0.12) !important; }
+  /* Keep final-card top-strip visible above highlight shadows */
+  .match.is-final-of-bracket.highlight-win,
+  .match.is-final-of-bracket.highlight-loss,
+  .match.is-final-of-bracket.highlight-pending { box-shadow: 0 0 0 3px rgba(0,0,0,0.05), 0 2px 10px rgba(0,0,0,0.08); }
+  .match.is-final-of-bracket.highlight-win  { box-shadow: 0 0 0 3px rgba(22,163,74,0.50), 0 2px 10px rgba(0,0,0,0.08); }
+  .match.is-final-of-bracket.highlight-loss { box-shadow: 0 0 0 3px rgba(234,0,42,0.50),  0 2px 10px rgba(0,0,0,0.08); }
+
+  /* Auto-update */
+  .update-overlay { position: fixed; inset: 0; background: rgba(10,20,40,0.72); z-index: 9999; display: none; align-items: center; justify-content: center; padding: 24px; }
+  .update-overlay.shown { display: flex; }
+  .update-box { background: #fff; border-radius: var(--radius); padding: 32px; max-width: 380px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+  .update-spinner { width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 50%; border: 5px solid rgba(0,49,161,0.15); border-top-color: var(--spm-accent); animation: spin 0.85s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .update-title { font-size: 1.1rem; font-weight: 800; color: var(--spm-accent); margin-bottom: 6px; }
+
+  /* ── PREPROD banner ──────────────────────────────────────────────
+     Yellow strip pinned above the header so no human (and no agent
+     reading a screenshot) can confuse the preprod URL with the live
+     production URL. Visible ONLY when the page is served from a
+     /preprod/ path — JS toggles a body class on load (see end of
+     <script> in this file). On production the banner stays display:none. */
+  .preprod-banner { display: none; }
+  body.is-preprod .preprod-banner {
+    background: linear-gradient(90deg, #fde68a, #fcd34d);
+    border-bottom: 1px solid #d97706;
+    color: #78350f;
+    font-weight: 700; font-size: 0.78rem;
+    padding: 6px 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex: 0 0 auto;
+    z-index: 11;
+  }
+  .preprod-banner .pp-meta { font-size: 0.7rem; color: #92400e; font-weight: 600; }
+  .preprod-banner a { color: #78350f; text-decoration: underline; }
+
+  /* Terminal-match qualifier pill — reuses the existing .bracket-champ-big
+     visual (gradient pill below the card with bounce animation) so the
+     wiring engine's terminal matches look exactly like the production
+     "Bracket Champ" pill on a final. The text is set per-card by
+     wiringRenderBracket: "🏆 <bracketChampText>" by default. No corner-
+     badge / inside-card treatment — pill sits OUTSIDE the box. */
+
+  /* Qualifier header band — sits above a bracket's R1 column, reads
+     "🏆 N World Qualifiers". Rendered above any bracket whose terminal
+     count > 0 when WIRING_ENGINE is enabled. */
+  .qualifier-band {
+    background: linear-gradient(90deg, rgba(251,191,36,0.18), rgba(217,119,6,0.18));
+    border: 1px solid #fbbf24;
+    border-radius: 8px;
+    color: #78350f;
+    font-weight: 800;
+    padding: 8px 14px;
+    margin: 0 auto 10px;
+    max-width: 480px;
+    text-align: center;
+  }
+  .qualifier-band .qb-sub { font-size: 0.74rem; font-weight: 600; color: #92400e; }
+
+  /* Red→blue vertical gradient stripe for 32-bracket cards. Rendered
+     as a 3px-wide span on the left edge of each match card under
+     WIRING_ENGINE when the card's bracket label is '32'. */
+  .match.bracket-32 { border-left: 0 !important; }
+  .match.bracket-32::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg, var(--spm-primary) 0%, var(--spm-accent) 100%);
+    border-radius: 3px 0 0 3px;
+  }
+</style>
+</head>
+<body>
+
+<div class="preprod-banner">
+  <div>⚠️ <strong>PREPROD</strong> — staging build of BreakOut.
+    Same data as production, alternate URL.
+    <a href="../" target="_blank">production →</a></div>
+  <div class="pp-meta">v<span id="preprodVersion">0.95</span>-preprod ·
+    <span id="preprodEngine">WIRING engine</span> ·
+    <a href="?engine=classic">fallback to classic</a></div>
+</div>
+
+<div class="update-overlay" id="updateOverlay">
+  <div class="update-box">
+    <div class="update-spinner"></div>
+    <div class="update-title">Updating BreakOut</div>
+    <div>A new version is being deployed&hellip;</div>
+  </div>
+</div>
+
+<div class="staff-modal-overlay" id="staffModal" aria-hidden="true">
+  <div class="staff-modal">
+    <div class="staff-modal-head">
+      <div class="mno" id="staffModalMno">M—</div>
+      <div class="ctx" id="staffModalCtx"></div>
+    </div>
+    <div class="staff-modal-body">
+      <div class="staff-overrides">
+        <label>Start
+          <div class="dt-pair">
+            <input type="date" id="staffStartDate">
+            <select id="staffStartTime"></select>
+          </div>
+        </label>
+        <label>Table(s) <input type="text" id="staffTableInput" placeholder="1 or 5,6" pattern="^\s*\d+(\s*,\s*\d+)*\s*$"></label>
+        <button type="button" class="staff-btn save" id="staffSaveOverridesBtn">Save</button>
+      </div>
+      <div class="q">Who won?</div>
+      <button type="button" class="staff-team-btn" id="staffPickTop"></button>
+      <button type="button" class="staff-team-btn" id="staffPickBot"></button>
+    </div>
+    <div class="staff-modal-actions">
+      <button type="button" class="staff-btn clear" id="staffClearBtn">Clear result</button>
+      <span class="spacer"></span>
+      <button type="button" class="staff-btn" id="staffCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="save-toast" id="saveToast"></div>
+
+<!-- Header is a direct body child (NOT inside .page-scroll) so it spans the
+     full viewport width and stays pinned at the top regardless of how far
+     the user pans horizontally inside the bracket canvas. -->
+<div class="header">
+  <div class="header-inner">
+    <h1><span class="brand-dot"></span>South Portland Metro APA</h1>
+    <span class="badge">BreakOut</span>
+    <div class="search" id="searchWrap">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+      <input type="text" id="searchInput" placeholder="Search team — jump to latest match" autocomplete="off">
+      <button type="button" class="search-x" id="searchClear" aria-label="Clear search">×</button>
+    </div>
+    <span class="search-result" id="searchResult"></span>
+    <div class="header-spacer"></div>
+    <div class="view-tools" role="toolbar" aria-label="Bracket view tools">
+      <button id="zoomOut"   title="Zoom out (Ctrl+−)"  aria-label="Zoom out">−</button>
+      <button class="zoom-label" id="zoomLabel" title="Click to reset to 100%" aria-label="Reset zoom">100%</button>
+      <button id="zoomIn"    title="Zoom in (Ctrl++)"   aria-label="Zoom in">+</button>
+      <div class="divider" aria-hidden="true"></div>
+      <div class="print-wrap">
+        <button class="print-btn" id="printBtn" title="Print — choose orientation"><span class="full">Print&nbsp;</span>🖨</button>
+        <div class="print-popover" id="printPopover" hidden role="menu" aria-label="Choose print orientation">
+          <button type="button" role="menuitem" data-orient="landscape" class="print-popover-opt">
+            <span class="opt-icon">⇲</span><span class="opt-label">Landscape</span>
+          </button>
+          <button type="button" role="menuitem" data-orient="portrait" class="print-popover-opt">
+            <span class="opt-icon">⇱</span><span class="opt-label">Portrait</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- /.header (outside .page-scroll — full viewport width) -->
+
+<div class="page-scroll" id="pageScroll">
+<div class="hero" id="tournamentHero" hidden>
+  <div class="hero-inner">
+    <div class="hero-status" id="tournamentHeroStatus" hidden></div>
+    <h2 class="t-name" id="tournamentName"></h2>
+    <div class="t-meta" id="tournamentMeta"></div>
+  </div>
+</div>
+
+<div id="tournamentRoot"></div>
+</div><!-- /.page-scroll -->
+
+<script>
+document.write('<script src="version.js?_=' + Date.now() + '"><\/script>');
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   BreakOut — tournament viewer
+     Two 12-team brackets (modified SE w/ 4 byes each, top 4 seeds bye R1)
+     feeding losers into a 64-slot consolation bracket that alternates
+     "integrate 12-team losers" and "carry winners forward" rounds.
+   ════════════════════════════════════════════════════════════════════════ */
+const APP_NAME = 'BreakOut';
+const SB_URL  = 'https://dqzbekoaysgaiqljueac.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxemJla29heXNnYWlxbGp1ZWFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNzA5NzgsImV4cCI6MjA5MDc0Njk3OH0.cCdGxZ4zEFzU_r6lWSDeoNWG67Q4MSYCAtpds035dfU';
+const SCHEMA = 'breakout';
+const HEADERS_APA = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': 'apa_core' };
+const HEADERS_DB  = { apikey: SB_ANON, Authorization: 'Bearer ' + SB_ANON, 'Accept-Profile': SCHEMA };
+
+let _versionMismatch = false;
+let _teams = [];        // sorted ASC by number
+let _tournament = null;
+let _tournamentRow = null;  // raw row from breakout.tournaments (incl id, matches JSONB)
+
+/* URL params:
+ *   ?t=<slug>        select a specific tournament (else most recently live)
+ *   ?role=staff      enable click-to-record-winner UI
+ *   ?key=<jwt>       service_role key used by staff for PATCH writes
+ */
+const URL_PARAMS = new URLSearchParams(location.search);
+const URL_SLUG   = URL_PARAMS.get('t') || null;
+const IS_STAFF   = URL_PARAMS.get('role') === 'staff';
+const STAFF_KEY  = URL_PARAMS.get('key') || '';
+
+/* ── PREPROD render engine selection ─────────────────────────────────
+   Preprod exists to prove the wiring-driven engine works against every
+   live tournament before promoting. So wiring is the DEFAULT here;
+   ?engine=classic is the escape hatch that falls back to the production
+   A/B/T64 hardcoded path. The banner reflects which engine is rendering
+   so smoke-testers can tell at a glance. */
+const WIRING_ENGINE = URL_PARAMS.get('engine') !== 'classic';
+document.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('preprodEngine');
+  if (el) el.textContent = WIRING_ENGINE ? 'WIRING engine' : 'classic engine';
+});
+const HEADERS_STAFF = STAFF_KEY
+  ? { apikey: STAFF_KEY, Authorization: 'Bearer ' + STAFF_KEY, 'Accept-Profile': 'breakout', 'Content-Profile': 'breakout', 'Content-Type': 'application/json' }
+  : null;
+
+/* Tournament-wide configurable text. Hydrated from
+ * breakout.tournaments.config when an active tournament is loaded. */
+const TOURNAMENT_TEXT = {
+  bracketChampText: 'Bracket Champ',
+  championText: 'Champion',
+  bracketNameA: 'Bracket A',
+  bracketNameB: 'Bracket B',
+  bracketNameT64: '64-Team'
+};
+
+/* ── Auto-update ──────────────────────────── */
+/* PREPROD guard: the apa_core.apps row tracks PRODUCTION's version (e.g.
+   '0.94'), but this preprod build runs APP_VERSION='0.95-preprod'. A
+   naive equality check would trigger the update overlay on every cold
+   load and never resolve (pollForDeploy looks for '0.94' in version.js,
+   which doesn't match). When we're served from /preprod/ we just
+   short-circuit the whole version-watch — preprod versioning is driven
+   by manual file edits + smoke test, not by the apa_core.apps row. */
+const IS_PREPROD = location.pathname.indexOf('/preprod/') !== -1;
+// Toggle preprod banner visibility based on URL — CSS gates display on this class.
+if (IS_PREPROD) document.documentElement.parentElement && document.body && document.body.classList.add('is-preprod');
+document.addEventListener('DOMContentLoaded', () => {
+  if (IS_PREPROD) document.body.classList.add('is-preprod');
+});
+async function checkVersion() {
+  if (IS_PREPROD) return;            // preprod doesn't track apa_core.apps
+  if (_versionMismatch) return;
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/apps?app_name=eq.' + APP_NAME + '&select=version', { headers: HEADERS_APA });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d && d[0] && d[0].version && d[0].version !== window.APP_VERSION) {
+      _versionMismatch = true;
+      document.getElementById('updateOverlay').classList.add('shown');
+      pollForDeploy(d[0].version);
+    }
+  } catch (_) {}
+}
+function pollForDeploy(target) {
+  setTimeout(async () => {
+    try {
+      const r = await fetch('version.js?_=' + Date.now());
+      if (r.ok && (await r.text()).indexOf("APP_VERSION = '" + target + "'") !== -1) {
+        const u = new URL(location.href);
+        u.searchParams.set('_', String(Date.now()));
+        location.replace(u.toString());
+        return;
+      }
+    } catch (_) {}
+    pollForDeploy(target);
+  }, 3000);
+}
+checkVersion();
+setInterval(checkVersion, 30000);
+
+/* ── Live data refresh ───────────────────────
+ *  Up-to-date data is a core principle: if the active tournament's
+ *  `updated_at` changes while the page is loaded, re-fetch and re-render
+ *  the bracket. Poll every 15s. Skip when the page is hidden or when an
+ *  interactive control (modal, input) is in use, to avoid clobbering UX.
+ *  Page-version updates (separate concern) are handled by checkVersion(). */
+let _lastTournamentUpdatedAt = null;
+async function pollTournamentUpdate() {
+  if (document.hidden) return;
+  if (document.querySelector('.modal.shown, .staff-modal-overlay.shown, input:focus, textarea:focus')) return;
+  if (!_tournament) return;          // initial load hasn't finished
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/' + tournamentQueryString('updated_at,id'), { headers: HEADERS_DB });
+    if (!r.ok) return;
+    const arr = await r.json();
+    if (!arr || !arr[0]) return;
+    const latest = arr[0].updated_at;
+    if (_lastTournamentUpdatedAt && latest !== _lastTournamentUpdatedAt) {
+      // Underlying tournament changed — pull fresh data and re-render.
+      _tournament = await buildTournament();
+      renderTournament();
+    }
+    _lastTournamentUpdatedAt = latest;
+  } catch (_) {}
+}
+setInterval(pollTournamentUpdate, 15000);
+
+/* ── Staff mode (click-to-record-winner) ────
+ *  Active when URL has ?role=staff&key=<service_role>.
+ *  Clicking any match opens a modal with two team buttons; click a team to
+ *  record them as winner. Optimistic update + PATCH to breakout.tournaments.
+ *  Re-renders bracket with downstream propagation. */
+function setupStaffMode() {
+  if (!IS_STAFF) return;
+  document.body.classList.add('staff');
+  // Inject the banner under the existing header.
+  const banner = document.createElement('div');
+  banner.className = 'staff-banner';
+  banner.innerHTML = '<span class="dot"></span>STAFF MODE — click any match to record a winner';
+  const header = document.querySelector('.header');
+  if (header && header.parentNode) header.parentNode.insertBefore(banner, header.nextSibling);
+
+  // Click delegation on matches. Ignore clicks on the dest chips (they
+  // already navigate to other matches) and on bye cards.
+  document.addEventListener('click', (e) => {
+    if (!IS_STAFF) return;
+    if (e.target.closest('a.dest-chip')) return;       // chip click → jump
+    const cell = e.target.closest('.match');
+    if (!cell) return;
+    if (cell.classList.contains('bye')) return;        // byes have no result
+    const matchId = cell.dataset.matchId;
+    if (!matchId) return;
+    openStaffModal(matchId);
+  });
+
+  document.getElementById('staffCancelBtn').addEventListener('click', closeStaffModal);
+  document.getElementById('staffClearBtn').addEventListener('click', () => recordWinner(null));
+  document.getElementById('staffPickTop').addEventListener('click', () => recordWinner('top'));
+  document.getElementById('staffPickBot').addEventListener('click', () => recordWinner('bot'));
+  document.getElementById('staffSaveOverridesBtn').addEventListener('click', saveStaffOverrides);
+  document.getElementById('staffModal').addEventListener('click', (e) => {
+    if (e.target.id === 'staffModal') closeStaffModal();    // click outside the box
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('staffModal').classList.contains('shown')) closeStaffModal();
+  });
+}
+
+let _staffEditingMatchId = null;
+
+function openStaffModal(matchId) {
+  const m = _tournament && _tournament.all.find(x => x.id === matchId);
+  if (!m) return;
+  _staffEditingMatchId = matchId;
+  const modal = document.getElementById('staffModal');
+  document.getElementById('staffModalMno').textContent =
+    m.globalNo ? 'M' + m.globalNo : '—';
+  const ctx = [];
+  if (m.bracket === '64') ctx.push('64-team');
+  else ctx.push('Bracket ' + m.bracket);
+  ctx.push('Round ' + m.round);
+  if (m.day) ctx.push(m.day);
+  if (m.time) ctx.push(m.time);
+  if (m.table_no != null && m.table_no !== '') {
+    const arr = String(m.table_no).split(',').map(s => s.trim()).filter(Boolean);
+    ctx.push((arr.length > 1 ? 'Tables ' : 'Table ') + arr.join('+'));
+  }
+  document.getElementById('staffModalCtx').textContent = ctx.join(' · ');
+
+  // Override fields: Start datetime + Table number.
+  // If this match has no scheduled_at yet, fall back to any sibling in the
+  // same round that does — so the picker opens at the round's assigned time
+  // instead of blank, and the staff can fine-tune from there.
+  let initialDt = m.scheduled_at;
+  if (!initialDt) {
+    const sibling = _tournament.all.find(x =>
+      !x.bye && x.bracket === m.bracket && x.round === m.round && x.scheduled_at);
+    if (sibling) initialDt = sibling.scheduled_at;
+  }
+  const dtParts = splitDateTime(initialDt || '');
+  document.getElementById('staffStartDate').value = dtParts.date;
+  document.getElementById('staffStartTime').innerHTML = buildTimeOptions(dtParts.time);
+  document.getElementById('staffTableInput').value = m.table_no != null && m.table_no !== '' ? String(m.table_no) : '';
+  const saveBtn = document.getElementById('staffSaveOverridesBtn');
+  saveBtn.classList.remove('success');
+  saveBtn.textContent = 'Save';
+
+  renderStaffPick('staffPickTop', m, 'top');
+  renderStaffPick('staffPickBot', m, 'bot');
+
+  const clearBtn = document.getElementById('staffClearBtn');
+  clearBtn.disabled = !m.winner_side;
+
+  modal.classList.add('shown');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function renderStaffPick(btnId, m, side) {
+  const btn = document.getElementById(btnId);
+  const team = side === 'top' ? m.top : m.bottom;
+  const isCurrentWinner = m.winner_side === side;
+  btn.classList.toggle('is-winner', isCurrentWinner);
+  if (!team) {
+    btn.disabled = true;
+    const source = side === 'top'
+      ? (m.topFromMatch || m.topFromMatchLoser)
+      : (m.botFromMatch || m.botFromMatchLoser);
+    const waitOn = source && source.globalNo
+      ? 'Waiting on M' + source.globalNo
+      : 'Waiting on upstream match';
+    btn.innerHTML = '<span class="seed">—</span>'
+      + '<span class="team-num">—</span>'
+      + '<span class="tbd">' + esc(waitOn) + '</span>'
+      + '<span class="check">&#x2713;</span>';
+    return;
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<span class="seed">' + esc(team.seed) + '</span>'
+    + '<span class="team-num">' + pad4(team.number) + '</span>'
+    + '<span class="name">' + esc(team.name) + '</span>'
+    + '<span class="check">&#x2713;</span>';
+}
+
+function closeStaffModal() {
+  const modal = document.getElementById('staffModal');
+  modal.classList.remove('shown');
+  modal.setAttribute('aria-hidden', 'true');
+  _staffEditingMatchId = null;
+}
+
+function readStaffOverrides(md, idx) {
+  const dateV = document.getElementById('staffStartDate').value;
+  const timeV = document.getElementById('staffStartTime').value;
+  const dtV   = combineDateTime(dateV, timeV);
+  const tblV  = document.getElementById('staffTableInput').value.trim();
+  const prev  = { scheduled_at: md[idx].scheduled_at || null, table_no: md[idx].table_no != null ? md[idx].table_no : null };
+  md[idx].scheduled_at = dtV || null;
+  // Accept either "5" or "5,6" so 2-table matches can be entered directly.
+  if (tblV === '') {
+    md[idx].table_no = null;
+  } else {
+    const arr = tblV.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0);
+    md[idx].table_no = arr.length === 0 ? null : (arr.length === 1 ? arr[0] : arr.join(','));
+  }
+  if (dtV) { md[idx].day = null; md[idx].time = null; }
+  return prev;
+}
+
+async function recordWinner(side) {
+  if (!_tournament || !_staffEditingMatchId) return;
+  const md = _tournament.matchData;
+  const idx = md.findIndex(x => x.id === _staffEditingMatchId);
+  if (idx < 0) return;
+  const m = _tournament.all.find(x => x.id === _staffEditingMatchId);
+  if (side && (!m.top || !m.bottom)) {
+    showToast('Both teams must be determined before recording a winner', 'err');
+    return;
+  }
+  const prevSide = md[idx].winner_side || null;
+  if (prevSide === side) {
+    // No-op for winner; still flush any pending override edits.
+    await saveStaffOverrides();
+    return;
+  }
+  // Always confirm a winner change. Three flavors:
+  //   1. First-time set: "Record X as the winner?"
+  //   2. Override:       "Change the winner from X to Y?"
+  //   3. Clear:          "Clear the winner (currently X)?"
+  const mLabel = m.globalNo ? 'M' + m.globalNo : 'this match';
+  let prompt;
+  if (prevSide) {
+    const prevTeam = prevSide === 'top' ? m.top : m.bottom;
+    const prevName = prevTeam ? prevTeam.name : '(unknown)';
+    if (side === null) {
+      prompt = 'Clear the winner of ' + mLabel + '?\n\nCurrently recorded: ' + prevName + '.';
+    } else {
+      const newTeam = side === 'top' ? m.top : m.bottom;
+      const newName = newTeam ? newTeam.name : '(unknown)';
+      prompt = 'Change the winner of ' + mLabel + '?\n\nFrom: ' + prevName + '\nTo: ' + newName;
+    }
+  } else if (side) {
+    const newTeam = side === 'top' ? m.top : m.bottom;
+    const newName = newTeam ? newTeam.name : '(unknown)';
+    prompt = 'Record ' + newName + ' as the winner of ' + mLabel + '?';
+  }
+  // Note: clearing a result that wasn't set is a no-op above; no prompt needed.
+  if (prompt && !window.confirm(prompt)) return;
+  const prevOverrides = readStaffOverrides(md, idx);
+  md[idx].winner_side = side;
+
+  reapplyTournamentInMemory();
+  renderTournament();
+  closeStaffModal();
+
+  try {
+    await saveTournamentMatches();
+    showToast('Saved', 'ok');
+  } catch (e) {
+    md[idx].winner_side = prevSide;
+    md[idx].scheduled_at = prevOverrides.scheduled_at;
+    md[idx].table_no = prevOverrides.table_no;
+    reapplyTournamentInMemory();
+    renderTournament();
+    showToast('Save failed: ' + e.message, 'err');
+  }
+}
+
+async function saveStaffOverrides() {
+  if (!_tournament || !_staffEditingMatchId) return;
+  const md = _tournament.matchData;
+  const idx = md.findIndex(x => x.id === _staffEditingMatchId);
+  if (idx < 0) return;
+  const prev = readStaffOverrides(md, idx);
+  reapplyTournamentInMemory();
+  renderTournament();
+  const btn = document.getElementById('staffSaveOverridesBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    await saveTournamentMatches();
+    btn.classList.add('success');
+    btn.textContent = 'Saved ✓';
+    setTimeout(() => {
+      btn.classList.remove('success');
+      btn.textContent = 'Save';
+      btn.disabled = false;
+    }, 1600);
+  } catch (e) {
+    md[idx].scheduled_at = prev.scheduled_at;
+    md[idx].table_no = prev.table_no;
+    reapplyTournamentInMemory();
+    renderTournament();
+    btn.disabled = false;
+    btn.textContent = 'Save';
+    showToast('Save failed: ' + e.message, 'err');
+  }
+}
+
+function reapplyTournamentInMemory() {
+  const teamsByNumber = Object.fromEntries(_teams.map(t => [t.number, t]));
+  // 1.00: empty seed_assignments → empty bracket (all TBD). The previous
+  // fallback (defaultSeedAssignments) auto-filled the first 24 catalog
+  // teams which broke the Live Draw workflow — admins literally clear
+  // seeds to start a fresh random draw, and saw teams reappear.
+  const seedAssignments = (_tournamentRow && Array.isArray(_tournamentRow.seed_assignments))
+    ? _tournamentRow.seed_assignments
+    : [];
+  const fresh = reconstructTournament(_tournament.matchData, seedAssignments, teamsByNumber);
+  fresh.matchData = _tournament.matchData;
+  resolveTournament(fresh);
+  _tournament = fresh;
+}
+
+async function saveTournamentMatches() {
+  if (!_tournamentRow || !_tournamentRow.id) throw new Error('No active tournament loaded — generate one in admin first.');
+  if (!HEADERS_STAFF) throw new Error('Staff key missing in URL (?key=…)');
+  const r = await fetch(SB_URL + '/rest/v1/tournaments?id=eq.' + _tournamentRow.id,
+    { method: 'PATCH', headers: HEADERS_STAFF, body: JSON.stringify({ matches: _tournament.matchData }) });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error('HTTP ' + r.status + (txt ? ': ' + txt.slice(0, 120) : ''));
+  }
+}
+
+let _toastTimer = null;
+function showToast(msg, kind) {
+  const t = document.getElementById('saveToast');
+  t.textContent = msg;
+  t.classList.toggle('err', kind === 'err');
+  t.classList.add('shown');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove('shown'), kind === 'err' ? 4000 : 1800);
+}
+
+/* ── Util ─────────────────────────────────── */
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function pad4(n) { return String(n).padStart(4, '0'); }
+function fmtTime(mins) {
+  let h = Math.floor(mins / 60), m = mins % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ampm;
+}
+function fmtMoney(n) { return n == null ? '' : '$' + n.toLocaleString(); }
+function splitDateTime(iso) {
+  if (!iso || iso.length < 16) return { date: '', time: '' };
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+}
+function combineDateTime(date, time) {
+  if (!date || !time) return '';
+  return date + 'T' + time;
+}
+function buildTimeOptions(selected, startHour, endHour) {
+  const sH = startHour != null ? startHour : 9;
+  const eH = endHour   != null ? endHour   : 21;
+  const inRange = [];
+  let foundSelected = !selected;
+  for (let totalMin = sH * 60; totalMin <= eH * 60; totalMin += 30) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    const val = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    let dh = h % 12; if (dh === 0) dh = 12;
+    const display = dh + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+    if (val === selected) foundSelected = true;
+    inRange.push('<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + display + '</option>');
+  }
+  const result = ['<option value="">—</option>'];
+  if (!foundSelected && selected) {
+    const parts = selected.split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10);
+    let dh = h % 12; if (dh === 0) dh = 12;
+    const display = dh + ':' + String(m).padStart(2, '0') + ' ' + (h < 12 ? 'AM' : 'PM');
+    result.push('<option value="' + selected + '" selected>' + display + ' (out of range)</option>');
+  }
+  result.push(...inRange);
+  return result.join('');
+}
+
+/* ── Data fetch ───────────────────────────── */
+async function loadTeams(tournamentId) {
+  // 1.00: teams are scoped per-tournament. Without an id we leave the
+  // catalog empty (renderer shows TBD slots, which is correct for "no
+  // tournament loaded"). With an id we fetch only that tournament's
+  // teams so the bracket can't accidentally pull teams from another.
+  if (tournamentId == null) { _teams = []; return; }
+  const r = await fetch(
+    SB_URL + '/rest/v1/teams?tournament_id=eq.' + tournamentId
+           + '&order=number.asc&select=id,number,name',
+    { headers: HEADERS_DB });
+  if (!r.ok) throw new Error('Could not load teams: HTTP ' + r.status);
+  _teams = await r.json();
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   TOURNAMENT BUILD
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════════════
+   TEMPLATE — produces a flat array of match-data objects describing the
+   wiring of the 12+12→64 modified-SE tournament. Each match references
+   either seed indices (R1 entrants) OR another match by id + 'winner'/'loser'
+   kind. This is the shape we'll eventually store in breakout.tournaments.matches.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Bracket order for a 16-team SE bracket: positions 0..15 ↦ seeds.
+ *  Used to place 12 real teams + 4 ghost byes so the structural bracket
+ *  is regular while the top 4 seeds get R1 byes. */
+const SEED_ORDER_16 = [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11];
+
+/* 32-team NCAA-style seeding for Mod-SE 32→8 template. Mirror of admin. */
+const SEED_ORDER_32 = [
+  1, 32, 16, 17,   8, 25,  9, 24,
+  4, 29, 13, 20,   5, 28, 12, 21,
+  2, 31, 15, 18,   7, 26, 10, 23,
+  3, 30, 14, 19,   6, 27, 11, 22
+];
+
+const TEMPLATE_SCHEDULES = {
+  twelve: [
+    { day: 'Saturday', time: '9:00 AM',  payout: null },
+    { day: 'Saturday', time: '10:30 AM', payout: null },
+    { day: 'Saturday', time: '12:00 PM', payout: 100 },
+    { day: 'Saturday', time: '1:30 PM',  payout: 400 }
+  ],
+  sixtyfour: [
+    { day: 'Saturday', time: '11:00 AM', payout: null },
+    { day: 'Saturday', time: '1:00 PM',  payout: null },
+    { day: 'Saturday', time: '3:00 PM',  payout: null },
+    { day: 'Saturday', time: '5:00 PM',  payout: null },
+    { day: 'Sunday',   time: '10:00 AM', payout: 100 },
+    { day: 'Sunday',   time: '12:00 PM', payout: 600 }
+  ]
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   Template: Mod-SE 32→8 (viewer mirror of the admin generator).
+   Mirrors the APA Mod-SE 32-1 reference PDF truncated at the 8-team
+   advancement line. See admin.html for full per-round documentation.
+   ══════════════════════════════════════════════════════════════════════ */
+const MSE32_SCHEDULE = {
+  1: { day: 'Saturday', time: '9:00 AM',  payout: null },
+  2: { day: 'Saturday', time: '11:00 AM', payout: null },
+  3: { day: 'Saturday', time: '1:00 PM',  payout: null },
+  4: { day: 'Saturday', time: '3:00 PM',  payout: null }
+};
+
+function templateMse32To8() {
+  const md = [];
+  const b = '32';
+  const id = (r, s) => '32-r' + r + 's' + s;
+  for (let i = 0; i < 16; i++) {
+    md.push({ id: id(1, i), bracket: b, round: 1, slot: i, is_bye: false,
+      top_seed: SEED_ORDER_32[i * 2], bot_seed: SEED_ORDER_32[i * 2 + 1] });
+  }
+  for (let i = 0; i < 8; i++) {
+    md.push({ id: id(2, i), bracket: b, round: 2, slot: i, is_bye: false,
+      top_from: { match_id: id(1, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(1, i * 2 + 1), kind: 'winner' } });
+  }
+  for (let i = 0; i < 8; i++) {
+    md.push({ id: id(2, i + 8), bracket: b, round: 2, slot: i + 8, is_bye: false,
+      top_from: { match_id: id(1, i * 2),     kind: 'loser' },
+      bot_from: { match_id: id(1, i * 2 + 1), kind: 'loser' } });
+  }
+  for (let i = 0; i < 8; i++) {
+    md.push({ id: id(3, i), bracket: b, round: 3, slot: i, is_bye: false,
+      top_from: { match_id: id(2, i + 8), kind: 'winner' },
+      bot_from: { match_id: id(2, 7 - i), kind: 'loser'  } });
+  }
+  for (let i = 0; i < 4; i++) {
+    md.push({ id: id(4, i), bracket: b, round: 4, slot: i, is_bye: false,
+      top_from: { match_id: id(3, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(3, i * 2 + 1), kind: 'winner' },
+      is_qualifier: true });
+  }
+  for (let i = 0; i < 4; i++) {
+    md.push({ id: id(3, i + 8), bracket: b, round: 3, slot: i + 8, is_bye: false,
+      top_from: { match_id: id(2, i * 2),     kind: 'winner' },
+      bot_from: { match_id: id(2, i * 2 + 1), kind: 'winner' },
+      is_qualifier: true });
+  }
+  for (const m of md) {
+    const s = MSE32_SCHEDULE[m.round];
+    if (s) { m.day = s.day; m.time = s.time; m.payout = s.payout; }
+  }
+  // M numbering (match the PDF) — same segments as admin.
+  const segments = [
+    { round: 1, smin: 0, smax: 15, start: 1  },
+    { round: 2, smin: 0, smax: 7,  start: 17 },
+    { round: 2, smin: 8, smax: 15, start: 25 },
+    { round: 3, smin: 0, smax: 7,  start: 33 },
+    { round: 4, smin: 0, smax: 3,  start: 41 },
+    { round: 3, smin: 8, smax: 11, start: 45 }
+  ];
+  for (const seg of segments) {
+    md.filter(m => m.round === seg.round && m.slot >= seg.smin && m.slot <= seg.smax)
+      .sort((a, b) => a.slot - b.slot)
+      .forEach((m, i) => { m.match_no = seg.start + i; });
+  }
+  let p = 1;
+  for (let r = 1; r <= 4; r++) {
+    md.filter(m => m.round === r).sort((a, b) => a.slot - b.slot)
+      .forEach(m => { m.play_order = p++; });
+  }
+  for (let r = 1; r <= 4; r++) {
+    md.filter(m => m.round === r).sort((a, b) => a.slot - b.slot)
+      .forEach((m, idx) => { m.table_no = idx + 1; });
+  }
+  return md;
+}
+
+function templateModSe12_12To64() {
+  const md = [];
+  md.push(...gen12Bracket('A'));
+  md.push(...gen12Bracket('B'));
+  md.push(...gen64Bracket());
+  applyTemplateSchedule(md);
+  assignMatchNumbers(md);
+  assignTableNumbers(md);
+  return md;
+}
+
+function gen12Bracket(label) {
+  const matches = [];
+  for (let i = 0; i < 8; i++) {
+    const topSeed = SEED_ORDER_16[i * 2];
+    const botSeed = SEED_ORDER_16[i * 2 + 1];
+    const topReal = topSeed <= 12 ? topSeed : null;
+    const botReal = botSeed <= 12 ? botSeed : null;
+    if (topReal && botReal) {
+      matches.push({ id: label + '-R1-M' + i, bracket: label, round: 1, slot: i, is_bye: false,
+                     top_seed: topReal, bot_seed: botReal });
+    } else {
+      const seededTeam = topReal || botReal;
+      matches.push({ id: label + '-R1-BYE' + i, bracket: label, round: 1, slot: i, is_bye: true,
+                     top_seed: seededTeam, bot_seed: null });
+    }
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: label + '-R2-M' + (i + 1), bracket: label, round: 2, slot: i, is_bye: false,
+                   top_from: { match_id: matches[i * 2].id, kind: 'winner' },
+                   bot_from: { match_id: matches[i * 2 + 1].id, kind: 'winner' } });
+  }
+  const r2 = matches.filter(m => m.round === 2);
+  for (let i = 0; i < 2; i++) {
+    matches.push({ id: label + '-R3-M' + (i + 1), bracket: label, round: 3, slot: i, is_bye: false,
+                   top_from: { match_id: r2[i * 2].id, kind: 'winner' },
+                   bot_from: { match_id: r2[i * 2 + 1].id, kind: 'winner' } });
+  }
+  const r3 = matches.filter(m => m.round === 3);
+  matches.push({ id: label + '-R4-M1', bracket: label, round: 4, slot: 0, is_bye: false,
+                 top_from: { match_id: r3[0].id, kind: 'winner' },
+                 bot_from: { match_id: r3[1].id, kind: 'winner' } });
+  return matches;
+}
+
+function gen64Bracket() {
+  const matches = [];
+  const aR1Real = [1, 3, 5, 7].map(i => 'A-R1-M' + i);
+  const aR2     = [1, 2, 3, 4].map(i => 'A-R2-M' + i);
+  const bR1Real = [1, 3, 5, 7].map(i => 'B-R1-M' + i);
+  const bR2     = [1, 2, 3, 4].map(i => 'B-R2-M' + i);
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R1-M' + (i + 1), bracket: '64', round: 1, slot: i, is_bye: false,
+                   top_from: { match_id: aR1Real[i], kind: 'loser' },
+                   bot_from: { match_id: aR2[i], kind: 'loser' } });
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R1-M' + (i + 5), bracket: '64', round: 1, slot: i + 4, is_bye: false,
+                   top_from: { match_id: bR1Real[i], kind: 'loser' },
+                   bot_from: { match_id: bR2[i], kind: 'loser' } });
+  }
+  for (let i = 0; i < 4; i++) {
+    matches.push({ id: '64-R2-M' + (i + 1), bracket: '64', round: 2, slot: i, is_bye: false,
+                   top_from: { match_id: '64-R1-M' + (i * 2 + 1), kind: 'winner' },
+                   bot_from: { match_id: '64-R1-M' + (i * 2 + 2), kind: 'winner' } });
+  }
+  const integ = [
+    ['64-R3-M1', 'A-R3-M1', '64-R2-M1'],
+    ['64-R3-M2', 'A-R3-M2', '64-R2-M2'],
+    ['64-R3-M3', 'B-R3-M1', '64-R2-M3'],
+    ['64-R3-M4', 'B-R3-M2', '64-R2-M4']
+  ];
+  integ.forEach((row, idx) => {
+    const [id, loserSrc, winnerSrc] = row;
+    matches.push({ id: id, bracket: '64', round: 3, slot: idx, is_bye: false,
+                   top_from: { match_id: loserSrc, kind: 'loser' },
+                   bot_from: { match_id: winnerSrc, kind: 'winner' } });
+  });
+  for (let i = 0; i < 2; i++) {
+    matches.push({ id: '64-R4-M' + (i + 1), bracket: '64', round: 4, slot: i, is_bye: false,
+                   top_from: { match_id: '64-R3-M' + (i * 2 + 1), kind: 'winner' },
+                   bot_from: { match_id: '64-R3-M' + (i * 2 + 2), kind: 'winner' } });
+  }
+  matches.push({ id: '64-R5-M1', bracket: '64', round: 5, slot: 0, is_bye: false,
+                 top_from: { match_id: 'A-R4-M1', kind: 'loser' },
+                 bot_from: { match_id: '64-R4-M1', kind: 'winner' } });
+  matches.push({ id: '64-R5-M2', bracket: '64', round: 5, slot: 1, is_bye: false,
+                 top_from: { match_id: 'B-R4-M1', kind: 'loser' },
+                 bot_from: { match_id: '64-R4-M2', kind: 'winner' } });
+  matches.push({ id: '64-R6-M1', bracket: '64', round: 6, slot: 0, is_bye: false,
+                 top_from: { match_id: '64-R5-M1', kind: 'winner' },
+                 bot_from: { match_id: '64-R5-M2', kind: 'winner' } });
+  return matches;
+}
+
+function applyTemplateSchedule(matchData) {
+  for (const m of matchData) {
+    const sched = (m.bracket === '64' ? TEMPLATE_SCHEDULES.sixtyfour : TEMPLATE_SCHEDULES.twelve)[m.round - 1];
+    if (sched) { m.day = sched.day; m.time = sched.time; m.payout = sched.payout; }
+  }
+}
+
+function assignMatchNumbers(matchData) {
+  // M# = bracket-position number: bracket A → B → 64, then round, then slot.
+  // Every match (real + bye) gets one. Stable IDs for cross-references.
+  // For BreakOut today: M1..M15 = A, M16..M30 = B, M31..M51 = 64.
+  const bracketOrder = ['A', 'B', '64'];
+  let no = 1;
+  for (const bracket of bracketOrder) {
+    const inBracket = matchData.filter(m => m.bracket === bracket);
+    if (!inBracket.length) continue;
+    const maxRound = Math.max.apply(null, inBracket.map(m => m.round));
+    for (let r = 1; r <= maxRound; r++) {
+      inBracket.filter(m => m.round === r)
+               .sort((a, b) => a.slot - b.slot)
+               .forEach(m => { m.match_no = no++; });
+    }
+  }
+  // play_order = scheduling sequence (which match is played first, etc).
+  // Byes have no play_order. Used by schedules/timetables, not by the
+  // bracket renderer's display.
+  const playSeq = [
+    ['A', 1], ['B', 1], ['A', 2], ['B', 2], ['64', 1],
+    ['A', 3], ['B', 3], ['64', 2], ['64', 3],
+    ['A', 4], ['B', 4], ['64', 4], ['64', 5], ['64', 6]
+  ];
+  let p = 1;
+  for (const pair of playSeq) {
+    matchData.filter(m => m.bracket === pair[0] && m.round === pair[1] && !m.is_bye)
+             .sort((a, b) => a.slot - b.slot)
+             .forEach(m => { m.play_order = p++; });
+  }
+}
+
+function assignTableNumbers(matchData) {
+  for (const bracket of ['A', 'B', '64']) {
+    for (let r = 1; r <= 6; r++) {
+      const ms = matchData.filter(m => m.bracket === bracket && m.round === r && !m.is_bye)
+                          .sort((a, b) => a.slot - b.slot);
+      ms.forEach((m, idx) => { m.table_no = idx + 1; });
+    }
+  }
+}
+
+function defaultSeedAssignments(teams) {
+  const sa = [];
+  teams.slice(0, 12).forEach((t, i)  => sa.push({ bracket: 'A', seed: i + 1, team_number: t.number }));
+  teams.slice(12, 24).forEach((t, i) => sa.push({ bracket: 'B', seed: i + 1, team_number: t.number }));
+  return sa;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   RECONSTRUCT — build the in-memory tournament graph from template data
+   + seed assignments + teams catalog. Output shape matches what the old
+   inline build*() functions produced, so the renderer is unchanged.
+   ════════════════════════════════════════════════════════════════════════ */
+function reconstructTournament(matchData, seedAssignments, teamsByNumber) {
+  const teamByBracketSeed = {};
+  for (const sa of seedAssignments) {
+    const t = teamsByNumber[sa.team_number];
+    if (t) teamByBracketSeed[sa.bracket + '.' + sa.seed] = Object.assign({}, t, { seed: sa.seed });
+  }
+  const resolveTeam = (bracket, seed) => seed == null ? null : (teamByBracketSeed[bracket + '.' + seed] || null);
+  const matchById = {};
+  const allMatches = [];
+  for (const md of matchData) {
+    const m = {
+      id: md.id, bracket: md.bracket, round: md.round, slot: md.slot,
+      bye: !!md.is_bye,
+      top: resolveTeam(md.bracket, md.top_seed),
+      bottom: resolveTeam(md.bracket, md.bot_seed),
+      topFromMatch: null, botFromMatch: null,
+      topFromMatchLoser: null, botFromMatchLoser: null,
+      winner: null, loser: null, topWins: null,
+      // Staff-recorded result lives in winner_side ('top' | 'bot' | null).
+      // Resolved into winner/loser/topWins by resolveTournament().
+      winner_side: md.winner_side || null,
+      globalNo: md.match_no || null,
+      scheduled_at: md.scheduled_at || null,
+      day: md.day, time: md.time, payout: md.payout, table_no: md.table_no,
+      tables_in_parallel: md.tables_in_parallel || 1,
+      // Carry raw wiring references forward so the wiring engine can run
+      // straight off `t.all` (no double-bookkeeping with matchData).
+      top_from: md.top_from || null,
+      bot_from: md.bot_from || null,
+      top_seed: md.top_seed != null ? md.top_seed : null,
+      bot_seed: md.bot_seed != null ? md.bot_seed : null,
+      is_qualifier: !!md.is_qualifier,
+      match_no: md.match_no || null
+    };
+    if (m.bye && m.top) { m.winner = m.top; m.topWins = true; }
+    matchById[m.id] = m;
+    allMatches.push(m);
+  }
+  for (const md of matchData) {
+    const m = matchById[md.id];
+    if (md.top_from) {
+      const ref = matchById[md.top_from.match_id];
+      if (md.top_from.kind === 'winner') m.topFromMatch = ref;
+      else if (md.top_from.kind === 'loser') m.topFromMatchLoser = ref;
+    }
+    if (md.bot_from) {
+      const ref = matchById[md.bot_from.match_id];
+      if (md.bot_from.kind === 'winner') m.botFromMatch = ref;
+      else if (md.bot_from.kind === 'loser') m.botFromMatchLoser = ref;
+    }
+  }
+  return {
+    A:   { label: 'A',  matches: allMatches.filter(m => m.bracket === 'A')  },
+    B:   { label: 'B',  matches: allMatches.filter(m => m.bracket === 'B')  },
+    T64: { label: '64', matches: allMatches.filter(m => m.bracket === '64') },
+    all: allMatches
+  };
+}
+
+function resolveTournament(t) {
+  // Walk matches in play order. For each match:
+  //   1) Resolve top/bottom from upstream feeders if not already set.
+  //   2) If staff recorded a winner (winner_side), apply it.
+  //   3) Otherwise the match stays TBD until staff records a winner.
+  const ordered = t.all.filter(m => !m.bye && m.globalNo != null)
+                        .slice().sort((a, b) => a.globalNo - b.globalNo);
+  for (const m of ordered) {
+    if (m.top == null) {
+      if (m.topFromMatch) m.top = m.topFromMatch.winner;
+      else if (m.topFromMatchLoser) m.top = m.topFromMatchLoser.loser;
+    }
+    if (m.bottom == null) {
+      if (m.botFromMatch) m.bottom = m.botFromMatch.winner;
+      else if (m.botFromMatchLoser) m.bottom = m.botFromMatchLoser.loser;
+    }
+    if (m.winner_side === 'top' && m.top) {
+      m.winner = m.top; m.loser = m.bottom; m.topWins = true;
+    } else if (m.winner_side === 'bot' && m.bottom) {
+      m.winner = m.bottom; m.loser = m.top; m.topWins = false;
+    }
+  }
+  for (const m of t.all) {
+    if (m.topFromMatchLoser) m.topFromMatchLoser.loserDropTo = m;
+    if (m.botFromMatchLoser) m.botFromMatchLoser.loserDropTo = m;
+    if (m.topFromMatch) m.topFromMatch.winnerAdvancesTo = m;
+    if (m.botFromMatch) m.botFromMatch.winnerAdvancesTo = m;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   TOURNAMENT LOAD — prefer the active row in breakout.tournaments. Falls
+   back to inline template generation when no row exists yet so the bracket
+   structure stays visible (all matches show TBD until results are recorded).
+   ════════════════════════════════════════════════════════════════════════ */
+/* Slug-aware tournament lookup. If ?t=<slug> is present, pull that
+ * specific tournament regardless of its status. Otherwise pick the most
+ * recently created live tournament. */
+function tournamentQueryString(selectClause) {
+  const sel = selectClause || '*';
+  if (URL_SLUG) {
+    return 'tournaments?slug=eq.' + encodeURIComponent(URL_SLUG) + '&select=' + sel + '&limit=1';
+  }
+  return 'tournaments?status=eq.live&order=created_at.desc&limit=1&select=' + sel;
+}
+
+async function loadActiveTournament() {
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/' + tournamentQueryString('*'), { headers: HEADERS_DB });
+    if (!r.ok) return null;
+    const arr = await r.json();
+    const row = arr && arr[0] ? arr[0] : null;
+    if (row && row.updated_at) _lastTournamentUpdatedAt = row.updated_at;
+    return row;
+  } catch (e) { return null; }
+}
+
+async function buildTournament() {
+  // No team-count gate. The bracket structure comes from the template
+  // (or the DB row); teams are seeded into it where they exist. With
+  // 0 teams every slot resolves to TBD; with a partial roster the
+  // unfilled seeds show TBD. The bracket always renders.
+  const dbRow = await loadActiveTournament();
+  // 1.00: load teams scoped to THIS tournament (per-tournament isolation).
+  // No tournament row → no teams loaded; renderer shows the empty template.
+  await loadTeams(dbRow ? dbRow.id : null);
+  let matchData, seedAssignments, config;
+  if (dbRow && Array.isArray(dbRow.matches) && dbRow.matches.length) {
+    matchData = dbRow.matches;
+    // 1.00: respect empty seed_assignments. The previous fallback to
+    // defaultSeedAssignments(_teams) auto-filled the first 24 catalog
+    // teams in catalog order, which silently broke the Live Draw
+    // (clearing seeds to start a random draw made all teams "reappear").
+    seedAssignments = Array.isArray(dbRow.seed_assignments) ? dbRow.seed_assignments : [];
+    config = dbRow.config || {};
+    _tournamentRow = dbRow;
+  } else {
+    // No DB row at all → template preview with no teams. Used to default
+    // to defaultSeedAssignments(_teams) which made a brand-new visitor
+    // see Bandits → Just A Team auto-seeded; same Live Draw problem.
+    matchData = templateModSe12_12To64();
+    seedAssignments = [];
+    config = {};
+    _tournamentRow = null;
+  }
+  if (config.bracketChampText) TOURNAMENT_TEXT.bracketChampText = config.bracketChampText;
+  if (config.championText)     TOURNAMENT_TEXT.championText     = config.championText;
+  // Per-bracket display name override. Keys: A, B, T64. Falls back to the
+  // hardcoded defaults if a key is absent or blank.
+  const bn = config.bracketNames || {};
+  TOURNAMENT_TEXT.bracketNameA   = (bn.A   || '').trim() || 'Bracket A';
+  TOURNAMENT_TEXT.bracketNameB   = (bn.B   || '').trim() || 'Bracket B';
+  TOURNAMENT_TEXT.bracketNameT64 = (bn.T64 || '').trim() || '64-Team';
+  const teamsByNumber = Object.fromEntries(_teams.map(t => [t.number, t]));
+  const tData = reconstructTournament(matchData, seedAssignments, teamsByNumber);
+  tData.matchData = matchData;            // raw template/DB data — staff writes mutate this
+  resolveTournament(tData);
+  return tData;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   RENDER — SVG-based
+   Every bracket is one inline <svg> with a fixed viewBox in design units.
+   The viewBox is the secret to print-fit: the browser scales it to whatever
+   container size we give the svg, so @media print needs no zoom tricks.
+
+   Design units inside the viewBox:
+     • Card:   240w × 136h
+     • Slot:   152 vertical units, 8 slots per bracket
+     • Round:  card-w + 110 gap between columns
+     • Cards as <foreignObject> so HTML/CSS still drives card visuals.
+     • Connectors / cross-source labels / round headers / dividers as
+       native SVG, sharing the card coordinate system.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Design constants — single source of truth for every render-side number.
+ * If the on-screen rendering ever needs to change card dimensions, update
+ * these and everything (positioning, connectors, viewBox) follows. */
+const SVG = {
+  CARD_W: 240,
+  CARD_H: 136,
+  ROUND_GAP: 110,
+  SLOT_H: 152,
+  SLOTS: 8,
+  HEADER_H: 44,           // round-header band (tall enough to fit round name + "N TABLES" pill + underline without collision)
+  HEADER_TEXT_Y: 18,      // baseline for round-name text (y = TOP_PAD + 18 = 30)
+  HEADER_PILL_Y: 30,      // baseline for "N tables" pill text (rect spans y = 33..46)
+  LEFT_PAD: 110,          // left gutter — gives cross-source labels room
+  RIGHT_PAD: 8,
+  TOP_PAD: 12,            // small gap above header band
+  CHAMP_BAND_H: 60,       // vertical room below cards for the champ pill
+  BRACKET_COLORS: {
+    A:  '#ea002a',
+    B:  '#0031a1',
+    '64': '#6b7280'
+  }
+};
+
+function bracketLayout(rounds) {
+  const NR = rounds.length;
+  const w = SVG.LEFT_PAD + NR * SVG.CARD_W + (NR - 1) * SVG.ROUND_GAP + SVG.RIGHT_PAD;
+  const h = SVG.TOP_PAD + SVG.HEADER_H + SVG.SLOTS * SVG.SLOT_H + SVG.CHAMP_BAND_H;
+  return { w, h, rounds: NR };
+}
+
+function roundXLeft(roundIdx) {
+  return SVG.LEFT_PAD + roundIdx * (SVG.CARD_W + SVG.ROUND_GAP);
+}
+function roundXCenter(roundIdx) {
+  return roundXLeft(roundIdx) + SVG.CARD_W / 2;
+}
+function matchYCenter(m) {
+  return SVG.TOP_PAD + SVG.HEADER_H + matchYUnits(m) * SVG.SLOT_H;
+}
+function matchTopY(m) {
+  return matchYCenter(m) - SVG.CARD_H / 2;
+}
+
+function bracketSectionHtml(bracket, kind, rounds, opts) {
+  const sectionLabel = opts.label;
+  const pillClass = opts.pillClass;
+  const layout = bracketLayout(rounds);
+  const stripeColor = SVG.BRACKET_COLORS[bracket.label] || '#94a3b8';
+
+  // 1) Background scaffolding: round headers + dividers
+  let svgInner = '';
+
+  // Round headers + per-round underline + round divider lines
+  for (let i = 0; i < rounds.length; i++) {
+    const cx = roundXCenter(i);
+    const xL = roundXLeft(i);
+    const xR = xL + SVG.CARD_W;
+    const real = rounds[i].filter(m => !m.bye);
+    const tip = real[0] && real[0].tables_in_parallel ? real[0].tables_in_parallel : 1;
+    svgInner += '<text class="round-name" x="' + cx + '" y="' + (SVG.TOP_PAD + SVG.HEADER_TEXT_Y)
+      + '" text-anchor="middle" dominant-baseline="alphabetic">Round ' + (i + 1) + '</text>';
+    if (tip > 1) {
+      const text = tip + ' TABLES';
+      const tw = text.length * 6 + 14;
+      svgInner += '<rect class="round-tables-bg" x="' + (cx - tw / 2) + '" y="' + (SVG.TOP_PAD + SVG.HEADER_PILL_Y - 9)
+        + '" width="' + tw + '" height="13" rx="6.5"/>'
+        + '<text class="round-tables" x="' + cx + '" y="' + (SVG.TOP_PAD + SVG.HEADER_PILL_Y)
+        + '" text-anchor="middle" dominant-baseline="alphabetic">' + esc(text) + '</text>';
+    }
+    // Header underline beneath each round's title
+    svgInner += '<line class="round-header-underline" x1="' + xL + '" y1="' + (SVG.TOP_PAD + SVG.HEADER_H - 6)
+      + '" x2="' + xR + '" y2="' + (SVG.TOP_PAD + SVG.HEADER_H - 6) + '"/>';
+    // Dashed divider in the gap to the next round
+    if (i > 0) {
+      const dividerX = xL - SVG.ROUND_GAP / 2;
+      const topY = SVG.TOP_PAD + SVG.HEADER_H;
+      const botY = SVG.TOP_PAD + SVG.HEADER_H + SVG.SLOTS * SVG.SLOT_H;
+      svgInner += '<line class="round-divider" x1="' + dividerX + '" y1="' + topY
+        + '" x2="' + dividerX + '" y2="' + botY + '"/>';
+    }
+  }
+
+  // 2) Connectors layer placeholder — we'll inject paths after first render
+  //    so each path can attach correct attributes.
+  svgInner += '<g class="connectors-layer"></g>';
+  svgInner += '<g class="cross-source-layer"></g>';
+
+  // 3) Card foreignObjects + bracket-champ foreignObjects per match
+  for (let i = 0; i < rounds.length; i++) {
+    const isFinal = i === rounds.length - 1;
+    const xL = roundXLeft(i);
+    for (const m of rounds[i]) {
+      const y = matchTopY(m);
+      const cardHtml = m.bye ? byeMatchHtml(m, stripeColor) : matchHtml(m, isFinal, stripeColor);
+      svgInner += '<foreignObject class="card-fo" data-match-fo="' + esc(m.id)
+        + '" x="' + xL + '" y="' + y
+        + '" width="' + SVG.CARD_W + '" height="' + SVG.CARD_H + '">'
+        + '<div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%">'
+        + cardHtml
+        + '</div></foreignObject>';
+      if (isFinal && !m.bye) {
+        const yCenter = matchYCenter(m);
+        const champCx = roundXCenter(i);
+        // Foreign-object enclosure for the champ pill. Sized with vertical
+        // headroom so the bounce + scale-up animation (translateY -4px +
+        // scale 1.05) AND the box-shadow halo around the pill don't clip
+        // against the FO bounds. The pill stays vertically centered inside
+        // the FO via flex, so we move the FO up by half the extra padding
+        // to keep the pill's visual position the same.
+        const PILL_W = 260;
+        const PILL_VISIBLE_H = 50;  // unanimated pill height (legacy reference)
+        const PILL_PAD = 20;        // extra room on each side for animation + shadow
+        const PILL_H = PILL_VISIBLE_H + PILL_PAD * 2;
+        const champY = (yCenter + SVG.CARD_H / 2 + 6) - PILL_PAD;
+        svgInner += '<foreignObject class="champ-fo" data-match-fo="' + esc(m.id) + '-champ"'
+          + ' x="' + (champCx - PILL_W / 2) + '" y="' + champY
+          + '" width="' + PILL_W + '" height="' + PILL_H
+          + '"><div xmlns="http://www.w3.org/1999/xhtml" '
+          + 'style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:visible">'
+          + '<div class="bracket-champ-big">&#x1F3C6; ' + esc(TOURNAMENT_TEXT.bracketChampText) + '</div>'
+          + '</div></foreignObject>';
+      }
+    }
+  }
+
+  // Outer svg + container
+  const svg = '<svg class="bracket-svg" xmlns="http://www.w3.org/2000/svg" '
+    + 'data-wrap="' + bracket.label + '" '
+    + 'viewBox="0 0 ' + layout.w + ' ' + layout.h + '" '
+    + 'preserveAspectRatio="xMinYMin meet" '
+    + 'style="width:' + layout.w + 'px;height:' + layout.h + 'px">'
+    + svgInner + '</svg>';
+
+  return '<div class="bracket-section" data-bracket="' + bracket.label + '" data-design-w="' + layout.w + '" data-design-h="' + layout.h + '">'
+    + '<div class="section-title"><span class="pill ' + pillClass + '">' + esc(sectionLabel) + '</span></div>'
+    + '<div class="viewport"><div class="bracket-wrap" data-wrap="' + bracket.label + '">'
+    +   svg
+    + '</div></div>'
+    + '</div>';
+}
+
+/* Canonical bracket Y for a match, in slot units.
+ *   12-team modified SE has 4 lanes (slots 0..3).
+ *   64-team has 8 lanes (slots 0..7).
+ *
+ *   Same rule as before: one intra-bracket feeder → align with feeder.
+ *   Two intra-bracket feeders → midpoint of the two. Single --slot-h is
+ *   shared across brackets, so cards are evenly spaced everywhere. */
+function matchYUnits(m) {
+  if (m.bracket === '64') {
+    if (m.round === 1) return m.slot + 0.5;     // 0.5, 1.5, …, 7.5
+    if (m.round === 2) return m.slot * 2 + 1;   // midpoint of R1 pair: 1, 3, 5, 7
+    if (m.round === 3) return m.slot * 2 + 1;   // aligned with R2 feeder
+    if (m.round === 4) return m.slot * 4 + 2;   // midpoint of R3 pair: 2, 6
+    if (m.round === 5) return m.slot * 4 + 2;   // aligned with R4 feeder
+    if (m.round === 6) return 4;                // midpoint of R5 pair
+  } else {
+    // 12-team modified SE rendered as full 16-slot bracket (4 byes shown).
+    if (m.round === 1) return m.slot + 0.5;     // 0.5, 1.5, …, 7.5 (slot = seat-pair index)
+    if (m.round === 2) return m.slot * 2 + 1;   // midpoint of R1 pair: 1, 3, 5, 7
+    if (m.round === 3) return m.slot * 4 + 2;   // midpoint of R2 pair: 2, 6
+    if (m.round === 4) return 4;                // midpoint of R3 pair
+  }
+  return 0.5;
+}
+function bracketSlotsFor(_bracket) {
+  // 12-team-as-16 and 64-team both use 8 lanes in R1 → 8 slots per bracket.
+  return 8;
+}
+
+function matchHtml(m, isFinalOfBracket, stripeColor) {
+  if (m.bye) return byeMatchHtml(m, stripeColor);
+  const tnum = m.globalNo ? 'M' + m.globalNo : '—';
+  const topWin = m.topWins === true;
+  const botWin = m.topWins === false;
+  // table_no may be a number, "5", or "5,6" (2-table matches). Render
+  // as "Tables 5+6" when multi-, "Table 5" when single.
+  let tableLabel = '';
+  if (m.table_no != null && m.table_no !== '') {
+    const tArr = String(m.table_no).split(',').map(s => s.trim()).filter(Boolean);
+    tableLabel = (tArr.length > 1 ? 'Tables ' : 'Table ') + tArr.join('+');
+  }
+  // Prefer the canonical scheduled_at (ISO datetime from the picker). Fall
+  // back to legacy m.day / m.time strings so older rows still display.
+  let scheduleDay  = '';
+  let scheduleTime = '';
+  if (m.scheduled_at) {
+    const d = new Date(m.scheduled_at);
+    if (!isNaN(d.getTime())) {
+      scheduleDay  = d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase();
+      scheduleTime = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    }
+  } else {
+    scheduleDay  = m.day  ? m.day.slice(0, 3).toUpperCase() : '';
+    scheduleTime = m.time || '';
+  }
+  const schedulePay  = m.payout ? fmtMoney(m.payout) : '';
+
+  // Destination chips — pills in the top-right that link to the linked match.
+  // For bracket finals the Bracket Champ pill is rendered OUTSIDE the card
+  // (see roundHtml) so it can be big and prominent. No in-card chip for finals.
+  let winnerChip = '';
+  if (m.winnerAdvancesTo) {
+    winnerChip = '<a class="dest-chip win" data-jump="' + m.winnerAdvancesTo.globalNo
+      + '" href="#m' + m.winnerAdvancesTo.globalNo
+      + '" title="Jump to M' + m.winnerAdvancesTo.globalNo + '">W &rarr; M'
+      + m.winnerAdvancesTo.globalNo + '</a>';
+  }
+
+  let loserChip = '';
+  if (m.loserDropTo) {
+    loserChip = '<a class="dest-chip lose" data-jump="' + m.loserDropTo.globalNo
+      + '" href="#m' + m.loserDropTo.globalNo
+      + '" title="Jump to M' + m.loserDropTo.globalNo + '">L &rarr; M'
+      + m.loserDropTo.globalNo + '</a>';
+  }
+
+  const destinations = winnerChip + loserChip;
+
+  const rows = '<div class="match-rows">'
+    + (m.top    ? renderRow(m.top, topWin)    : tbdRow())
+    + (m.bottom ? renderRow(m.bottom, botWin) : tbdRow())
+    + '</div>';
+
+  // Footer: schedule (day · time · payout) left, table right. One line.
+  const when = (scheduleDay || scheduleTime || schedulePay)
+    ? '<span class="when">'
+      + (scheduleDay  ? '<span class="day">'  + esc(scheduleDay)  + '</span>' : '')
+      + (scheduleTime ? '<span class="time">' + esc(scheduleTime) + '</span>' : '')
+      + (schedulePay  ? '<span class="pay">'  + esc(schedulePay)  + '</span>' : '')
+      + '</span>'
+    : '<span class="when"></span>';
+  const foot = '<div class="match-foot">'
+    +   when
+    +   '<span class="table">' + esc(tableLabel) + '</span>'
+    + '</div>';
+
+  const idAttr = m.globalNo ? ' id="m' + m.globalNo + '"' : '';
+  const stripeStyle = stripeColor ? ' style="--stripe:' + stripeColor + '"' : '';
+  const finalCls = isFinalOfBracket ? ' is-final-of-bracket' : '';
+  return '<div class="match' + finalCls + '" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '"' + idAttr + stripeStyle + '>'
+    + '<div class="match-stripe"></div>'
+    + '<div class="match-top">'
+    +   '<span class="mno">' + esc(tnum) + '</span>'
+    +   '<span class="destinations">' + destinations + '</span>'
+    + '</div>'
+    + rows
+    + foot
+    + '</div>';
+}
+
+function byeMatchHtml(m, stripeColor) {
+  const team = m.top;
+  const mnoLabel = m.globalNo ? 'M' + m.globalNo : '—';
+  let advanceChip = '';
+  if (m.winnerAdvancesTo) {
+    advanceChip = '<a class="dest-chip win" data-jump="' + m.winnerAdvancesTo.globalNo
+      + '" href="#m' + m.winnerAdvancesTo.globalNo
+      + '" title="Auto-advances to M' + m.winnerAdvancesTo.globalNo + '">&rarr; M'
+      + m.winnerAdvancesTo.globalNo + '</a>';
+  }
+  const idAttr = m.globalNo ? ' id="m' + m.globalNo + '"' : '';
+  const stripeStyle = stripeColor ? ' style="--stripe:' + stripeColor + '"' : '';
+  // The advancing slot — the seeded team, or TBD when no team is
+  // assigned yet (empty / partial roster). Guard every team.* access:
+  // m.top is null until a team is seeded into this bye.
+  const advancingRow = team
+    ? '<div class="match-row winner" data-team="' + esc((team.name || '').toLowerCase()) + '" data-team-num="' + team.number + '">'
+      +   '<span class="seed">' + esc(team.seed) + '</span>'
+      +   '<span class="team-num">' + pad4(team.number) + '</span>'
+      +   '<span class="name" title="' + esc(team.name) + '">' + esc(team.name) + '</span>'
+      +   '<span class="trophy" aria-label="Advances">&#x21E2;</span>'
+      + '</div>'
+    : '<div class="match-row">'
+      +   '<span class="seed">&mdash;</span>'
+      +   '<span class="team-num">&mdash;</span>'
+      +   '<span class="name" style="color:var(--muted);font-style:italic">TBD</span>'
+      +   '<span class="trophy"></span>'
+      + '</div>';
+  return '<div class="match bye" data-match-id="' + m.id + '" data-global-no="' + (m.globalNo || '') + '"' + idAttr + stripeStyle + '>'
+    + '<div class="match-stripe"></div>'
+    + '<div class="match-top">'
+    +   '<span class="mno">' + esc(mnoLabel) + '<span class="bye-tag">BYE</span></span>'
+    +   '<span class="destinations">' + advanceChip + '</span>'
+    + '</div>'
+    + '<div class="match-rows">'
+    +   advancingRow
+    +   '<div class="match-row bye-row">'
+    +     '<span class="seed">&mdash;</span>'
+    +     '<span class="team-num">&mdash;</span>'
+    +     '<span class="name">BYE</span>'
+    +     '<span class="trophy"></span>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="match-foot"><span class="when"></span><span class="table"></span></div>'
+    + '</div>';
+}
+
+function tbdRow() {
+  return '<div class="match-row"><span class="seed">—</span><span class="team-num">—</span>'
+       + '<span class="name" style="color:var(--muted);font-style:italic">TBD</span>'
+       + '<span class="trophy"></span></div>';
+}
+
+function renderRow(team, isWinner) {
+  const cls = 'match-row ' + (isWinner ? 'winner' : 'loser');
+  return '<div class="' + cls + '" data-team="' + esc((team.name || '').toLowerCase()) + '" data-team-num="' + team.number + '">'
+    + '<span class="seed">' + esc(team.seed) + '</span>'
+    + '<span class="team-num" title="Team number">' + pad4(team.number) + '</span>'
+    + '<span class="name" title="' + esc(team.name) + '">' + esc(team.name) + '</span>'
+    + '<span class="trophy" aria-label="Winner">&#x1F3C6;</span>'
+    + '</div>';
+}
+
+/* Connectors: drawn inside the bracket-svg in design-unit coordinates.
+ *  Each connector traces one TEAM's advancement path. For every match m
+ *  and every intra-bracket feeder f, draw a line from:
+ *    • feeder's WINNER ROW (right edge)       — where the team comes from
+ *    • to downstream's SPECIFIC ROW (left)    — where that team appears
+ *  Two-feeder downstream → two independent lines, top feeder → top row,
+ *  bot feeder → bot row. Right-angle Z routing; flat horizontal when Ys
+ *  match. Cross-bracket loser drops are text annotations only.
+ *
+ *  Coordinates are computed from match metadata, NOT from DOM measurement.
+ *  This is the SVG win: paths and cards share the SAME coordinate space, so
+ *  there's no measure-then-draw race. */
+const ROW_TOP_OFFSET_FROM_CARD = 56;   // ~ top row's Y inside card (header band + half rowH)
+const ROW_BOT_OFFSET_FROM_CARD = 96;   // ~ bottom row's Y inside card
+
+function cellGeomFor(m) {
+  // Pull rounds from match metadata. For each bracket the match's
+  // round index is m.round (1-based). Convert to design coordinates.
+  const roundIdx = m.round - 1;
+  const xL = roundXLeft(roundIdx);
+  const top = matchTopY(m);
+  return {
+    left:  xL,
+    right: xL + SVG.CARD_W,
+    cy:    top + SVG.CARD_H / 2,
+    topRowY: top + ROW_TOP_OFFSET_FROM_CARD,
+    botRowY: top + ROW_BOT_OFFSET_FROM_CARD
+  };
+}
+
+function drawConnectorsFor(wrap, matches) {
+  const svgEl = wrap.querySelector('svg.bracket-svg');
+  if (!svgEl) return;
+  const connLayer = svgEl.querySelector('g.connectors-layer');
+  const crossLayer = svgEl.querySelector('g.cross-source-layer');
+  if (!connLayer || !crossLayer) return;
+  connLayer.innerHTML = '';
+  crossLayer.innerHTML = '';
+  const STROKE = '#94a3b8';
+  const STROKE_W = '2';
+
+  const drawPath = (d) => {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', STROKE);
+    p.setAttribute('stroke-width', STROKE_W);
+    p.setAttribute('stroke-linejoin', 'round');
+    p.setAttribute('stroke-linecap', 'round');
+    connLayer.appendChild(p);
+  };
+
+  for (const m of matches) {
+    const down = cellGeomFor(m);
+    const feeders = [];
+    if (m.topFromMatch) feeders.push({ feeder: m.topFromMatch, side: 'top' });
+    if (m.botFromMatch) feeders.push({ feeder: m.botFromMatch, side: 'bot' });
+
+    // Intra-bracket connectors (drawn solid).
+    for (const { feeder, side } of feeders) {
+      const f = cellGeomFor(feeder);
+      let y1 = f.cy;
+      if (feeder.topWins === true)  y1 = f.topRowY;
+      if (feeder.topWins === false) y1 = f.botRowY;
+      const y2 = side === 'top' ? down.topRowY : down.botRowY;
+      const x1 = f.right, x2 = down.left;
+      const xMid = (x1 + x2) / 2;
+      if (Math.abs(y1 - y2) < 0.5) {
+        drawPath('M ' + x1 + ' ' + y1 + ' L ' + x2 + ' ' + y2);
+      } else {
+        drawPath('M ' + x1 + ' ' + y1 + ' L ' + xMid + ' ' + y1
+               + ' L ' + xMid + ' ' + y2 + ' L ' + x2 + ' ' + y2);
+      }
+    }
+
+    // Cross-bracket source stubs.
+    const intraRanges = intraFeederYRanges(m);
+    if (m.topFromMatchLoser) {
+      const targetNo = m.topFromMatchLoser.globalNo;
+      const label = 'L of M' + targetNo;
+      if (inAnyRange(down.topRowY, intraRanges))
+        drawCrossSourceL(crossLayer, down.left, down.topRowY, 'top', label, targetNo);
+      else
+        drawCrossSource(crossLayer, down.left, down.topRowY, label, targetNo);
+    }
+    if (m.botFromMatchLoser) {
+      const targetNo = m.botFromMatchLoser.globalNo;
+      const label = 'L of M' + targetNo;
+      if (inAnyRange(down.botRowY, intraRanges))
+        drawCrossSourceL(crossLayer, down.left, down.botRowY, 'bot', label, targetNo);
+      else
+        drawCrossSource(crossLayer, down.left, down.botRowY, label, targetNo);
+    }
+  }
+}
+
+function intraFeederYRanges(m) {
+  const ranges = [];
+  const down = cellGeomFor(m);
+  const addRange = (feeder, targetY) => {
+    const f = cellGeomFor(feeder);
+    let y1 = f.cy;
+    if (feeder.topWins === true)  y1 = f.topRowY;
+    if (feeder.topWins === false) y1 = f.botRowY;
+    ranges.push([Math.min(y1, targetY), Math.max(y1, targetY)]);
+  };
+  if (m.topFromMatch) addRange(m.topFromMatch, down.topRowY);
+  if (m.botFromMatch) addRange(m.botFromMatch, down.botRowY);
+  return ranges;
+}
+
+function inAnyRange(y, ranges) {
+  const PAD = 3;  // generous so labels never visually graze the connector
+  for (const [lo, hi] of ranges) {
+    if (y >= lo - PAD && y <= hi + PAD) return true;
+  }
+  return false;
+}
+
+/* Straight horizontal stub + label at the target row's Y. Used when the
+ * downstream match has NO intra-bracket feeder (e.g. 64-team R1, where both
+ * rows are cross-bracket loser drops, so there's no Z-path to collide with).
+ * jumpToNo (optional): if present, the label becomes a clickable hyperlink
+ * to that match's global match number. */
+function drawCrossSource(svg, x, y, label, jumpToNo) {
+  appendCrossPath(svg, 'M ' + (x - 22) + ' ' + y + ' L ' + x + ' ' + y);
+  appendCrossLabel(svg, x - 26, y, label, jumpToNo);
+}
+
+/* L-shaped variant. Label parks OUTSIDE the target row (just above for
+ * top targets, just below for bot targets), and the dashed path bends
+ * INTO the row from outside. */
+function drawCrossSourceL(svg, x, rowY, side, label, jumpToNo) {
+  const STUB = 22;
+  const OFFSET = 14;
+  const VERT_X = x - 10;
+  const labelY = side === 'top' ? rowY - OFFSET : rowY + OFFSET;
+  const d = 'M ' + (x - STUB) + ' ' + labelY
+        + ' L ' + VERT_X + ' ' + labelY
+        + ' L ' + VERT_X + ' ' + rowY
+        + ' L ' + x + ' ' + rowY;
+  appendCrossPath(svg, d);
+  appendCrossLabel(svg, x - 26, labelY, label, jumpToNo);
+}
+
+function appendCrossPath(svg, d) {
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d);
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', '#b45309');
+  p.setAttribute('stroke-width', '1.5');
+  p.setAttribute('stroke-dasharray', '3 3');
+  p.setAttribute('stroke-linecap', 'round');
+  p.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(p);
+}
+
+function appendCrossLabel(svg, x, y, label, jumpToNo) {
+  const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  t.setAttribute('x', x);
+  t.setAttribute('y', y);
+  t.setAttribute('text-anchor', 'end');
+  t.setAttribute('dominant-baseline', 'middle');
+  t.setAttribute('fill', '#b45309');
+  t.setAttribute('font-size', '10.5');
+  t.setAttribute('font-weight', '800');
+  t.setAttribute('font-family', 'system-ui, -apple-system, "Segoe UI", sans-serif');
+  t.setAttribute('letter-spacing', '0.04em');
+  t.textContent = label;
+  if (jumpToNo) {
+    t.setAttribute('data-jump', jumpToNo);
+    t.setAttribute('class', 'cross-source-link');
+    t.setAttribute('title', 'Jump to M' + jumpToNo);
+  }
+  svg.appendChild(t);
+}
+function cssEscape(s) { return String(s).replace(/(["\\])/g, '\\$1'); }
+
+/* Populate the hero section (tournament name, dates, venue, status). Called
+ * after the active tournament loads and after any live re-fetch. Hides the
+ * hero entirely when no DB row is loaded (inline-template fallback). */
+function renderHero() {
+  const hero = document.getElementById('tournamentHero');
+  if (!hero) return;
+  const t = _tournamentRow;
+  if (!t || !t.name) { hero.hidden = true; return; }
+  hero.hidden = false;
+  document.getElementById('tournamentName').textContent = t.name;
+
+  // Metadata line: <date range> · <venue>
+  const parts = [];
+  const fmtDate = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso + 'T12:00:00');
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  };
+  const startStr = fmtDate(t.start_date);
+  const endStr   = fmtDate(t.end_date);
+  if (startStr && endStr && startStr !== endStr) parts.push(startStr + ' &rarr; ' + endStr);
+  else if (startStr) parts.push(startStr);
+  if (t.venue_name) parts.push(esc(t.venue_name));
+  document.getElementById('tournamentMeta').innerHTML = parts.join('<span class="sep">·</span>');
+
+  // Live-status badge near the title
+  const statusEl = document.getElementById('tournamentHeroStatus');
+  if (t.status === 'live') {
+    statusEl.hidden = false;
+    statusEl.innerHTML = '<span class="pulse"></span> LIVE';
+  } else if (t.status === 'completed') {
+    statusEl.hidden = false;
+    statusEl.style.background = 'rgba(0,49,161,0.10)';
+    statusEl.style.color = 'var(--spm-accent)';
+    statusEl.textContent = 'COMPLETED';
+  } else {
+    statusEl.hidden = true;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   WIRING-DRIVEN ENGINE (preprod, ?engine=wiring opt-in)
+   ─────────────────────────────────────────────────────────────────
+   Engine v0.4 — validated against mse-32-to-8 and mod-se-12-12-to-64
+   templates (see tools/claude/breakout/validate-engine.mjs). Originated
+   as a parallel-file at Apps/BreakOut/site/staging.html during the
+   overnight 2026-05-24 build; that file was deleted 2026-05-25 once the
+   preprod policy gave the engine a proper home here. These pure
+   functions are the
+   replacement layout brain. They do NOT render — render still goes
+   through bracketSectionHtml + drawConnectorsFor — but they SUPPLY
+   the per-match (column, row) positions, arm classification, and
+   terminal flags that the renderer needs.
+
+   Why feature-flagged: production's renderTournament assumes hardcoded
+   A/B/T64 bracket structure with hardcoded round counts. Swapping to
+   wiring-driven detection has to be validated against every live
+   tournament without breaking any of them. URL param `?engine=wiring`
+   is the smoke-test escape hatch; once smoke-test passes, promote.sh
+   collapses preprod -> prod and the flag becomes the default.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Classify each match into one of three arms: 'center' (R1), 'W'
+   (winners' arm), or 'L' (losers'/consolation arm). Rules:
+     • Round 1 → 'center'
+     • Round N ≥ 2 → 'L' if ANY input has kind=='loser' OR the source
+       match is already classified as 'L'. Otherwise 'W'. */
+function wiringDetectArms(matches) {
+  const byId = Object.fromEntries(matches.map(m => [m.id, m]));
+  const arms = {};
+  const byRound = {};
+  for (const m of matches) (byRound[m.round] = byRound[m.round] || []).push(m);
+  const rounds = Object.keys(byRound).map(Number).sort((a, b) => a - b);
+  for (const r of rounds) {
+    for (const m of byRound[r]) {
+      if (r === 1) { arms[m.id] = 'center'; continue; }
+      const inputs = [m.top_from, m.bot_from].filter(Boolean);
+      // Cross-bracket inputs describe where a team came from, not this
+      // bracket's internal flow. Filter them out before arm classification.
+      const sameBracketInputs = inputs.filter(inp => byId[inp.match_id]);
+
+      // Rule 1: any SAME-BRACKET loser-kind input → L (consolation flow
+      // within this bracket). Cross-bracket loser-kinds (e.g. 64.R3's top
+      // taking A.R3's loser) describe team origin, not L-arm wiring.
+      if (sameBracketInputs.some(inp => inp.kind === 'loser')) {
+        arms[m.id] = 'L';
+        continue;
+      }
+
+      // Rule 2a: no same-bracket inputs at all (pure cross-bracket integration
+      // rounds like 12-12-64's 64.R1 / R3 / R5) → default W.
+      if (sameBracketInputs.length === 0) {
+        arms[m.id] = 'W';
+        continue;
+      }
+
+      // Rule 2b: all same-bracket inputs are winner-kind. If ANY same-bracket
+      // source is W or center → this match is W. Only fall to L when every
+      // same-bracket source is also L (a pure consolation chain like 32→8's
+      // R4_L). Integration rounds like 48→8's R4 (top from W-arm R3 + bot from
+      // L-arm L_R3, both winner-kind) correctly land on W via this rule.
+      let hasNonL = false;
+      for (const inp of sameBracketInputs) {
+        if (arms[byId[inp.match_id].id] !== 'L') { hasNonL = true; break; }
+      }
+      arms[m.id] = hasNonL ? 'W' : 'L';
+    }
+  }
+  return arms;
+}
+
+/* Terminal = qualifier. Match is terminal if is_qualifier===true OR
+   nothing downstream references it (no other match's top_from/bot_from
+   points back). Used to drive the 🏆 QUALIFIED badge + the per-bracket
+   qualifier header band. */
+function wiringDetectTerminals(matches) {
+  const referenced = new Set();
+  for (const m of matches) {
+    if (m.top_from) referenced.add(m.top_from.match_id);
+    if (m.bot_from) referenced.add(m.bot_from.match_id);
+  }
+  const terminal = {};
+  for (const m of matches) {
+    terminal[m.id] = !!m.is_qualifier || !referenced.has(m.id);
+  }
+  return terminal;
+}
+
+/* Compute (col, row) for each match.
+     col = ±(round-1), sign by arm; center (R1) = 0
+     row = R1 stacks linearly by slot; non-R1 averages same-arm inputs
+   Cross-arm inputs (loser drops) influence label-rendering but NOT
+   the Y position — otherwise W-arm losers pull L-arm matches into a
+   crooked layout. */
+function wiringComputePositions(matches, arms) {
+  const byId = Object.fromEntries(matches.map(m => [m.id, m]));
+  const pos = {};
+  const r1 = matches.filter(m => m.round === 1).sort((a, b) => a.slot - b.slot);
+  r1.forEach((m, i) => { pos[m.id] = { col: 0, row: i }; });
+  const nonR1 = matches.filter(m => m.round !== 1)
+    .sort((a, b) => a.round - b.round || a.slot - b.slot);
+  for (const m of nonR1) {
+    const arm = arms[m.id];
+    const col = (arm === 'L' ? -1 : 1) * (m.round - 1);
+    const inputs = [m.top_from, m.bot_from].filter(Boolean);
+    const sameArmRows = inputs.map(inp => {
+      const src = byId[inp.match_id];
+      if (!src) return null;
+      const srcArm = arms[src.id];
+      if (srcArm === 'center' || srcArm === arm) {
+        return pos[src.id] ? pos[src.id].row : null;
+      }
+      return null;
+    }).filter(r => r !== null);
+    let row;
+    if      (sameArmRows.length === 2) row = (sameArmRows[0] + sameArmRows[1]) / 2;
+    else if (sameArmRows.length === 1) row = sameArmRows[0];
+    else                               row = m.slot;
+    pos[m.id] = { col, row };
+  }
+  return pos;
+}
+
+/* Group matches by their `bracket` string so multi-bracket templates
+   (A, B, 64) render as independent sections with independent lane
+   detection. Returns ordered array of { label, matches }. */
+function wiringGroupByBracket(matches) {
+  const by = {};
+  for (const m of matches) {
+    const b = m.bracket || 'default';
+    (by[b] = by[b] || []).push(m);
+  }
+  const rank = (x) => ({ 'A': 1, 'B': 2, '32': 5, '64': 9 }[x] ?? (x.match(/^\d/) ? parseInt(x, 10) + 100 : 200));
+  return Object.keys(by)
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(label => ({ label, matches: by[label] }));
+}
+
+/* Top-level helper used by renderTournament when WIRING_ENGINE is on.
+   Returns per-bracket analysis the renderer can consume. */
+function wiringAnalyzeTournament(allMatches) {
+  return wiringGroupByBracket(allMatches).map(({ label, matches }) => {
+    const arms      = wiringDetectArms(matches);
+    const terminals = wiringDetectTerminals(matches);
+    const positions = wiringComputePositions(matches, arms);
+    const termCount = Object.values(terminals).filter(Boolean).length;
+    return { label, matches, arms, terminals, positions, termCount };
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   WIRING-DRIVEN BRACKET RENDERER
+   ─────────────────────────────────────────────────────────────────
+   Lays out an arbitrary set of matches (any bracket label, any wiring
+   shape) using positions from wiringComputePositions. Produces the
+   same outer DOM shape as bracketSectionHtml so search / highlight /
+   pan / zoom / print all keep working — but the brain is the engine.
+
+   Coordinate system:
+     col 0  = center R1 (cards stacked vertically by slot)
+     col >0 = W arm, one column per round right of R1
+     col <0 = L arm, one column per round left of R1
+     row N  = N * SVG.SLOT_H from the top of the cards band
+
+   Layout output for one bracket:
+     • One <svg> per bracket with foreignObject HTML cards (parity with
+       production's matchHtml output — chips, schedule, table, all
+       reused unchanged via matchHtml(m, isFinal, stripeColor)).
+     • Round headers at the top of each column.
+     • Connectors layer + cross-source layer (same div ids as the
+       classic renderer so drawConnectorsForWiring can paint into them).
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Determine if a bracket label should render a vertical red→blue stripe
+   on its cards (per the 2026-05-25 design decision for the 32-bracket
+   case). Drives the `.match.bracket-32` class hook in CSS. */
+function wiringBracketCssClass(label) {
+  if (label === '32') return 'bracket-32';
+  return '';
+}
+
+/* Compute pixel geometry for a match. Takes the engine's GLOBAL (col,row)
+   pair (signed col: -N to +N, row: minRow to maxRow) plus layout bounds,
+   and normalizes to local 0-based pixel coords. */
+function wiringCellGeom(globalPos, layout) {
+  const localCol = globalPos.col - layout.minCol;
+  const localRow = globalPos.row - layout.minRow;
+  const xLeft   = SVG.LEFT_PAD + localCol * (SVG.CARD_W + SVG.ROUND_GAP);
+  const yCenter = SVG.TOP_PAD + SVG.HEADER_H + (localRow + 0.5) * SVG.SLOT_H;
+  const yTop    = yCenter - SVG.CARD_H / 2;
+  return {
+    left: xLeft,
+    right: xLeft + SVG.CARD_W,
+    top: yTop,
+    bottom: yTop + SVG.CARD_H,
+    cx: xLeft + SVG.CARD_W / 2,
+    cy: yCenter,
+    // Row Y coordinates for connector anchors — match the top/bot team
+    // rows inside the card. ~18% off cy puts them near the team row
+    // baselines without overlapping the match number band.
+    topRowY: yCenter - SVG.CARD_H * 0.18,
+    botRowY: yCenter + SVG.CARD_H * 0.18
+  };
+}
+
+/* Per-column round-name label. The center column is R1; right cols are
+   W2/W3/…; left cols are L2/L3/…. Returns null for cols outside the
+   bracket (won't happen given layout, but guards anyway). */
+function wiringRoundLabel(col) {
+  if (col === 0) return 'Round 1';
+  if (col > 0)   return 'W Round ' + (col + 1);
+  return 'L Round ' + (Math.abs(col) + 1);
+}
+
+function wiringRenderBracket(displayLabel, label, matches, opts) {
+  const analysis  = wiringAnalyzeTournament(matches);
+  // analysis is [{label, matches, arms, terminals, positions, termCount}] —
+  // but here we already know we're rendering ONE bracket, so use the first.
+  const b = analysis[0] || { label, matches, arms: {}, terminals: {}, positions: {}, termCount: 0 };
+  const arms = b.arms, terminals = b.terminals, positions = b.positions;
+
+  // Layout bounds across all positions in this bracket.
+  const rows = Object.values(positions).map(p => p.row);
+  const cols = Object.values(positions).map(p => p.col);
+  const minRow = rows.length ? Math.min(...rows) : 0;
+  const maxRow = rows.length ? Math.max(...rows) : 0;
+  const minCol = cols.length ? Math.min(...cols) : 0;
+  const maxCol = cols.length ? Math.max(...cols) : 0;
+  const numCols = (maxCol - minCol + 1);
+  const numRows = (maxRow - minRow + 1);
+  const w = SVG.LEFT_PAD + numCols * SVG.CARD_W + Math.max(0, numCols - 1) * SVG.ROUND_GAP + SVG.RIGHT_PAD;
+  const h = SVG.TOP_PAD + SVG.HEADER_H + (numRows + 0.5) * SVG.SLOT_H + SVG.CHAMP_BAND_H;
+  const layout = { w, h, minRow, maxRow, minCol, maxCol };
+
+  // Bracket stripe color for the in-card stripe div. Falls back to the
+  // accent gray (matches existing convention).
+  const stripeColor = SVG.BRACKET_COLORS[label] || '#94a3b8';
+
+  // Round headers: iterate every populated column, label by arm.
+  let svgInner = '';
+  for (let c = minCol; c <= maxCol; c++) {
+    const colCells = matches.filter(m => positions[m.id] && positions[m.id].col === c);
+    if (!colCells.length) continue;
+    const cx = SVG.LEFT_PAD + (c - minCol) * (SVG.CARD_W + SVG.ROUND_GAP) + SVG.CARD_W / 2;
+    const xL = SVG.LEFT_PAD + (c - minCol) * (SVG.CARD_W + SVG.ROUND_GAP);
+    const xR = xL + SVG.CARD_W;
+    const headerText = wiringRoundLabel(c);
+    svgInner += '<text class="round-name" x="' + cx + '" y="' + (SVG.TOP_PAD + SVG.HEADER_TEXT_Y)
+              + '" text-anchor="middle" dominant-baseline="alphabetic">' + esc(headerText) + '</text>';
+    svgInner += '<line class="round-header-underline" x1="' + xL + '" y1="' + (SVG.TOP_PAD + SVG.HEADER_H - 6)
+              + '" x2="' + xR + '" y2="' + (SVG.TOP_PAD + SVG.HEADER_H - 6) + '"/>';
+    if (c > minCol) {
+      const dividerX = xL - SVG.ROUND_GAP / 2;
+      const topY = SVG.TOP_PAD + SVG.HEADER_H;
+      const botY = SVG.TOP_PAD + SVG.HEADER_H + numRows * SVG.SLOT_H;
+      svgInner += '<line class="round-divider" x1="' + dividerX + '" y1="' + topY
+                + '" x2="' + dividerX + '" y2="' + botY + '"/>';
+    }
+  }
+
+  // Connectors + cross-source layers (painted in JS pass after innerHTML).
+  svgInner += '<g class="connectors-layer"></g>';
+  svgInner += '<g class="cross-source-layer"></g>';
+
+  // Card foreignObjects.
+  const bracketCssClass = wiringBracketCssClass(label);
+  for (const m of matches) {
+    const pos = positions[m.id];
+    if (!pos) continue;
+    const geom = wiringCellGeom(pos, layout);
+    // Pass isFinalOfBracket=false so matchHtml doesn't add its in-card
+    // "is-final-of-bracket" gradient strip — the wiring engine handles
+    // terminal emphasis via a SEPARATE pill below the card (see below).
+    const cardHtml = m.bye ? byeMatchHtml(m, stripeColor) : matchHtml(m, false, stripeColor);
+    // Optional bracket-specific class injection (e.g. .bracket-32 for
+    // the red→blue gradient stripe). The card root is .match — quick
+    // string-rewrite is simplest and avoids cloning matchHtml.
+    const cardHtmlAdj = bracketCssClass
+      ? cardHtml.replace('class="match', 'class="match ' + bracketCssClass)
+      : cardHtml;
+    svgInner += '<foreignObject class="card-fo" data-match-fo="' + esc(m.id)
+              + '" x="' + geom.left + '" y="' + geom.top
+              + '" width="' + SVG.CARD_W + '" height="' + SVG.CARD_H + '">'
+              + '<div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%">'
+              + cardHtmlAdj
+              + '</div></foreignObject>';
+
+    // ── Terminal qualifier pill ──────────────────────────────────────
+    // For each terminal (is_qualifier OR no downstream wiring) match,
+    // render a "🏆 <bracketChampText>" pill BELOW the card using the
+    // same foreignObject pattern + .bracket-champ-big visual the classic
+    // renderer uses for bracket finals. Sits outside the card so it
+    // can be loud — gradient pill with bounce animation.
+    // Same sizing constants as bracketSectionHtml (lines ~2063-2083).
+    if (terminals[m.id] && !m.bye) {
+      const PILL_W = 260;
+      const PILL_VISIBLE_H = 50;
+      const PILL_PAD = 20;
+      const PILL_H = PILL_VISIBLE_H + PILL_PAD * 2;
+      const pillX = geom.cx - PILL_W / 2;
+      const pillY = (geom.cy + SVG.CARD_H / 2 + 6) - PILL_PAD;
+      svgInner += '<foreignObject class="champ-fo" data-match-fo="' + esc(m.id) + '-champ"'
+                + ' x="' + pillX + '" y="' + pillY
+                + '" width="' + PILL_W + '" height="' + PILL_H
+                + '"><div xmlns="http://www.w3.org/1999/xhtml" '
+                + 'style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:visible">'
+                + '<div class="bracket-champ-big">&#x1F3C6; ' + esc(TOURNAMENT_TEXT.bracketChampText) + '</div>'
+                + '</div></foreignObject>';
+    }
+  }
+
+  // Outer svg.
+  const svg = '<svg class="bracket-svg" xmlns="http://www.w3.org/2000/svg" '
+            + 'data-wrap="' + esc(label) + '" '
+            + 'data-engine="wiring" '
+            + 'viewBox="0 0 ' + w + ' ' + h + '" '
+            + 'preserveAspectRatio="xMinYMin meet" '
+            + 'style="width:' + w + 'px;height:' + h + 'px">'
+            + svgInner + '</svg>';
+
+  // Optional qualifier band: shown when this bracket has any terminal
+  // matches. Reads "🏆 N World Qualifiers" + sub-line. Sits above the
+  // bracket SVG within the section.
+  let qualifierBand = '';
+  if (b.termCount > 0) {
+    qualifierBand = '<div class="qualifier-band">🏆 ' + b.termCount + ' World Qualifier'
+                  + (b.termCount === 1 ? '' : 's')
+                  + '<div class="qb-sub">Terminal matches feed straight to World Pool Championships</div>'
+                  + '</div>';
+  }
+
+  return '<div class="bracket-section" data-bracket="' + esc(label) + '" data-design-w="' + w + '" data-design-h="' + h + '" data-engine="wiring">'
+       + '<div class="section-title"><span class="pill ' + (opts.pillClass || '') + '">' + esc(displayLabel) + '</span></div>'
+       + qualifierBand
+       + '<div class="viewport"><div class="bracket-wrap" data-wrap="' + esc(label) + '" data-engine="wiring">'
+       +   svg
+       + '</div></div>'
+       + '</div>';
+}
+
+/* Draw connectors for a wiring-rendered bracket. Same-arm wires only
+   (cross-arm = label, not line). For each match m:
+     • For each input (top_from / bot_from), look up the source.
+     • If source is same-arm OR center, draw a wire from src right/left
+       (depending on dst arm) to dst's top or bot row.
+     • If cross-arm (kind='loser' from W into L, or vice versa), render
+       a "L of M<n>" / "W of M<n>" stub label outside the dst card. */
+function wiringDrawConnectors(wrap, matches, analysis) {
+  const svgEl = wrap.querySelector('svg.bracket-svg');
+  if (!svgEl) return;
+  const connLayer  = svgEl.querySelector('g.connectors-layer');
+  const crossLayer = svgEl.querySelector('g.cross-source-layer');
+  if (!connLayer || !crossLayer) return;
+  connLayer.innerHTML  = '';
+  crossLayer.innerHTML = '';
+
+  const positions = analysis.positions;
+  const arms      = analysis.arms;
+  const rowsArr = Object.values(positions).map(p => p.row);
+  const colsArr = Object.values(positions).map(p => p.col);
+  const minRow = rowsArr.length ? Math.min(...rowsArr) : 0;
+  const maxRow = rowsArr.length ? Math.max(...rowsArr) : 0;
+  const minCol = colsArr.length ? Math.min(...colsArr) : 0;
+  const maxCol = colsArr.length ? Math.max(...colsArr) : 0;
+  const layout = { minRow, maxRow, minCol, maxCol };
+
+  const byId = Object.fromEntries(matches.map(m => [m.id, m]));
+  const STROKE = '#94a3b8';
+
+  const drawPath = (d) => {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', STROKE);
+    p.setAttribute('stroke-width', '2');
+    p.setAttribute('stroke-linejoin', 'round');
+    p.setAttribute('stroke-linecap', 'round');
+    connLayer.appendChild(p);
+  };
+
+  for (const m of matches) {
+    const dstPos = positions[m.id];
+    if (!dstPos) continue;
+    const dstGeom = wiringCellGeom(dstPos, layout);
+    const myArm = arms[m.id];
+
+    const inputs = [
+      { from: m.top_from, side: 'top' },
+      { from: m.bot_from, side: 'bot' }
+    ].filter(x => x.from);
+
+    for (const { from, side } of inputs) {
+      const src = byId[from.match_id];
+      if (!src) continue;
+      const srcPos = positions[src.id];
+      if (!srcPos) {
+        // Cross-bracket reference (source lives in a different bracket).
+        // Render as label only.
+        const targetNo = src.match_no || src.globalNo || src.id;
+        const kindShort = from.kind === 'loser' ? 'L' : 'W';
+        const rowY = side === 'top' ? dstGeom.topRowY : dstGeom.botRowY;
+        const labelX = myArm === 'L' ? dstGeom.right : dstGeom.left;
+        const dir = myArm === 'L' ? +1 : -1;
+        const labelText = kindShort + ' of M' + targetNo;
+        // Stub + label.
+        const stubX1 = labelX;
+        const stubX2 = labelX + dir * 22;
+        crossLayer.appendChild(buildCrossPath('M ' + stubX1 + ' ' + rowY + ' L ' + stubX2 + ' ' + rowY));
+        crossLayer.appendChild(buildCrossLabel(stubX2 + dir * 4, rowY, labelText, targetNo, dir));
+        continue;
+      }
+      const srcArm = arms[src.id];
+      const srcGeom = wiringCellGeom(srcPos, layout);
+
+      // True cross-arm: source's arm differs from dst's AND source is
+      // not the center column. (Center R1 → L-arm R2 via loser-kind is
+      // a normal drop line, NOT a cross-arm skip — the wire flows
+      // naturally because center is column 0.) Match staging.html v0.4
+      // behavior: skip only when both arms are explicit and different.
+      const isCrossArm = (srcArm !== 'center') && (srcArm !== myArm);
+      if (isCrossArm) {
+        const targetNo = src.match_no || src.globalNo || src.id;
+        const kindShort = from.kind === 'loser' ? 'L' : 'W';
+        const labelText = kindShort + ' of M' + targetNo;
+        const rowY = side === 'top' ? dstGeom.topRowY : dstGeom.botRowY;
+        const labelX = myArm === 'L' ? dstGeom.right : dstGeom.left;
+        const dir = myArm === 'L' ? +1 : -1;
+        const stubX1 = labelX;
+        const stubX2 = labelX + dir * 22;
+        crossLayer.appendChild(buildCrossPath('M ' + stubX1 + ' ' + rowY + ' L ' + stubX2 + ' ' + rowY));
+        crossLayer.appendChild(buildCrossLabel(stubX2 + dir * 4, rowY, labelText, targetNo, dir));
+        continue;
+      }
+
+      // Same-arm intra-bracket wire (or center → arm flow).
+      // Source-side anchor: pick row based on src result if known, else
+      // use src.cy (no result yet — center).
+      let y1 = srcGeom.cy;
+      if (src.topWins === true)  y1 = srcGeom.topRowY;
+      if (src.topWins === false) y1 = srcGeom.botRowY;
+      const y2 = side === 'top' ? dstGeom.topRowY : dstGeom.botRowY;
+
+      // X anchors depend on direction of flow (dst arm).
+      let x1, x2;
+      if (myArm === 'L') {
+        // Flows right→left. Exit src.left, enter dst.right.
+        x1 = srcGeom.left;
+        x2 = dstGeom.right;
+      } else {
+        // Flows left→right (W arm, or R1→R2 in center→W).
+        x1 = srcGeom.right;
+        x2 = dstGeom.left;
+      }
+      const xMid = (x1 + x2) / 2;
+      if (Math.abs(y1 - y2) < 0.5) {
+        drawPath('M ' + x1 + ' ' + y1 + ' L ' + x2 + ' ' + y2);
+      } else {
+        drawPath('M ' + x1 + ' ' + y1 + ' L ' + xMid + ' ' + y1
+               + ' L ' + xMid + ' ' + y2 + ' L ' + x2 + ' ' + y2);
+      }
+    }
+  }
+}
+
+function buildCrossPath(d) {
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d);
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', '#b45309');
+  p.setAttribute('stroke-width', '1.5');
+  p.setAttribute('stroke-dasharray', '3 3');
+  p.setAttribute('stroke-linecap', 'round');
+  return p;
+}
+function buildCrossLabel(x, y, text, jumpToNo, dir) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const t = document.createElementNS(ns, 'text');
+  t.setAttribute('class', 'cross-source-link');
+  t.setAttribute('x', String(x));
+  t.setAttribute('y', String(y));
+  t.setAttribute('dominant-baseline', 'middle');
+  t.setAttribute('text-anchor', dir > 0 ? 'start' : 'end');
+  t.textContent = text;
+  if (jumpToNo) {
+    t.setAttribute('data-jump', String(jumpToNo));
+    t.setAttribute('style', 'cursor:pointer');
+  }
+  return t;
+}
+
+function renderTournament() {
+  const t = _tournament;
+  if (!t) return;
+
+  // PREPROD: when ?engine=wiring is set, drive the entire render off
+  // the wiring engine. Group t.all by bracket label, run the engine
+  // per bracket, and use wiringRenderBracket() for layout.
+  // Otherwise fall through to the classic A/B/T64 path (preserved
+  // unchanged) so the preprod URL with no flag matches production for
+  // any tournament the classic renderer already handles.
+  if (WIRING_ENGINE) {
+    return renderTournamentWiring(t);
+  }
+
+  // ── Classic A/B/T64 path (unchanged from production) ──
+  const ab = (label, bracket, kind, cls) => bracketSectionHtml(
+    bracket, kind,
+    Array.from({ length: 4 }, (_, i) => bracket.matches.filter(m => m.round === i + 1)),
+    { label, pillClass: cls }
+  );
+  const root = document.getElementById('tournamentRoot');
+  let html = '';
+  html += ab(TOURNAMENT_TEXT.bracketNameA, t.A, 'twelve', '');
+  html += ab(TOURNAMENT_TEXT.bracketNameB, t.B, 'twelve', 'alt');
+  html += bracketSectionHtml(
+    t.T64, 'sixtyfour',
+    Array.from({ length: 6 }, (_, i) => t.T64.matches.filter(m => m.round === i + 1)),
+    { label: TOURNAMENT_TEXT.bracketNameT64, pillClass: 'consolation' }
+  );
+  root.innerHTML = html;
+  renderHero();
+
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.bracket-wrap[data-wrap]').forEach(wrap => {
+      const label = wrap.dataset.wrap;
+      const matches = label === 'A' ? t.A.matches : label === 'B' ? t.B.matches : t.T64.matches;
+      drawConnectorsFor(wrap, matches);
+    });
+    applyZoomToSvgs();
+    setupPanScroll();
+    pinTitlesToViewport();
+    applySearch();
+    if (_highlightedTeam !== null) {
+      const team = _highlightedTeam;
+      _highlightedTeam = null;
+      highlightTeamMatches(team);
+    }
+    if (!_initialScrollDone) {
+      _initialScrollDone = true;
+      const ps = document.getElementById('pageScroll');
+      const firstSec = document.querySelector('.bracket-section');
+      if (ps && firstSec) {
+        const psRect  = ps.getBoundingClientRect();
+        const secRect = firstSec.getBoundingClientRect();
+        ps.scrollLeft += secRect.left - psRect.left;
+        ps.scrollTop  += secRect.top  - psRect.top;
+      }
+    }
+  });
+}
+
+/* Wiring-engine render path. Groups t.all by m.bracket and renders one
+   section per bracket via wiringRenderBracket. Bracket display label
+   comes from TOURNAMENT_TEXT for known labels (A/B/T64) and falls back
+   to "Bracket <label>" otherwise. */
+function renderTournamentWiring(t) {
+  const root = document.getElementById('tournamentRoot');
+  // Group all matches by bracket label.
+  const byBracket = {};
+  for (const m of t.all) {
+    const b = m.bracket || 'default';
+    (byBracket[b] = byBracket[b] || []).push(m);
+  }
+  // Sort labels: known A/B first, then numerics ascending, then alpha.
+  const rank = (x) => ({ 'A': 1, 'B': 2, '32': 5, '64': 9 }[x] ?? (x.match(/^\d/) ? parseInt(x, 10) + 100 : 200));
+  const labels = Object.keys(byBracket).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  // Cache per-bracket analysis so the connector-drawing pass doesn't
+  // re-run the engine. Keyed by bracket label.
+  const analysisByLabel = {};
+  let html = '';
+  for (const label of labels) {
+    const matches = byBracket[label];
+    const displayLabel =
+      label === 'A'  ? TOURNAMENT_TEXT.bracketNameA   :
+      label === 'B'  ? TOURNAMENT_TEXT.bracketNameB   :
+      label === '64' ? TOURNAMENT_TEXT.bracketNameT64 :
+      'Bracket ' + label;
+    const pillClass =
+      label === 'A'  ? '' :
+      label === 'B'  ? 'alt' :
+      label === '64' ? 'consolation' :
+      label === '32' ? 'mod-se-32' :
+      '';
+    const analysis = wiringAnalyzeTournament(matches);
+    analysisByLabel[label] = analysis[0];
+    html += wiringRenderBracket(displayLabel, label, matches, { pillClass });
+  }
+  root.innerHTML = html;
+  renderHero();
+
+  // Expose the latest analysis for devtools inspection.
+  window._wiringAnalysis = analysisByLabel;
+
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.bracket-wrap[data-engine="wiring"]').forEach(wrap => {
+      const label = wrap.dataset.wrap;
+      const matches = byBracket[label];
+      const analysis = analysisByLabel[label];
+      if (analysis) wiringDrawConnectors(wrap, matches, analysis);
+    });
+    applyZoomToSvgs();
+    setupPanScroll();
+    pinTitlesToViewport();
+    applySearch();
+    // Re-apply team highlight if active (bracket was just re-rendered).
+    if (_highlightedTeam !== null) {
+      const team = _highlightedTeam;
+      _highlightedTeam = null;
+      highlightTeamMatches(team);
+    }
+    // Initial scroll position: upper-left of Bracket A's SECTION (title +
+    // bracket together). v0.79 dropped the wrap padding so the SVG is now
+    // flush with its section's left edge, and the section title sits in
+    // a sibling block at section.top. Scrolling to section.top lands the
+    // user with the title at the top of the viewport and the bracket
+    // immediately below — both visible. Only on initial render; data-poll
+    // re-renders preserve the user's current scroll position.
+    if (!_initialScrollDone) {
+      _initialScrollDone = true;
+      const ps = document.getElementById('pageScroll');
+      const firstSec = document.querySelector('.bracket-section');
+      if (ps && firstSec) {
+        const psRect  = ps.getBoundingClientRect();
+        const secRect = firstSec.getBoundingClientRect();
+        ps.scrollLeft += secRect.left - psRect.left;
+        ps.scrollTop  += secRect.top  - psRect.top;
+      }
+    }
+  });
+}
+let _initialScrollDone = false;
+
+/* ── Click-a-team highlight (viewer mode) ────
+ *  Click any team's row in any match to spotlight every match that team
+ *  appears in. Color-codes by outcome — green for wins, red for losses,
+ *  SPM blue for matches not yet scored. The team's row gets a stronger
+ *  background within each card. Click the same team again (or click
+ *  outside any card) to clear. */
+let _highlightedTeam = null;
+
+function highlightTeamMatches(teamNumber) {
+  if (_highlightedTeam === teamNumber) { clearTeamHighlight(); return; }
+  clearTeamHighlight(true);  // silent — won't re-render
+  _highlightedTeam = teamNumber;
+  if (!_tournament) return;
+  for (const m of _tournament.all) {
+    const isTop = m.top    && m.top.number    === teamNumber;
+    const isBot = m.bottom && m.bottom.number === teamNumber;
+    if (!isTop && !isBot) continue;
+    const el = document.querySelector('.match[data-match-id="' + cssEscape(m.id) + '"]');
+    if (!el) continue;
+    if (m.bye && isTop) {
+      el.classList.add('highlight-win');     // bye = auto-advance = win
+    } else if (m.winner_side === 'top' || m.winner_side === 'bot') {
+      const teamSide = isTop ? 'top' : 'bot';
+      el.classList.add(teamSide === m.winner_side ? 'highlight-win' : 'highlight-loss');
+    } else {
+      el.classList.add('highlight-pending');
+    }
+    const row = el.querySelector('.match-row[data-team-num="' + teamNumber + '"]');
+    if (row) row.classList.add('highlight-team');
+  }
+  // Clear any active search highlight — the two modes don't coexist.
+  document.querySelectorAll('.match.match-hit, .match.match-hit-latest').forEach(el => el.classList.remove('match-hit', 'match-hit-latest'));
+  removeMatchHalos('search-hit-halo', 'search-hit-latest-halo');
+  const si = document.getElementById('searchInput');
+  if (si && si.value) {
+    si.value = '';
+    _searchQuery = '';
+    document.getElementById('searchWrap').classList.remove('has-value');
+    document.getElementById('searchResult').textContent = '';
+  }
+}
+
+function clearTeamHighlight(silent) {
+  if (_highlightedTeam == null) return;
+  _highlightedTeam = null;
+  document.querySelectorAll('.match.highlight-win, .match.highlight-loss, .match.highlight-pending').forEach(el => {
+    el.classList.remove('highlight-win', 'highlight-loss', 'highlight-pending');
+  });
+  document.querySelectorAll('.match-row.highlight-team').forEach(el => el.classList.remove('highlight-team'));
+}
+
+// Viewer-only click delegation. Staff mode has its own handler that opens
+// the score modal on match clicks — don't double-fire.
+document.addEventListener('click', (e) => {
+  if (IS_STAFF) return;
+  if (e.target.closest('a.dest-chip')) return;       // chip click → jump
+  const row = e.target.closest('.match-row[data-team-num]');
+  if (row && row.dataset.teamNum) {
+    const num = parseInt(row.dataset.teamNum, 10);
+    if (Number.isInteger(num)) highlightTeamMatches(num);
+    return;
+  }
+  // Click outside any match cell → clear highlight
+  if (_highlightedTeam !== null && !e.target.closest('.match')) {
+    clearTeamHighlight();
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && _highlightedTeam !== null && !document.querySelector('.staff-modal-overlay.shown')) {
+    clearTeamHighlight();
+  }
+});
+
+/* ── Search ────────────────────────────────── */
+let _searchQuery = '';
+function applySearch() {
+  const q = _searchQuery.trim().toLowerCase();
+  const cells = document.querySelectorAll('.match');
+  cells.forEach(m => m.classList.remove('match-hit', 'match-hit-latest'));
+  // Wipe SVG halos from a prior search (or jump) before recomputing.
+  removeMatchHalos('search-hit-halo', 'search-hit-latest-halo');
+  const result = document.getElementById('searchResult');
+  if (!q) { result.textContent = ''; return; }
+  const hits = [];
+  cells.forEach(m => {
+    const rows = m.querySelectorAll('.match-row');
+    let hit = false;
+    rows.forEach(r => { if ((r.dataset.team || '').includes(q)) hit = true; });
+    if (hit) { m.classList.add('match-hit'); hits.push(m); }
+  });
+  if (!hits.length) { result.textContent = 'No match found'; return; }
+  // "Latest" = highest globalNo. (Earlier global rounds plays first.)
+  let latest = null, maxNo = -1;
+  hits.forEach(el => {
+    const n = parseInt(el.dataset.globalNo, 10) || 0;
+    if (n > maxNo) { maxNo = n; latest = el; }
+  });
+  // Paint halos: every hit gets a steady blue ring, the latest gets a
+  // pulsing red ring on top of it so it's unmistakable when you arrive.
+  hits.forEach(m => { if (m !== latest) addMatchHalo(m, 'search-hit-halo'); });
+  if (latest) {
+    latest.classList.add('match-hit-latest');
+    addMatchHalo(latest, 'search-hit-latest-halo');
+    latest.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  }
+  result.textContent = hits.length + ' match' + (hits.length === 1 ? '' : 'es');
+}
+const _searchWrap = document.getElementById('searchWrap');
+const _searchInput = document.getElementById('searchInput');
+const _searchClear = document.getElementById('searchClear');
+_searchInput.addEventListener('input', () => {
+  _searchQuery = _searchInput.value;
+  _searchWrap.classList.toggle('has-value', !!_searchInput.value);
+  applySearch();
+});
+_searchInput.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') { _searchInput.value = ''; _searchInput.dispatchEvent(new Event('input')); _searchInput.blur(); }
+});
+_searchClear.addEventListener('click', () => { _searchInput.value = ''; _searchInput.dispatchEvent(new Event('input')); _searchInput.focus(); });
+
+/* ── Resize ─────────────────────────────────
+ *  No connector redraw needed (SVG scales together with cards), but if the
+ *  viewport reflows we may want to re-apply the density classes since the
+ *  effective card width changes only with --zoom (not viewport width).
+ *  The density depends only on zoom, so a no-op is fine here. Leaving the
+ *  handler in place as a hook for future layout changes. */
+let _resizeRaf = null;
+window.addEventListener('resize', () => {
+  if (_resizeRaf) return;
+  _resizeRaf = requestAnimationFrame(() => { _resizeRaf = null; });
+});
+
+/* ── Jump-to-match on dest chips ──────────────
+ *  Clicking "W → M37" or "L → M53" scrolls to the target match and
+ *  pulses it with a flash highlight. Uses event delegation so it works
+ *  for any re-rendered cards too. */
+/* SVG-native halo overlay shared by jump-to-match AND search highlights.
+ * The .match HTML lives inside a 240×136 <foreignObject> which clips any
+ * effect that would extend beyond it (box-shadow, outline). The halo is a
+ * stroked SVG rect drawn as a sibling of the foreignObject in the same
+ * bracket-svg coordinate space — so it can radiate outside the clip. */
+function addMatchHalo(target, className, padding) {
+  const fo = target && target.closest && target.closest('foreignObject.card-fo');
+  if (!fo) return null;
+  const svg = fo.closest('svg.bracket-svg');
+  if (!svg) return null;
+  const x = parseFloat(fo.getAttribute('x'));
+  const y = parseFloat(fo.getAttribute('y'));
+  const w = parseFloat(fo.getAttribute('width'));
+  const h = parseFloat(fo.getAttribute('height'));
+  const PAD = padding != null ? padding : 10;
+  const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  overlay.setAttribute('class', className);
+  overlay.setAttribute('x',      String(x - PAD));
+  overlay.setAttribute('y',      String(y - PAD));
+  overlay.setAttribute('width',  String(w + 2 * PAD));
+  overlay.setAttribute('height', String(h + 2 * PAD));
+  overlay.setAttribute('rx', '12');
+  overlay.setAttribute('ry', '12');
+  svg.appendChild(overlay);
+  return overlay;
+}
+function removeMatchHalos() {
+  // Remove every overlay class we own. Pass-through args lets callers be
+  // selective (e.g. only remove search halos but keep jump halo).
+  const classes = arguments.length ? Array.from(arguments)
+    : ['match-jump-overlay', 'search-hit-halo', 'search-hit-latest-halo'];
+  classes.forEach(cls => {
+    document.querySelectorAll('.bracket-svg .' + cls).forEach(o => o.remove());
+  });
+}
+
+function jumpToMatch(globalNo) {
+  if (!globalNo) return;
+  const target = document.querySelector('.match[data-global-no="' + globalNo + '"]');
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+
+  // SVG halo (drawn outside the foreignObject's clip).
+  removeMatchHalos('match-jump-overlay');
+  const overlay = addMatchHalo(target, 'match-jump-overlay');
+  if (overlay) setTimeout(() => overlay.remove(), 2500);
+
+  // Background pulse on the card (contained inside the box, not clipped).
+  document.querySelectorAll('.match.match-jump-flash').forEach(m => m.classList.remove('match-jump-flash'));
+  void target.offsetWidth;
+  target.classList.add('match-jump-flash');
+  setTimeout(() => target.classList.remove('match-jump-flash'), 2400);
+}
+// Walk up from the event target to find anything with a data-jump attribute.
+// Works for both HTML anchor chips and SVG <text> labels — closest() can
+// behave inconsistently for SVG in some browsers, so we just walk parentNode.
+function findDataJumpAncestor(node) {
+  while (node && node.nodeType === 1) {
+    if (typeof node.getAttribute === 'function') {
+      const v = node.getAttribute('data-jump');
+      if (v) return { node: node, value: v };
+    }
+    node = node.parentNode;
+  }
+  return null;
+}
+document.addEventListener('click', (e) => {
+  const hit = findDataJumpAncestor(e.target);
+  if (!hit) return;
+  e.preventDefault();
+  jumpToMatch(hit.value);
+}, true);  // capture phase so the viewer/staff click handlers don't pre-empt
+
+/* ── Pan & scroll on bracket viewports ───────
+ *  Drag with mouse, Shift+wheel, or arrow keys (when viewport focused).
+ *  Touch pan is driven entirely in JS (one-finger drag → programmatic
+ *  scroll of .page-scroll, with flick momentum). v0.91: we no longer
+ *  rely on native touch scrolling of the nested .page-scroll container —
+ *  iOS Safari does not reliably hand a touch-drag to a nested
+ *  overflow:auto element when an ancestor (<body>) is position:fixed, so
+ *  pan was dead on iPhone/iPad. .viewport gets touch-action:none and this
+ *  handler owns every touch gesture, like a custom pan/zoom canvas. */
+/* Horizontally pin the bracket section titles + tournament hero to the
+ * viewport while the brackets pan beneath them. Each title's natural
+ * position is at the scroll content's left (x=0). Applying
+ *   transform: translateX(scrollLeft)
+ * shifts the title rightward by the current horizontal scroll so its
+ * effective screen position stays at viewport x=0, full viewport width.
+ * Content inside is centered via flex/text-align so the pill/hero text
+ * stays in the visible middle.
+ *
+ * CSS sticky doesn't work here because the title element is the same
+ * width (100vw) as its containing block — sticky needs the parent to be
+ * larger than the element to have any range to stick in. */
+let _pinTitlesBound = false;
+function pinTitlesToViewport() {
+  const ps = document.getElementById('pageScroll');
+  if (!ps) return;
+  const titles = () => document.querySelectorAll('.section-title, .hero');
+  const apply = () => {
+    const t = 'translateX(' + ps.scrollLeft + 'px)';
+    titles().forEach(el => { el.style.transform = t; });
+  };
+  if (!_pinTitlesBound) {
+    _pinTitlesBound = true;
+    ps.addEventListener('scroll', apply, { passive: true });
+  }
+  apply();
+}
+
+/* Flick momentum for touch pan. One requestAnimationFrame loop, shared
+ * across all viewports (only one finger-drag happens at a time). Velocity
+ * arrives as finger px/ms; the bracket scrolls OPPOSITE the finger, so
+ * scroll velocity = −finger velocity. It decays ~5%/frame until it falls
+ * below a small threshold or the scroll hits a wall. Any new touch or
+ * mouse drag cancels it so a fling never fights a fresh gesture. */
+let _momentumRAF = 0;
+function cancelMomentum() {
+  if (_momentumRAF) { cancelAnimationFrame(_momentumRAF); _momentumRAF = 0; }
+}
+function startMomentum(fingerVX, fingerVY) {
+  cancelMomentum();
+  const ps = document.getElementById('pageScroll');
+  if (!ps) return;
+  let sx = -fingerVX, sy = -fingerVY;          // scroll velocity, px/ms
+  if (Math.hypot(sx, sy) < 0.05) return;       // too gentle to bother
+  let last = performance.now();
+  const step = (now) => {
+    const dt = Math.min(now - last, 50); last = now;   // cap stalls
+    const beforeL = ps.scrollLeft, beforeT = ps.scrollTop;
+    ps.scrollLeft = beforeL + sx * dt;
+    ps.scrollTop  = beforeT + sy * dt;
+    if (ps.scrollLeft === beforeL) sx = 0;     // hit a horizontal wall
+    if (ps.scrollTop  === beforeT) sy = 0;     // hit a vertical wall
+    const decay = Math.pow(0.95, dt / 16.67);
+    sx *= decay; sy *= decay;
+    _momentumRAF = (Math.hypot(sx, sy) > 0.015) ? requestAnimationFrame(step) : 0;
+  };
+  _momentumRAF = requestAnimationFrame(step);
+}
+
+function setupPanScroll() {
+  document.querySelectorAll('.viewport').forEach(vp => {
+    if (vp.dataset.panBound) return;
+    vp.dataset.panBound = '1';
+    vp.tabIndex = 0;
+
+    // Omni-pan: track both X (viewport horizontal scroll) and Y (page-level
+    // vertical scroll via the .page-scroll container) so click-drag on
+    // desktop behaves like a touch-pan on an image — both axes move at once.
+    let isDown = false, startX = 0, startY = 0, startLeft = 0, startTop = 0, moved = false;
+
+    vp.addEventListener('mousedown', (e) => {
+      cancelMomentum();
+      // Don't hijack clicks on form controls or anything that opts into its
+      // own click handler via [data-jump] (SVG cross-source "L of M#" labels
+      // and the in-card dest chips). Without the [data-jump] bail the
+      // viewport's mousedown starts a drag, micro-drift scrolls the wrap,
+      // the label moves out from under the cursor, the synthesized click
+      // lands on empty space, and the jump handler never sees the target.
+      if (e.target.closest('button, a, input, select, textarea, [data-jump]')) return;
+      isDown = true;
+      moved = false;
+      startX = e.pageX;
+      startY = e.pageY;
+      // v0.78: the .page-scroll container owns scroll for both axes. Drag
+      // updates ps.scrollLeft / ps.scrollTop, NOT vp.scrollLeft (which is
+      // now non-scrolling since viewport overflow is visible).
+      const ps = document.getElementById('pageScroll');
+      startLeft = ps ? ps.scrollLeft : 0;
+      startTop  = ps ? ps.scrollTop  : 0;
+      vp.classList.add('panning');
+    });
+    const stop = () => {
+      if (!isDown) return;
+      isDown = false;
+      vp.classList.remove('panning');
+    };
+    document.addEventListener('mouseup', stop);
+    vp.addEventListener('mouseleave', stop);
+    vp.addEventListener('mousemove', (e) => {
+      if (!isDown) return;
+      const dx = e.pageX - startX;
+      const dy = e.pageY - startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+      const ps = document.getElementById('pageScroll');
+      if (ps) {
+        ps.scrollLeft = startLeft - dx;
+        ps.scrollTop  = startTop - dy;
+      } else {
+        window.scrollTo(startLeft - dx, startTop - dy);
+      }
+      e.preventDefault();
+    });
+    // Suppress click after a drag so card-clicks don't fire spuriously.
+    vp.addEventListener('click', (e) => {
+      if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; }
+    }, true);
+
+    // Keyboard horizontal scroll when viewport has focus. v0.78: scrolls
+    // .page-scroll (the single 2-axis container), not the viewport.
+    vp.addEventListener('keydown', (e) => {
+      const ps = document.getElementById('pageScroll');
+      if (!ps) return;
+      const step = Math.max(120, ps.clientWidth * 0.4);
+      if (e.key === 'ArrowLeft')  { ps.scrollLeft -= step; e.preventDefault(); }
+      else if (e.key === 'ArrowRight') { ps.scrollLeft += step; e.preventDefault(); }
+      else if (e.key === 'Home')   { ps.scrollLeft = 0; e.preventDefault(); }
+      else if (e.key === 'End')    { ps.scrollLeft = ps.scrollWidth; e.preventDefault(); }
+    });
+
+    // Shift+wheel → horizontal scroll on the page-scroll container.
+    // Ctrl+wheel → zoom (handled globally below, but we preventDefault here too
+    // so the bracket viewport doesn't double-fire browser-level zoom.)
+    vp.addEventListener('wheel', (e) => {
+      cancelMomentum();
+      if (e.ctrlKey) { e.preventDefault(); applyZoomDelta(e.deltaY < 0 ? +0.1 : -0.1, true); return; }
+      if (!e.shiftKey) return;
+      e.preventDefault();
+      const ps = document.getElementById('pageScroll');
+      if (ps) ps.scrollLeft += e.deltaY;
+    }, { passive: false });
+
+    // ── Touch gestures: one-finger pan + two-finger pinch-zoom ──────────
+    // v0.91: panning is driven HERE in JS, not by native scrolling. iOS
+    // Safari will not reliably touch-scroll a nested overflow:auto element
+    // (.page-scroll) while <body> is position:fixed, so a one-finger drag
+    // was completely dead on iPhone/iPad. We now scroll .page-scroll
+    // programmatically — the exact mechanism the mouse-drag handler above
+    // already uses, which works on every platform — and add flick
+    // momentum so it still feels native. .viewport has touch-action:none
+    // so the browser never competes for the gesture.
+    //
+    // Pinch zooms around the centroid of the two fingers (NOT the
+    // bracket's top-left) so the content under the fingers stays put:
+    //   1. At pinchstart, snapshot the centroid in client coords and
+    //      convert to the SVG's UNSCALED content coords (÷ current zoom).
+    //   2. On each move, set the new zoom, then re-scroll so the
+    //      snapshotted point lands back under the live centroid.
+    //   3. Fingers can drift mid-pinch; recompute from the live centroid.
+    let pinchStartDist = 0, pinchStartZoom = 1;
+    let pinchContentX = 0, pinchContentY = 0, pinchSvgEl = null;
+    // One-finger pan + flick-velocity state.
+    let panActive = false;
+    let velX = 0, velY = 0, lastMoveX = 0, lastMoveY = 0, lastMoveT = 0;
+
+    // (Re)start one-finger pan tracking from finger `t`. `asContinuation`
+    // true means we're already mid-drag (tap-slop cleared, or a 2→1
+    // finger handoff) so it counts as a move and suppresses the tap-click.
+    const beginPan = (t, asContinuation) => {
+      panActive = true;
+      moved = !!asContinuation;
+      startX = t.clientX; startY = t.clientY;
+      const ps = document.getElementById('pageScroll');
+      startLeft = ps ? ps.scrollLeft : 0;
+      startTop  = ps ? ps.scrollTop  : 0;
+      velX = 0; velY = 0;
+      lastMoveX = t.clientX; lastMoveY = t.clientY;
+      lastMoveT = performance.now();
+    };
+
+    vp.addEventListener('touchstart', (e) => {
+      const wasFlinging = !!_momentumRAF;
+      cancelMomentum();
+      if (e.touches.length >= 2) {
+        // Two-finger pinch — abandon any one-finger pan in progress.
+        panActive = false;
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        pinchStartDist = Math.hypot(dx, dy);
+        pinchStartZoom = getZoom();
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        pinchSvgEl = vp.querySelector('svg.bracket-svg');
+        if (pinchSvgEl) {
+          const r = pinchSvgEl.getBoundingClientRect();
+          pinchContentX = (cx - r.left) / pinchStartZoom;
+          pinchContentY = (cy - r.top)  / pinchStartZoom;
+        }
+        return;
+      }
+      // One finger → pan. Bail on interactive sub-elements so taps on
+      // chips / jump labels / form controls still register as taps.
+      pinchStartDist = 0;
+      if (e.target && e.target.closest &&
+          e.target.closest('button, a, input, select, textarea, [data-jump]')) {
+        panActive = false;
+        return;
+      }
+      beginPan(e.touches[0], false);
+      // A tap that only meant to stop a fling shouldn't also click a card.
+      if (wasFlinging) moved = true;
+    }, { passive: true });
+
+    vp.addEventListener('touchmove', (e) => {
+      // Two-finger pinch.
+      if (e.touches.length >= 2 && pinchStartDist) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const ratio = Math.hypot(dx, dy) / pinchStartDist;
+        setZoom(pinchStartZoom * ratio);
+        if (!pinchSvgEl) return;
+        // setZoom re-applied the CSS zoom transform; re-measure and adjust
+        // .page-scroll so the snapshotted content point lands back under
+        // the live centroid (both axes).
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        const z = getZoom();
+        const r = pinchSvgEl.getBoundingClientRect();
+        const ps = document.getElementById('pageScroll');
+        if (ps) {
+          ps.scrollLeft += (r.left + pinchContentX * z) - cx;
+          ps.scrollTop  += (r.top  + pinchContentY * z) - cy;
+        }
+        return;
+      }
+      // One-finger pan.
+      if (e.touches.length === 1 && panActive) {
+        const t = e.touches[0];
+        if (!moved) {
+          // Tap slop: stay still until the finger clears 3px so a tap on a
+          // card still selects a team instead of nudging the bracket.
+          if (Math.abs(t.clientX - startX) <= 3 && Math.abs(t.clientY - startY) <= 3) return;
+          beginPan(t, true);   // re-baseline at the threshold → no jump
+        }
+        e.preventDefault();
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        const ps = document.getElementById('pageScroll');
+        if (ps) {
+          ps.scrollLeft = startLeft - dx;
+          ps.scrollTop  = startTop  - dy;
+        }
+        const now = performance.now();
+        const dt = now - lastMoveT;
+        if (dt > 0) {
+          velX = (t.clientX - lastMoveX) / dt;
+          velY = (t.clientY - lastMoveY) / dt;
+        }
+        lastMoveX = t.clientX; lastMoveY = t.clientY; lastMoveT = now;
+      }
+    }, { passive: false });
+
+    vp.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) { pinchStartDist = 0; pinchSvgEl = null; }
+      if (e.touches.length === 1) {
+        // Two fingers dropped to one — keep dragging with the survivor
+        // instead of dead-stopping.
+        beginPan(e.touches[0], true);
+        return;
+      }
+      if (e.touches.length === 0) {
+        // Stale-velocity guard: a flick that ended in a pause must not fling.
+        if (performance.now() - lastMoveT > 100) { velX = 0; velY = 0; }
+        if (panActive && moved) startMomentum(velX, velY);
+        panActive = false;
+      }
+    }, { passive: true });
+
+    vp.addEventListener('touchcancel', () => {
+      panActive = false;
+      pinchStartDist = 0;
+      pinchSvgEl = null;
+    }, { passive: true });
+  });
+}
+
+/* ── Zoom (CSS transform: scale on each SVG) ─────
+ *  Range 0.4–1.5. Persists in sessionStorage so a refresh doesn't reset.
+ *  v0.90: zoom is a CSS `transform: scale(z)` on each .bracket-svg, NOT a
+ *  resize of the SVG's CSS width/height. The SVG always renders at its
+ *  natural design size (viewBox maps 1:1 to the SVG box), so WebKit
+ *  positions the <foreignObject> cards correctly; the compositor then
+ *  scales the whole painted layer. The old approach (resizing the SVG so
+ *  its viewBox scaled internally) desynced foreignObject cards from the
+ *  native connector lines on iOS Safari — cards drifted off their lines.
+ *  No connector redraw needed — the entire SVG (lines + cards) is one
+ *  layer scaled as a unit. Card "density" still keys off design × zoom
+ *  via updateCardDensity(), since the foreignObject's own CSS width stays
+ *  at the natural design width regardless of the transform. */
+const ZOOM_MIN = 0.4, ZOOM_MAX = 1.5;
+function clampZoom(z) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z)); }
+function getZoom() {
+  const z = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zoom'));
+  return Number.isFinite(z) && z > 0 ? z : 1;
+}
+function setZoom(z) {
+  const next = clampZoom(Math.round(z * 100) / 100);
+  document.documentElement.style.setProperty('--zoom', String(next));
+  try { sessionStorage.setItem('breakoutZoom', String(next)); } catch (_e) {}
+  const lbl = document.getElementById('zoomLabel');
+  if (lbl) lbl.textContent = Math.round(next * 100) + '%';
+  const zi = document.getElementById('zoomIn'),  zo = document.getElementById('zoomOut');
+  if (zi) zi.disabled = next >= ZOOM_MAX - 0.001;
+  if (zo) zo.disabled = next <= ZOOM_MIN + 0.001;
+  applyZoomToSvgs();
+}
+function applyZoomToSvgs() {
+  const z = getZoom();
+  document.querySelectorAll('.bracket-svg').forEach(svg => {
+    const sec = svg.closest('.bracket-section');
+    if (!sec) return;
+    const dw = parseFloat(sec.dataset.designW);
+    const dh = parseFloat(sec.dataset.designH);
+    if (!isFinite(dw) || !isFinite(dh)) return;
+    // v0.90 — Fix 1: zoom via CSS transform, never a viewBox resize.
+    // The SVG keeps its NATURAL design size (1:1 viewBox→box) so WebKit
+    // lays out the <foreignObject> cards correctly; `transform: scale(z)`
+    // then scales the finished layer. Resizing the SVG instead (old code)
+    // forced viewBox scaling, which iOS Safari does not apply to
+    // foreignObject content — cards drifted off their connector lines.
+    svg.style.width  = dw + 'px';            // natural — NOT × zoom
+    svg.style.height = dh + 'px';
+    svg.style.transform = z === 1 ? 'none' : 'scale(' + z + ')';
+    // The wrap is the zoom "sizer": an explicit box of design × zoom.
+    // A CSS transform does not change layout size, so without this the
+    // .page-scroll container would think every bracket is its natural
+    // (un-zoomed) size. The natural-size SVG visually overflows this
+    // smaller box at zoom < 1; .viewport's overflow:hidden clips it.
+    const wrap = svg.closest('.bracket-wrap');
+    if (wrap) {
+      wrap.style.boxSizing = 'content-box';
+      wrap.style.padding = '0';
+      wrap.style.width  = (dw * z) + 'px';
+      wrap.style.height = (dh * z) + 'px';
+    }
+  });
+  updateCardDensity(z);
+}
+
+/* Card "density" classes: which content tier hides at this zoom level.
+ * Same thresholds the old @container query used (220, 200, 180, 150, 130
+ * effective px wide). Card design width is SVG.CARD_W. Effective render
+ * width = CARD_W × on-screen-zoom. */
+function updateCardDensity(zoom) {
+  const z = zoom != null ? zoom : getZoom();
+  const eff = SVG.CARD_W * z;
+  const cls = [];
+  if (eff <= 220) cls.push('cw-le-220');
+  if (eff <= 200) cls.push('cw-le-200');
+  if (eff <= 180) cls.push('cw-le-180');
+  if (eff <= 150) cls.push('cw-le-150');
+  if (eff <= 130) cls.push('cw-le-130');
+  // Continuous font scale for team names: target ~ 6.5% of effective width,
+  // clamp at the same min/max as the old clamp() rule.
+  const namePx = Math.max(0.55 * 16, Math.min(0.92 * 16, 0.065 * eff));
+  document.querySelectorAll('.match').forEach(el => {
+    el.classList.remove('cw-le-220','cw-le-200','cw-le-180','cw-le-150','cw-le-130');
+    if (cls.length) el.classList.add(...cls);
+    el.style.setProperty('--name-size', namePx.toFixed(2) + 'px');
+  });
+}
+function applyZoomDelta(delta, smooth) {
+  setZoom(getZoom() + delta);
+}
+function initZoomToolbar() {
+  // 1.02: zoom apply moved to applyInitialZoom() which runs AFTER
+  // renderTournament(), so it can measure the actual bracket dimensions
+  // and pick a zoom that keeps every match card ≥ 220px wide (so day,
+  // time, table all stay visible per updateCardDensity's thresholds).
+  // This function now just wires up the +/− buttons and Ctrl+/Ctrl-
+  // keyboard shortcuts.
+  const zi = document.getElementById('zoomIn');
+  const zo = document.getElementById('zoomOut');
+  const zl = document.getElementById('zoomLabel');
+  if (zi) zi.addEventListener('click', () => applyZoomDelta(+0.1));
+  if (zo) zo.addEventListener('click', () => applyZoomDelta(-0.1));
+  if (zl) zl.addEventListener('click', () => setZoom(1));
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === '+' || e.key === '=') { e.preventDefault(); applyZoomDelta(+0.1); }
+    else if (e.key === '-' || e.key === '_') { e.preventDefault(); applyZoomDelta(-0.1); }
+    else if (e.key === '0') { e.preventDefault(); setZoom(1); }
+  });
+}
+
+/* 1.02: pick the initial zoom that keeps every match card wide enough
+   to show day / time / table on first paint. updateCardDensity hides
+   the day at eff ≤ 200 and time at eff ≤ 150, so we need eff > 220 to
+   keep the full detail set. Effective px = SVG.CARD_W × zoom, so the
+   floor is 230 / 240 ≈ 0.96.
+
+   Algorithm:
+   1. Respect sessionStorage on revisits in the same tab — if the user
+      manually picked a zoom, that wins.
+   2. Otherwise, take the LARGER of:
+        - Z_DETAIL_MIN (so day/time/table are visible)
+        - the natural fit-zoom (viewport / widest bracket) capped at Z_MAX
+      → small formats get bigger zoom (use the viewport); huge formats
+      land on the detail floor and scroll horizontally. */
+function applyInitialZoom() {
+  let saved = null;
+  try { saved = parseFloat(sessionStorage.getItem('breakoutZoom')); } catch (_) {}
+  if (Number.isFinite(saved)) { setZoom(saved); return; }
+
+  const Z_DETAIL_MIN = 230 / SVG.CARD_W;   // ≈ 0.958
+  const Z_MAX = 1.4;
+  let widest = 0;
+  document.querySelectorAll('.bracket-section').forEach(sec => {
+    const dw = parseFloat(sec.dataset.designW);
+    if (Number.isFinite(dw)) widest = Math.max(widest, dw);
+  });
+  let target = Z_DETAIL_MIN;
+  if (widest > 0) {
+    const scroll = document.querySelector('.page-scroll') || document.body;
+    const vw = Math.max(0, (scroll.clientWidth || window.innerWidth) - 24);  // 12px margin each side
+    const naturalFit = vw / widest;
+    target = Math.max(Z_DETAIL_MIN, Math.min(naturalFit, Z_MAX));
+  }
+  setZoom(target);
+}
+
+/* ── Print one bracket per page ──────────────
+ *  Two buttons: landscape and portrait. Before window.print():
+ *    1. Inject a temp <style> with @page { size: <orient> } so the browser
+ *       paginates the correct way.
+ *    2. Set --print-page-w and --print-page-h on :root in explicit inches
+ *       matching the chosen orientation. The @media print rules use those
+ *       variables to size each .bracket-section. 100vh fallback is
+ *       unreliable in mobile print engines (the iOS/Android Chromium print
+ *       paths sometimes resolve vh against the device screen height rather
+ *       than the page content area), which made the mobile print render
+ *       split each bracket across multiple pages.
+ *    3. Letter content area (after 0.35in margins): 7.8in × 10.3in.
+ *       Landscape: width = 10.3in, height = 7.8in.
+ *    4. Restore @page + vars on afterprint. */
+function preparePrint(orientation) {
+  // Inject an @page orientation hint. Desktop respects it; mobile Chromium
+  // tends to ignore the orientation portion and use the dialog default.
+  // The print CSS is now robust to that — a hard 7in max-height on the
+  // bracket-svg fits inside the page area in BOTH orientations, so even
+  // when mobile renders portrait despite a landscape button tap, the
+  // bracket doesn't overflow and split.
+  const sty = document.createElement('style');
+  sty.id = 'breakoutPrintStyle';
+  sty.textContent = '@page { size: letter ' + orientation + '; margin: 0.35in; }';
+  document.head.appendChild(sty);
+}
+function teardownPrint() {
+  const sty = document.getElementById('breakoutPrintStyle');
+  if (sty) sty.remove();
+}
+function firePrint(orient) {
+  preparePrint(orient);
+  const cleanup = () => { teardownPrint(); window.removeEventListener('afterprint', cleanup); };
+  window.addEventListener('afterprint', cleanup);
+  // One tick lets the browser pick up the freshly-set --print-scale before
+  // window.print() snapshots.
+  setTimeout(() => window.print(), 30);
+}
+function initPrintButtons() {
+  // Print button:
+  //   • Desktop (hover-capable, mouse): popover with Landscape / Portrait.
+  //     @page orientation hint is honored, so the choice actually takes
+  //     effect.
+  //   • Mobile / touch-only: skip the popover. The mobile Chromium /
+  //     Samsung Internet print engines ignore the @page orientation hint
+  //     anyway — the user picks orientation in the system dialog. Tapping
+  //     the in-app orientation buttons just adds a misleading step.
+  //     One tap on Print → fires directly (CSS handles either output
+  //     orientation cleanly via the 7in max-height cap).
+  const btn = document.getElementById('printBtn');
+  const pop = document.getElementById('printPopover');
+  const isTouchOnly = () =>
+    window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+  const openPopover = () => { if (pop) pop.hidden = false; };
+  const closePopover = () => { if (pop) pop.hidden = true; };
+  const togglePopover = () => { if (pop) pop.hidden = !pop.hidden; };
+  if (btn && pop) {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (isTouchOnly()) {
+        closePopover();
+        firePrint('landscape');
+      } else {
+        togglePopover();
+      }
+    });
+    pop.addEventListener('click', (e) => {
+      const opt = e.target.closest('.print-popover-opt');
+      if (!opt) return;
+      const orient = opt.dataset.orient;
+      closePopover();
+      firePrint(orient === 'portrait' ? 'portrait' : 'landscape');
+    });
+    document.addEventListener('click', (e) => {
+      if (pop.hidden) return;
+      if (e.target.closest('#printPopover, #printBtn')) return;
+      closePopover();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !pop.hidden) { closePopover(); btn.focus(); }
+    });
+  }
+  // Intercept Ctrl+P / Cmd+P → run our fit-to-page logic (landscape default).
+  // Capture phase so we beat the browser's native print binding.
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key !== 'p' && e.key !== 'P') return;
+    e.preventDefault();
+    e.stopPropagation();
+    firePrint('landscape');
+  }, true);
+}
+
+/* ── Boot ──────────────────────────────────── */
+(async () => {
+  initZoomToolbar();
+  initPrintButtons();
+  setupStaffMode();
+  // 1.00: tournament first, then its teams. The previous global
+  // loadTeams() pulled every team in the DB; with per-tournament
+  // scoping we need the tournament id from buildTournament's loadActive
+  // path first. buildTournament internally calls loadTeams(dbRow.id)
+  // after loading the tournament row.
+  try { _tournament = await buildTournament(); }
+  catch (e) {
+    document.getElementById('tournamentRoot').innerHTML = '<p style="padding:30px;color:var(--danger);font-weight:700">' + esc(e.message) + '</p>';
+    return;
+  }
+  renderTournament();
+  // 1.02: now that .bracket-section elements have their data-design-w,
+  // pick an initial zoom that guarantees details (day/time/table) are
+  // visible — or use the saved sessionStorage zoom if one exists.
+  applyInitialZoom();
+})();
+</script>
+</body>
+</html>
