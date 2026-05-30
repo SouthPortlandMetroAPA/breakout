@@ -3732,12 +3732,12 @@ function applyZoomDelta(delta, smooth) {
   setZoom(getZoom() + delta);
 }
 function initZoomToolbar() {
-  // Restore prior zoom if any. Default: 0.7 on small screens so the whole
-  // bracket fits without a frustrated zoom-out hunt.
-  let initial = null;
-  try { initial = parseFloat(sessionStorage.getItem('breakoutZoom')); } catch (_e) {}
-  if (!Number.isFinite(initial)) initial = window.innerWidth < 700 ? 0.6 : 1;
-  setZoom(initial);
+  // 1.02: zoom apply moved to applyInitialZoom() which runs AFTER
+  // renderTournament(), so it can measure the actual bracket dimensions
+  // and pick a zoom that keeps every match card ≥ 220px wide (so day,
+  // time, table all stay visible per updateCardDensity's thresholds).
+  // This function now just wires up the +/− buttons and Ctrl+/Ctrl-
+  // keyboard shortcuts.
   const zi = document.getElementById('zoomIn');
   const zo = document.getElementById('zoomOut');
   const zl = document.getElementById('zoomLabel');
@@ -3750,6 +3750,42 @@ function initZoomToolbar() {
     else if (e.key === '-' || e.key === '_') { e.preventDefault(); applyZoomDelta(-0.1); }
     else if (e.key === '0') { e.preventDefault(); setZoom(1); }
   });
+}
+
+/* 1.02: pick the initial zoom that keeps every match card wide enough
+   to show day / time / table on first paint. updateCardDensity hides
+   the day at eff ≤ 200 and time at eff ≤ 150, so we need eff > 220 to
+   keep the full detail set. Effective px = SVG.CARD_W × zoom, so the
+   floor is 230 / 240 ≈ 0.96.
+
+   Algorithm:
+   1. Respect sessionStorage on revisits in the same tab — if the user
+      manually picked a zoom, that wins.
+   2. Otherwise, take the LARGER of:
+        - Z_DETAIL_MIN (so day/time/table are visible)
+        - the natural fit-zoom (viewport / widest bracket) capped at Z_MAX
+      → small formats get bigger zoom (use the viewport); huge formats
+      land on the detail floor and scroll horizontally. */
+function applyInitialZoom() {
+  let saved = null;
+  try { saved = parseFloat(sessionStorage.getItem('breakoutZoom')); } catch (_) {}
+  if (Number.isFinite(saved)) { setZoom(saved); return; }
+
+  const Z_DETAIL_MIN = 230 / SVG.CARD_W;   // ≈ 0.958
+  const Z_MAX = 1.4;
+  let widest = 0;
+  document.querySelectorAll('.bracket-section').forEach(sec => {
+    const dw = parseFloat(sec.dataset.designW);
+    if (Number.isFinite(dw)) widest = Math.max(widest, dw);
+  });
+  let target = Z_DETAIL_MIN;
+  if (widest > 0) {
+    const scroll = document.querySelector('.page-scroll') || document.body;
+    const vw = Math.max(0, (scroll.clientWidth || window.innerWidth) - 24);  // 12px margin each side
+    const naturalFit = vw / widest;
+    target = Math.max(Z_DETAIL_MIN, Math.min(naturalFit, Z_MAX));
+  }
+  setZoom(target);
 }
 
 /* ── Print one bracket per page ──────────────
@@ -3861,6 +3897,10 @@ function initPrintButtons() {
     return;
   }
   renderTournament();
+  // 1.02: now that .bracket-section elements have their data-design-w,
+  // pick an initial zoom that guarantees details (day/time/table) are
+  // visible — or use the saved sessionStorage zoom if one exists.
+  applyInitialZoom();
 })();
 </script>
 </body>
