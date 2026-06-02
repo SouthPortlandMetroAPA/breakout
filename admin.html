@@ -975,7 +975,9 @@ async function parseRosterPdf(file) {
         const dx = next.x - cur.x;
         if (dx < 8 || dx > 80) continue;
         if (!/^[A-Za-z]/.test(next.str)) continue;
-        if (/,/.test(next.str)) continue;
+        // Comma exclusion removed — APA rosters occasionally have typo'd
+        // team names with commas (e.g. "O.C, Misfits" in WQ 8-Ball June
+        // 2026). The prev-check already discriminates player rows.
         anchors.push({ x: cur.x, team: cur.str, nameStart: next.x });
       }
       return anchors;
@@ -1000,12 +1002,14 @@ async function parseRosterPdf(file) {
         let pastTeamNum = false;
         for (const it of headerColItems) {
           if (!pastTeamNum) { if (it.str === teamNum) pastTeamNum = true; continue; }
-          if (/^[NIH*]$/.test(it.str) && nameItems.length > 0) break;
+          // [NIHO*] — 'O' added so APA "O 0000" team status doesn't leak
+          // into team names (bit "Even Sloppier" in WQ 8-Ball June 2026).
+          if (/^[NIHO*]$/.test(it.str) && nameItems.length > 0) break;
           nameItems.push(it.str);
         }
         const teamName = nameItems.join(' ')
           .replace(/\s+/g, ' ')
-          .replace(/\s+[NIH*]\s+\d{4,}.*$/i, '')
+          .replace(/\s+[NIHO*]\s+\d{4,}.*$/i, '')
           .trim();
         // Find the FROM: city line in the band for context.
         let city = null;
