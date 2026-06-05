@@ -2907,7 +2907,7 @@ function wiringDrawConnectors(wrap, matches, analysis) {
          losers from A/B). Result: every cross-bracket loser-from input
          was silently dropped — no label, no stub. */
       const src = byId[from.match_id]
-        || (window._tournament && (window._tournament.all || []).find(x => x.id === from.match_id));
+        || (typeof _tournament !== 'undefined' && _tournament && (_tournament.all || []).find(x => x.id === from.match_id));
       if (!src) continue;
       const srcPos = positions[src.id];
       if (!srcPos) {
