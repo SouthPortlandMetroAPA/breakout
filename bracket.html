@@ -2942,6 +2942,30 @@ function wiringDrawConnectors(wrap, matches, analysis) {
       }
 
       // Same-arm intra-bracket wire (or center → arm flow).
+      //
+      // 1.11 regression fix: when from.kind === 'loser' (e.g. the Last
+      // Chance bracket — R2 matches in a single bracket that take losers
+      // from R1 of the SAME arm/bracket), the wiring engine used to draw
+      // ONLY the solid connector, which is visually indistinguishable
+      // from a winner-from connector. The old drawConnectorsFor path
+      // always emitted a "L of M#" stub-label for any loser-from ref;
+      // wiringDrawConnectors only emitted it in the cross-bracket and
+      // cross-arm cases, leaving same-arm intra-bracket loser refs
+      // unlabeled. Restore the label here (in addition to the solid
+      // connector below — both help the reader trace the flow). Same
+      // styling as the cross-source path so the bracket reads
+      // consistently across all three feeder cases.
+      if (from.kind === 'loser') {
+        const targetNo = src.match_no || src.globalNo || src.id;
+        const rowY = side === 'top' ? dstGeom.topRowY : dstGeom.botRowY;
+        const labelX = myArm === 'L' ? dstGeom.right : dstGeom.left;
+        const dir = myArm === 'L' ? +1 : -1;
+        const stubX1 = labelX;
+        const stubX2 = labelX + dir * 22;
+        crossLayer.appendChild(buildCrossPath('M ' + stubX1 + ' ' + rowY + ' L ' + stubX2 + ' ' + rowY));
+        crossLayer.appendChild(buildCrossLabel(stubX2 + dir * 4, rowY, 'L of M' + targetNo, targetNo, dir));
+      }
+
       // Source-side anchor: pick row based on src result if known, else
       // use src.cy (no result yet — center).
       let y1 = srcGeom.cy;
