@@ -2899,7 +2899,15 @@ function wiringDrawConnectors(wrap, matches, analysis) {
     ].filter(x => x.from);
 
     for (const { from, side } of inputs) {
-      const src = byId[from.match_id];
+      /* 1.12 fix: also look up src in the FULL tournament when it's not
+         in THIS bracket's `matches` array. Without this fallback the
+         cross-bracket case at the next `if (!srcPos)` was unreachable
+         for any input whose source lives in another bracket (e.g. the
+         12+12→64 Last Chance bracket's R1/R3/R5 matches that take
+         losers from A/B). Result: every cross-bracket loser-from input
+         was silently dropped — no label, no stub. */
+      const src = byId[from.match_id]
+        || (window._tournament && (window._tournament.all || []).find(x => x.id === from.match_id));
       if (!src) continue;
       const srcPos = positions[src.id];
       if (!srcPos) {
