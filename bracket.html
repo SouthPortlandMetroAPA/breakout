@@ -2963,16 +2963,12 @@ function wiringDrawConnectors(wrap, matches, analysis) {
       // connector below — both help the reader trace the flow). Same
       // styling as the cross-source path so the bracket reads
       // consistently across all three feeder cases.
-      if (from.kind === 'loser') {
-        const targetNo = src.match_no || src.globalNo || src.id;
-        const rowY = side === 'top' ? dstGeom.topRowY : dstGeom.botRowY;
-        const labelX = myArm === 'L' ? dstGeom.right : dstGeom.left;
-        const dir = myArm === 'L' ? +1 : -1;
-        const stubX1 = labelX;
-        const stubX2 = labelX + dir * 22;
-        crossLayer.appendChild(buildCrossPath('M ' + stubX1 + ' ' + rowY + ' L ' + stubX2 + ' ' + rowY));
-        crossLayer.appendChild(buildCrossLabel(stubX2 + dir * 4, rowY, 'L of M' + targetNo, targetNo, dir));
-      }
+      // 1.13: was emitting a redundant "L of M#" stub-label here for
+      // intra-bracket loser refs. The solid connector drawn below
+      // already shows the source visually — the extra label cluttered
+      // the page (TCQ 32-1 R1->R2_L drops). Stub labels still emit in
+      // the cross-bracket / cross-arm cases above where no direct line
+      // is drawable.
 
       // Source-side anchor: pick row based on src result if known, else
       // use src.cy (no result yet — center).
