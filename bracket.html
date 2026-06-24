@@ -1122,6 +1122,10 @@ const HEADERS_STAFF = STAFF_KEY
 const TOURNAMENT_TEXT = {
   bracketChampText: 'Bracket Champ',
   championText: 'Champion',
+  /* null → render the default "Terminal matches feed straight to World
+     Pool Championships" subtitle. Empty string '' → hide the subtitle
+     entirely. Any non-empty string → use it verbatim. */
+  qualifierSubtext: null,
   bracketNameA: 'Bracket A',
   bracketNameB: 'Bracket B',
   bracketNameT64: '64-Team'
@@ -1946,6 +1950,9 @@ async function buildTournament() {
   }
   if (config.bracketChampText) TOURNAMENT_TEXT.bracketChampText = config.bracketChampText;
   if (config.championText)     TOURNAMENT_TEXT.championText     = config.championText;
+  /* Use `in` so an explicit empty-string "" (the "hide the subtitle"
+     signal) gets through. Plain truthy-check would reject ''. */
+  if ('qualifierSubtext' in config) TOURNAMENT_TEXT.qualifierSubtext = config.qualifierSubtext;
   // Per-bracket display name override. Keys: A, B, T64. Falls back to the
   // hardcoded defaults if a key is absent or blank.
   const bn = config.bracketNames || {};
@@ -2828,13 +2835,25 @@ function wiringRenderBracket(displayLabel, label, matches, opts) {
             + svgInner + '</svg>';
 
   // Optional qualifier band: shown when this bracket has any terminal
-  // matches. Reads "🏆 N World Qualifiers" + sub-line. Sits above the
-  // bracket SVG within the section.
+  // matches. Sits above the bracket SVG within the section.
+  //
+  // Headline + sub-line both editable per tournament via config.jsonb:
+  //   config.championText      → headline ("1 Champion", "8 World Qualifiers")
+  //                              Falls back to "N World Qualifier(s)".
+  //   config.qualifierSubtext  → subtitle line under the headline.
+  //                              Falls back to the world-quals phrase.
+  //                              Set to "" (empty string, not null) to hide
+  //                              the subtitle entirely.
   let qualifierBand = '';
   if (b.termCount > 0) {
-    qualifierBand = '<div class="qualifier-band">🏆 ' + b.termCount + ' World Qualifier'
-                  + (b.termCount === 1 ? '' : 's')
-                  + '<div class="qb-sub">Terminal matches feed straight to World Pool Championships</div>'
+    const defaultHead = b.termCount + ' World Qualifier' + (b.termCount === 1 ? '' : 's');
+    const defaultSub  = 'Terminal matches feed straight to World Pool Championships';
+    const headText = TOURNAMENT_TEXT.championText || defaultHead;
+    const subText  = (TOURNAMENT_TEXT.qualifierSubtext != null)
+                        ? TOURNAMENT_TEXT.qualifierSubtext
+                        : defaultSub;
+    qualifierBand = '<div class="qualifier-band">🏆 ' + esc(headText)
+                  + (subText ? '<div class="qb-sub">' + esc(subText) + '</div>' : '')
                   + '</div>';
   }
 
