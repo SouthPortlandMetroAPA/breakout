@@ -691,7 +691,16 @@
       <fieldset>
         <legend>Display text overrides</legend>
         <label>Bracket Champ label <input type="text" id="tEditBracketChamp" placeholder="Bracket Champ"></label>
-        <label>Champion label <input type="text" id="tEditChampion" placeholder="Champion"></label>
+        <label>Champion label (qualifier-band headline)
+          <input type="text" id="tEditChampion" placeholder="e.g. 1 Champion, 8 World Qualifiers">
+        </label>
+        <label>Qualifier subtitle (line under the 🏆 headline)
+          <input type="text" id="tEditQualifierSubtext"
+                 placeholder="Terminal matches feed straight to World Pool Championships">
+        </label>
+        <p class="hint" style="margin:0;font-size:0.72rem">
+          Leave subtitle <strong>blank</strong> to use the default world-quals phrase. Type a single space to hide it entirely.
+        </p>
       </fieldset>
 
       <fieldset>
@@ -2159,21 +2168,47 @@ function bracketLabel(b) {
   return b === '64' ? '64-Team' : 'Bracket ' + b;
 }
 
+/* Extract the round_id from a match — e.g. "main-R2_W-M0" → "R2_W",
+   "A-R3_L-M4" → "R3_L". For legacy id formats that don't encode a
+   round_id (e.g. "32-r1s0"), fall back to "R" + round_number so the
+   scheduler still groups them by their round_number column. This is
+   what lets the scheduler split R2_W vs R2_L (and R3_W vs R3_L, etc.)
+   into separate rows so the admin can set different times/payouts
+   for each arm — without breaking older tournaments. */
+function roundIdOf(m) {
+  if (m && typeof m.id === 'string') {
+    const parts = m.id.split('-');
+    if (parts.length >= 3) return parts[1];
+  }
+  return 'R' + (m && m.round != null ? m.round : '?');
+}
+
 function listRounds(matches) {
   const seen = {};
   const out = [];
   for (const m of matches) {
-    const key = m.bracket + '/' + m.round;
+    const rid = roundIdOf(m);
+    const key = m.bracket + '/' + rid;
     if (seen[key]) continue;
     seen[key] = true;
-    out.push({ bracket: m.bracket, round: m.round, key });
+    out.push({ bracket: m.bracket, round: m.round, roundId: rid, key });
   }
-  return out.sort((a, b) => bracketOrderRank(a.bracket) - bracketOrderRank(b.bracket) || a.round - b.round);
+  return out.sort((a, b) =>
+    bracketOrderRank(a.bracket) - bracketOrderRank(b.bracket)
+    || a.round - b.round
+    /* Within the same round_number, sort L-arm before W-arm so R3_L
+       sits above R3_W. Matches the visual order in APA Mod-SE
+       brackets and keeps the scheduler reading top-to-bottom in the
+       same order as the bracket SVG. */
+    || (a.roundId || '').localeCompare(b.roundId || '')
+  );
 }
 
-function firstRealMatchInRound(bracket, round) {
+function firstRealMatchInRound(bracket, roundId) {
   if (!_activeMatchTournament) return null;
-  return _activeMatchTournament.matches.find(m => m.bracket === bracket && m.round === round && !m.is_bye) || null;
+  return _activeMatchTournament.matches.find(m =>
+    m.bracket === bracket && roundIdOf(m) === roundId && !m.is_bye
+  ) || null;
 }
 
 function renderScheduleEditor() {
@@ -2190,7 +2225,7 @@ function renderScheduleEditor() {
       html += '<div class="sched-group"><div class="sched-group-label">' + escapeHtml(bracketLabel(r.bracket)) + '</div>';
       currentBracket = r.bracket;
     }
-    const sample = firstRealMatchInRound(r.bracket, r.round);
+    const sample = firstRealMatchInRound(r.bracket, r.roundId);
     const dt = splitDateTime(sample && sample.scheduled_at ? sample.scheduled_at : '');
     // Default the date picker to the tournament's start date if this round
     // hasn't been scheduled yet — saves admins from typing dates twice.
@@ -2200,9 +2235,9 @@ function renderScheduleEditor() {
     const payout = sample && sample.payout != null ? sample.payout : '';
     const tip = sample && sample.tables_in_parallel ? sample.tables_in_parallel : 1;
     const durMin = sample && sample.duration_min != null ? sample.duration_min : 240;
-    const id = 'sched-' + r.bracket + '-' + r.round;
+    const id = 'sched-' + r.bracket + '-' + r.roundId;
     html += '<div class="sched-row" id="' + id + '">'
-      + '<span class="rlabel">R' + r.round + '</span>'
+      + '<span class="rlabel">' + escapeHtml(r.roundId) + '</span>'
       + '<div class="dt-pair">'
       +   '<input type="date" data-field="date" value="' + escapeHtml(dt.date) + '">'
       +   '<select data-field="time">' + buildTimeOptions(dt.time) + '</select>'
@@ -2210,7 +2245,7 @@ function renderScheduleEditor() {
       + '<button class="tables-toggle" data-tables="' + tip + '" onclick="toggleTablesInParallel(this)" title="How many tables EACH team match in this round occupies. 1 table = 5 individuals play sequentially. 2 tables = individuals 1 & 2 start together and fill in as tables free. Set the duration to the wall-clock you expect for that table count — capacity uses it as-is.">' + tip + ' table' + (tip === 1 ? '' : 's') + '</button>'
       + '<select class="dur-select" data-field="duration_min" title="Total expected duration for this round.">' + buildDurationOptions(durMin) + '</select>'
       + '<input type="number" data-field="payout" class="payout-input" value="' + escapeHtml(String(payout)) + '" placeholder="$ Payout" min="0" step="1">'
-      + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', ' + r.round + ')">Apply</button>'
+      + '<button class="apply-btn" onclick="applyRoundSchedule(\'' + r.bracket.replace(/'/g, "\\'") + '\', \'' + r.roundId.replace(/'/g, "\\'") + '\')">Apply</button>'
       + '</div>';
   }
   if (currentBracket !== null) html += '</div>';
@@ -2240,9 +2275,9 @@ function toggleTablesInParallel(btn) {
   }
 }
 
-async function applyRoundSchedule(bracket, round) {
+async function applyRoundSchedule(bracket, roundId) {
   if (!_activeMatchTournament) return;
-  const rowEl = document.getElementById('sched-' + bracket + '-' + round);
+  const rowEl = document.getElementById('sched-' + bracket + '-' + roundId);
   if (!rowEl) return;
   const dateV   = rowEl.querySelector('input[data-field="date"]').value;
   const timeV   = rowEl.querySelector('select[data-field="time"]').value;
@@ -2257,7 +2292,10 @@ async function applyRoundSchedule(bracket, round) {
   const snapshot = JSON.stringify(_activeMatchTournament.matches);
   let touched = 0;
   for (const m of _activeMatchTournament.matches) {
-    if (m.bracket !== bracket || m.round !== round) continue;
+    /* Match per-arm: filter by the round_id (R2_W, R2_L, R6_W, ...)
+       not by round_number. Lets W-arm and L-arm rounds at the same
+       round_number get different schedules. */
+    if (m.bracket !== bracket || roundIdOf(m) !== roundId) continue;
     if (m.is_bye) continue;
     m.scheduled_at = dtV || null;
     // Clear legacy day/time so the renderer reads from scheduled_at only.
@@ -3401,6 +3439,11 @@ async function openTournamentEditModal(tournamentId, focusStatus) {
     const cfg = t.config || {};
     document.getElementById('tEditBracketChamp').value   = cfg.bracketChampText || '';
     document.getElementById('tEditChampion').value       = cfg.championText || '';
+    /* qualifierSubtext: null/undefined → empty input → save back as
+       null (use default). " " (single space, the "hide" sentinel) →
+       blank-looking input but the trim() in save preserves intent
+       via a separate check below. */
+    document.getElementById('tEditQualifierSubtext').value = cfg.qualifierSubtext == null ? '' : cfg.qualifierSubtext;
     document.getElementById('tEditAvailableTables').value = cfg.availableTablesSpec || '';
     updateAvailableTablesPreview();
     document.getElementById('tEditSecondaryTables').value = cfg.secondaryTablesSpec || '';
@@ -3440,9 +3483,17 @@ function closeTournamentEditModal() {
 async function saveTournamentEdit() {
   if (!_editingTournamentId) return;
   const status = document.getElementById('tEditStatus').value;
+  /* qualifierSubtext intent:
+       empty input        → null   (renderer uses default world-quals phrase)
+       whitespace-only    → ""     (renderer hides subtitle entirely)
+       any content        → trimmed string used verbatim                       */
+  const subRaw = document.getElementById('tEditQualifierSubtext').value;
+  const subText = subRaw === '' ? null : (subRaw.trim() === '' ? '' : subRaw.trim());
+
   const cfg = {
     bracketChampText: document.getElementById('tEditBracketChamp').value.trim() || 'Bracket Champ',
     championText:     document.getElementById('tEditChampion').value.trim()     || 'Champion',
+    qualifierSubtext: subText,
     availableTablesSpec: document.getElementById('tEditAvailableTables').value.trim() || '',
     secondaryTablesSpec: document.getElementById('tEditSecondaryTables').value.trim() || '',
     adjacentTablesSpec:  document.getElementById('tEditAdjacentTables').value.trim()  || '',
