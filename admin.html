@@ -714,6 +714,7 @@
       <div class="t-edit-links">
         <div><span class="hint">Public:</span> <a id="tEditPublicUrl" href="#" target="_blank" rel="noopener"></a></div>
         <div><span class="hint">Staff:</span> <a id="tEditStaffUrl" href="#" target="_blank" rel="noopener"></a></div>
+        <div><span class="hint">API:</span> <a id="tEditApiUrl" href="#" target="_blank" rel="noopener" title="Tournament-paths JSON endpoint — feed to ChatGPT or any external tool"></a></div>
       </div>
     </div>
     <div id="tournamentEditStatus" class="status-line"></div>
@@ -3459,12 +3460,18 @@ async function openTournamentEditModal(tournamentId, focusStatus) {
     // GitHub Pages repo prefix is preserved.
     const publicHref = './?t=' + encodeURIComponent(t.slug);
     const staffHref  = './?t=' + encodeURIComponent(t.slug) + '&role=staff&key=' + encodeURIComponent(SB_KEY || '');
+    /* JSON paths API — deployed at the breakout-api Cloudflare worker.
+       Same slug, no key (anon read on breakout.tournaments). Useful as
+       a ChatGPT custom-GPT Action source. */
+    const apiHref    = 'https://breakout-api.spmapa.workers.dev/breakout/paths?t=' + encodeURIComponent(t.slug);
     const publicLink = document.getElementById('tEditPublicUrl');
     publicLink.href = publicHref;
     publicLink.textContent = publicHref;
     const staffLink = document.getElementById('tEditStaffUrl');
     staffLink.href = staffHref;
     staffLink.textContent = './?t=' + t.slug + '&role=staff&key=…';
+    const apiLink = document.getElementById('tEditApiUrl');
+    if (apiLink) { apiLink.href = apiHref; apiLink.textContent = apiHref; }
     hideStatus('tournamentEditStatus');
     document.getElementById('tournamentEditModal').classList.add('shown');
     if (focusStatus) {
@@ -3582,10 +3589,13 @@ async function regenerateSlugFromName() {
       // modal so the user sees what links will look like after Save.
       const publicHref = './?t=' + encodeURIComponent(nextSlug);
       const staffHref  = './?t=' + encodeURIComponent(nextSlug) + '&role=staff&key=' + encodeURIComponent(SB_KEY || '');
+      const apiHref    = 'https://breakout-api.spmapa.workers.dev/breakout/paths?t=' + encodeURIComponent(nextSlug);
       const pl = document.getElementById('tEditPublicUrl');
       if (pl) { pl.href = publicHref; pl.textContent = publicHref; }
       const sl = document.getElementById('tEditStaffUrl');
       if (sl) { sl.href = staffHref; sl.textContent = './?t=' + nextSlug + '&role=staff&key=…'; }
+      const al = document.getElementById('tEditApiUrl');
+      if (al) { al.href = apiHref; al.textContent = apiHref; }
       setStatus('tournamentEditStatus', 'Slug regenerated. Click Save to apply.', 'progress');
     }
   });
