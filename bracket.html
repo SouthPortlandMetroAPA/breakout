@@ -1865,19 +1865,51 @@ function reconstructTournament(matchData, seedAssignments, teamsByNumber) {
 
 function resolveTournament(t) {
   // Walk matches in play order. For each match:
-  //   1) Resolve top/bottom from upstream feeders if not already set.
-  //   2) If staff recorded a winner (winner_side), apply it.
-  //   3) Otherwise the match stays TBD until staff records a winner.
+  //   1) Detect phantom inputs — edges that structurally yield nothing
+  //      (loser-from a bye match, or any edge from a fully-phantom
+  //      cascade match). Phantom inputs must NOT be treated as TBD;
+  //      they are permanently empty and force a walkover cascade.
+  //   2) Resolve top/bottom from non-phantom feeders.
+  //   3) If any input is phantom (and staff hasn't manually picked
+  //      a winner), promote this match to a cascade-bye walkover.
+  //      One phantom side → real team auto-wins. Both phantom →
+  //      fully-phantom; downstream cascades further.
+  //   4) Otherwise, if staff recorded winner_side, apply it.
   const ordered = t.all.filter(m => !m.bye && m.globalNo != null)
                         .slice().sort((a, b) => a.globalNo - b.globalNo);
+  const isPhantomEdge = (feeder, kind) => {
+    if (!feeder) return false;
+    if (feeder.bye && kind === 'loser') return true;
+    if (feeder.phantom) return true;
+    return false;
+  };
   for (const m of ordered) {
-    if (m.top == null) {
+    const topPhantom = isPhantomEdge(m.topFromMatch, 'winner')
+                    || isPhantomEdge(m.topFromMatchLoser, 'loser');
+    const botPhantom = isPhantomEdge(m.botFromMatch, 'winner')
+                    || isPhantomEdge(m.botFromMatchLoser, 'loser');
+    if (m.top == null && !topPhantom) {
       if (m.topFromMatch) m.top = m.topFromMatch.winner;
       else if (m.topFromMatchLoser) m.top = m.topFromMatchLoser.loser;
     }
-    if (m.bottom == null) {
+    if (m.bottom == null && !botPhantom) {
       if (m.botFromMatch) m.bottom = m.botFromMatch.winner;
       else if (m.botFromMatchLoser) m.bottom = m.botFromMatchLoser.loser;
+    }
+    if ((topPhantom || botPhantom) && !m.winner_side) {
+      if (topPhantom && botPhantom) {
+        m.bye = true;
+        m.phantom = true;
+      } else if (topPhantom) {
+        m.top = m.bottom;
+        m.bottom = null;
+        m.bye = true;
+        if (m.top) { m.winner = m.top; m.topWins = true; }
+      } else {
+        m.bye = true;
+        if (m.top) { m.winner = m.top; m.topWins = true; }
+      }
+      continue;
     }
     if (m.winner_side === 'top' && m.top) {
       m.winner = m.top; m.loser = m.bottom; m.topWins = true;
