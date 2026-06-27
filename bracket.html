@@ -1865,21 +1865,35 @@ function reconstructTournament(matchData, seedAssignments, teamsByNumber) {
 
 function resolveTournament(t) {
   // Walk matches in play order. For each match:
-  //   1) Resolve top/bottom from upstream feeders if not already set.
-  //   2) If staff recorded a winner (winner_side), apply it.
-  //   3) Otherwise the match stays TBD until staff records a winner.
+  //   1) Flag phantom inputs — a loser-edge from a bye match has no real
+  //      loser to deliver. The consumer match displays BYE on that side
+  //      (not TBD) and auto-advances the OTHER side.
+  //   2) Resolve top/bottom from non-phantom feeders.
+  //   3) If exactly one side is phantom AND the real side has a team
+  //      determined, auto-set winner without staff click.
+  //   4) Otherwise apply staff-recorded winner_side as before.
+  //
+  //   NEVER mutates m.bye. R1 byes (m.bye=true from DB) keep their
+  //   original render path untouched. Walkover routing happens via
+  //   m.topPhantomBye / m.botPhantomBye flags consumed in matchHtml.
   const ordered = t.all.filter(m => !m.bye && m.globalNo != null)
                         .slice().sort((a, b) => a.globalNo - b.globalNo);
   for (const m of ordered) {
+    m.topPhantomBye = !!(m.topFromMatchLoser && m.topFromMatchLoser.bye);
+    m.botPhantomBye = !!(m.botFromMatchLoser && m.botFromMatchLoser.bye);
     if (m.top == null) {
       if (m.topFromMatch) m.top = m.topFromMatch.winner;
-      else if (m.topFromMatchLoser) m.top = m.topFromMatchLoser.loser;
+      else if (m.topFromMatchLoser && !m.topPhantomBye) m.top = m.topFromMatchLoser.loser;
     }
     if (m.bottom == null) {
       if (m.botFromMatch) m.bottom = m.botFromMatch.winner;
-      else if (m.botFromMatchLoser) m.bottom = m.botFromMatchLoser.loser;
+      else if (m.botFromMatchLoser && !m.botPhantomBye) m.bottom = m.botFromMatchLoser.loser;
     }
-    if (m.winner_side === 'top' && m.top) {
+    if (m.botPhantomBye && !m.topPhantomBye && m.top) {
+      m.winner = m.top; m.loser = null; m.topWins = true;
+    } else if (m.topPhantomBye && !m.botPhantomBye && m.bottom) {
+      m.winner = m.bottom; m.loser = null; m.topWins = false;
+    } else if (m.winner_side === 'top' && m.top) {
       m.winner = m.top; m.loser = m.bottom; m.topWins = true;
     } else if (m.winner_side === 'bot' && m.bottom) {
       m.winner = m.bottom; m.loser = m.top; m.topWins = false;
@@ -2152,7 +2166,7 @@ function bracketSlotsFor(_bracket) {
 }
 
 function matchHtml(m, isFinalOfBracket, stripeColor) {
-  if (m.bye) return byeMatchHtml(m, stripeColor);
+  if (m.bye || m.topPhantomBye || m.botPhantomBye) return byeMatchHtml(m, stripeColor);
   const tnum = m.globalNo ? 'M' + m.globalNo : '—';
   const topWin = m.topWins === true;
   const botWin = m.topWins === false;
@@ -2233,7 +2247,11 @@ function matchHtml(m, isFinalOfBracket, stripeColor) {
 }
 
 function byeMatchHtml(m, stripeColor) {
-  const team = m.top;
+  // m.top for R1 byes (bot is structurally null). For cascade walkovers
+  // (one upstream loser-edge is from a bye match), the real team may be
+  // on either side depending on which feeder edge is phantom; pick
+  // whichever side has a team.
+  const team = m.top || m.bottom;
   const mnoLabel = m.globalNo ? 'M' + m.globalNo : '—';
   let advanceChip = '';
   if (m.winnerAdvancesTo) {
