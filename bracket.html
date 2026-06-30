@@ -1393,6 +1393,11 @@ async function recordWinner(side) {
   try {
     await saveTournamentMatches();
     showToast('Saved', 'ok');
+    /* After every saved winner, see if THIS click happened to finish
+       the bracket. If so, offer a one-click close that flips the row's
+       status to 'completed'. Skipped silently when not yet complete or
+       already closed. */
+    maybeOfferTournamentClose();
   } catch (e) {
     md[idx].winner_side = prevSide;
     md[idx].scheduled_at = prevOverrides.scheduled_at;
@@ -1400,6 +1405,55 @@ async function recordWinner(side) {
     reapplyTournamentInMemory();
     renderTournament();
     showToast('Save failed: ' + e.message, 'err');
+  }
+}
+
+/* Tournament-close offer. Fires from recordWinner() after a successful
+   save. Conditions:
+   - Tournament row not already status='completed'
+   - Every non-bye match has a resolved winner (real winner_side OR
+     cascade-bye walkover that resolveTournament set m.winner on)
+   When both hold, asks the operator to confirm and PATCHes the row.
+   Idempotent — once status='completed' the prompt never re-appears. */
+async function maybeOfferTournamentClose() {
+  if (!IS_STAFF || !_tournament || !_tournamentRow || !HEADERS_STAFF) return;
+  if (_tournamentRow.status === 'completed') return;
+  const unresolved = _tournament.all.filter(m => !m.bye && m.winner == null);
+  if (unresolved.length) return;
+  /* Bracket champions = matches whose winner is not consumed by any
+     downstream winner-from edge. There may be multiple in multi-bracket
+     formats (A / B / 64). Skip byes and cascade-byes — they're never
+     final matches. */
+  const winnerConsumed = new Set();
+  for (const m of _tournament.all) {
+    if (m.topFromMatch) winnerConsumed.add(m.topFromMatch.id);
+    if (m.botFromMatch) winnerConsumed.add(m.botFromMatch.id);
+  }
+  const champs = _tournament.all
+    .filter(m => !m.bye && !winnerConsumed.has(m.id) && m.winner)
+    .sort((a, b) => (a.globalNo || 0) - (b.globalNo || 0));
+  const champLines = champs.map(m => {
+    const bracketLabel = m.bracket === 'main' ? 'Champion'
+      : ('Bracket ' + (m.bracket || '?'));
+    return bracketLabel + ': ' + m.winner.name
+      + (m.payout ? ' ($' + m.payout + ')' : '');
+  }).join('\n');
+  const ok = window.confirm(
+    'Every match is complete.\n\n' + champLines + '\n\n' +
+    'Mark this tournament closed (status = completed)?'
+  );
+  if (!ok) return;
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/tournaments?id=eq.' + _tournamentRow.id,
+      { method: 'PATCH', headers: HEADERS_STAFF, body: JSON.stringify({ status: 'completed' }) });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      throw new Error('PATCH ' + r.status + (txt ? ': ' + txt.slice(0, 120) : ''));
+    }
+    _tournamentRow.status = 'completed';
+    showToast('Tournament closed — status: completed', 'ok');
+  } catch (e) {
+    showToast('Close failed: ' + e.message, 'err');
   }
 }
 
