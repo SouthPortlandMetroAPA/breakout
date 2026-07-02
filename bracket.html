@@ -1153,24 +1153,45 @@ async function checkVersion() {
     if (!r.ok) return;
     const d = await r.json();
     if (d && d[0] && d[0].version && d[0].version !== window.APP_VERSION) {
+        /* 2026-07-02 hardening: remote OLDER than running = deploy window
+           or DB rollback — do not strand the tab in the overlay. */
+        var __r = parseFloat(d[0].version), __l = parseFloat(window.APP_VERSION);
+        if (isFinite(__r) && isFinite(__l) && __r < __l) return;
       _versionMismatch = true;
       document.getElementById('updateOverlay').classList.add('shown');
       pollForDeploy(d[0].version);
     }
   } catch (_) {}
 }
-function pollForDeploy(target) {
+function pollForDeploy(target, attempt) {
+  attempt = attempt || 0;
+  /* 2026-07-02 hardening: give-up cap — if Pages serves nothing new after
+     ~2 min the deploy is wedged; dismiss the overlay and let the 30s
+     checkVersion cycle retry in the background. */
+  if (attempt >= 40) {
+    console.warn('[updater] deploy not served after ~2min — dismissing overlay, retrying in background');
+    var __ov = document.getElementById('updateOverlay');
+    if (__ov) __ov.classList.remove('shown');
+    _versionMismatch = false;
+    return;
+  }
   setTimeout(async () => {
     try {
       const r = await fetch('version.js?_=' + Date.now());
-      if (r.ok && (await r.text()).indexOf("APP_VERSION = '" + target + "'") !== -1) {
+      var __t = r.ok ? await r.text() : '';
+      var __m = __t.match(/APP_VERSION\s*=\s*'([0-9.]+)'/);
+      var __served = __m && __m[1];
+      /* 2026-07-02 hardening: reload on ANY served version different from
+         the running one — pinning the target strands the tab when a second
+         bump lands mid-poll. */
+      if (__served && __served !== window.APP_VERSION) {
         const u = new URL(location.href);
         u.searchParams.set('_', String(Date.now()));
         location.replace(u.toString());
         return;
       }
     } catch (_) {}
-    pollForDeploy(target);
+    pollForDeploy(target, attempt + 1);
   }, 3000);
 }
 checkVersion();
